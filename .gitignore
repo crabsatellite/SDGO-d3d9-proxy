@@ -1,0 +1,23 @@
+# Build outputs
+build/
+d3d9_proxy/build/
+mods/build/
+
+# Compiled binaries
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+CMakeSettings.json
+
+# OS
+Thumbs.db
+desktop.ini
