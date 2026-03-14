@@ -64,13 +64,12 @@ static const char* g_szAutoFocus = R"(
         return (n * f) / (f - z * (f - n));
     }
 
-    // Simple sort2 for median finding
-    void sort2(inout float a, inout float b)
+    // Sample one depth point; returns linear depth or -1 if sky
+    float SampleDepth(float2 uv)
     {
-        float lo = min(a, b);
-        float hi = max(a, b);
-        a = lo;
-        b = hi;
+        float z = tex2D(depthTex, uv).r;
+        if (z >= params1.z) return -1.0;
+        return LinearDepth(z);
     }
 
     float4 main(float2 uv : TEXCOORD0) : COLOR0
@@ -78,70 +77,69 @@ static const char* g_szAutoFocus = R"(
         // Fixed focus mode: just output constant
         if (params0.w > 0.001)
         {
-            float fd = params0.w;
-            return float4(fd / 10000.0, 0, 0, 1);
+            return float4(params0.w / 10000.0, 0, 0, 1);
         }
 
-        // Sample 3x3 grid around screen center
-        float2 center = float2(0.5, 0.5);
-        float spread = 0.03;  // 3% of screen
+        // Manually unrolled 3x3 grid sampling around screen center.
+        // ps_3_0 cannot use variable index to write arrays, so we
+        // track sum/min/max/count inline without array storage.
+        float2 c = float2(0.5, 0.5);
+        float sp = 0.03;
 
-        float samples[9];
-        int validCount = 0;
-        float validSum = 0;
+        float totalSum = 0;
+        float minVal = 99999.0;
+        float maxVal = 0;
+        float count = 0;
 
-        float sky = params1.z;
+        // Row -1
+        float d0 = SampleDepth(c + float2(-sp, -sp));
+        if (d0 > 0) { totalSum += d0; minVal = min(minVal, d0); maxVal = max(maxVal, d0); count += 1.0; }
+        float d1 = SampleDepth(c + float2(  0, -sp));
+        if (d1 > 0) { totalSum += d1; minVal = min(minVal, d1); maxVal = max(maxVal, d1); count += 1.0; }
+        float d2 = SampleDepth(c + float2( sp, -sp));
+        if (d2 > 0) { totalSum += d2; minVal = min(minVal, d2); maxVal = max(maxVal, d2); count += 1.0; }
 
-        for (int dy = -1; dy <= 1; dy++)
-        {
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                float2 sampleUV = center + float2(dx, dy) * spread;
-                float z = tex2D(depthTex, sampleUV).r;
-                if (z < sky)
-                {
-                    float d = LinearDepth(z);
-                    samples[validCount] = d;
-                    validSum += d;
-                    validCount++;
-                }
-            }
-        }
+        // Row 0
+        float d3 = SampleDepth(c + float2(-sp, 0));
+        if (d3 > 0) { totalSum += d3; minVal = min(minVal, d3); maxVal = max(maxVal, d3); count += 1.0; }
+        float d4 = SampleDepth(c);  // center
+        if (d4 > 0) { totalSum += d4; minVal = min(minVal, d4); maxVal = max(maxVal, d4); count += 1.0; }
+        float d5 = SampleDepth(c + float2( sp, 0));
+        if (d5 > 0) { totalSum += d5; minVal = min(minVal, d5); maxVal = max(maxVal, d5); count += 1.0; }
+
+        // Row +1
+        float d6 = SampleDepth(c + float2(-sp, sp));
+        if (d6 > 0) { totalSum += d6; minVal = min(minVal, d6); maxVal = max(maxVal, d6); count += 1.0; }
+        float d7 = SampleDepth(c + float2(  0, sp));
+        if (d7 > 0) { totalSum += d7; minVal = min(minVal, d7); maxVal = max(maxVal, d7); count += 1.0; }
+        float d8 = SampleDepth(c + float2( sp, sp));
+        if (d8 > 0) { totalSum += d8; minVal = min(minVal, d8); maxVal = max(maxVal, d8); count += 1.0; }
 
         float focusDepth;
-        if (validCount == 0)
+        if (count < 1.0)
         {
-            // All sky — use far distance
+            // All sky — use half far distance
             focusDepth = params1.y * 0.5;
         }
-        else if (validCount <= 2)
+        else if (count <= 2.0)
         {
-            // Few valid samples — use average
-            focusDepth = validSum / (float)validCount;
+            // Too few samples for trimmed mean — use average
+            focusDepth = totalSum / count;
         }
         else
         {
-            // Use trimmed mean: discard min and max, average rest
-            // Simple approximation of median that works in ps_3_0
-            float minVal = samples[0];
-            float maxVal = samples[0];
-            for (int i = 1; i < validCount; i++)
-            {
-                minVal = min(minVal, samples[i]);
-                maxVal = max(maxVal, samples[i]);
-            }
-            focusDepth = (validSum - minVal - maxVal) / (float)(validCount - 2);
+            // Trimmed mean: remove min and max outliers
+            focusDepth = (totalSum - minVal - maxVal) / (count - 2.0);
         }
 
         // Temporal smoothing: blend with previous frame
         float prevFocus = tex2D(prevFocusTex, float2(0.5, 0.5)).r * 10000.0;
-        float speed = params0.z;
 
         // If not yet initialized, snap to current
         if (params1.w < 0.5)
             prevFocus = focusDepth;
 
-        float smoothed = lerp(prevFocus, focusDepth, speed);
+        float smoothed = lerp(prevFocus, focusDepth, params0.z);
 
         // Encode: store as focusDepth / 10000.0 to fit in [0,1]
         return float4(smoothed / 10000.0, 0, 0, 1);
