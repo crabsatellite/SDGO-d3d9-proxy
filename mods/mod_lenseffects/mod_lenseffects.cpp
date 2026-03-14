@@ -36,7 +36,7 @@ static const char* g_szLensShader = R"(
         float2 centered = uv - 0.5;
         float r2 = dot(centered, centered);
         float distort = 1.0 + r2 * strength;
-        return centered * distort + 0.5;
+        return saturate(centered * distort + 0.5);
     }
 
     float4 main(float2 uv : TEXCOORD0) : COLOR0
@@ -59,17 +59,17 @@ static const char* g_szLensShader = R"(
         float2 dir = center / max(edgeDist, 0.001);
         float caAmount = chromatic * edgeDist * edgeDist;
 
-        float r = tex2D(sceneTex, distUV + dir * caAmount).r;
+        float r = tex2D(sceneTex, saturate(distUV + dir * caAmount)).r;
         float g = tex2D(sceneTex, distUV).g;
-        float b = tex2D(sceneTex, distUV - dir * caAmount).b;
+        float b = tex2D(sceneTex, saturate(distUV - dir * caAmount)).b;
         float4 color = float4(r, g, b, 1.0);
 
         // --- Anamorphic Lens Flare (horizontal streak) ---
         if (flareInt > 0.001)
         {
             float3 flare = 0;
-            float flareSamples = 16;
-            for (int i = -8; i <= 7; i++)
+            float flareSamples = 17;
+            for (int i = -8; i <= 8; i++)
             {
                 float t = float(i) / 8.0;
                 float2 sampleUV = distUV + float2(t * 0.15, 0.0);  // Horizontal only
@@ -101,12 +101,12 @@ static const char* g_szLensShader = R"(
     }
 )";
 
-static float g_chromatic    = 0.012f;  // Noticeable CA at edges
-static float g_barrel       = -0.08f;  // Moderate barrel distortion
-static float g_grainStr     = 0.06f;   // Subtle grain
+static float g_chromatic    = 0.004f;
+static float g_barrel       = -0.05f;
+static float g_grainStr     = 0.04f;
 static float g_grainSize    = 512.0f;
-static float g_flareInt     = 0.5f;    // Visible flare on bright spots
-static float g_flareThresh  = 0.65f;
+static float g_flareInt     = 0.3f;
+static float g_flareThresh  = 0.75f;
 static float g_frameCounter = 0;
 
 static bool LensPass(IDirect3DDevice9* dev,
@@ -117,8 +117,8 @@ static bool LensPass(IDirect3DDevice9* dev,
 {
     if (!g_pLensShader) return false;
 
-    g_frameCounter += 1.0f;
-    if (g_frameCounter > 10000.0f) g_frameCounter = 0;
+    g_frameCounter += 0.01f;
+    if (g_frameCounter > 100.0f) g_frameCounter -= 100.0f;
 
     dev->SetRenderTarget(0, pDst);
     dev->SetPixelShader(g_pLensShader);
@@ -131,6 +131,8 @@ static bool LensPass(IDirect3DDevice9* dev,
 
     dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
     dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     g_api->DrawFullscreenQuad(dev, w, h);
 
     dev->SetPixelShader(nullptr);
