@@ -46,9 +46,6 @@ public:
 
     void SetDepthTexture(IDirect3DTexture9* pDepth) { m_pDepth = pDepth; }
     void SetProjParams(float nearZ, float farZ) { m_nearZ = nearZ; m_farZ = farZ; }
-    void SetPreTransTexture(IDirect3DTexture9* pTex) { m_pPreTrans = pTex; }
-    IDirect3DTexture9* GetPreTransTexture() const { return m_pPreTrans; }
-
     // API accessors (used by ModAPI_Impl in mod_manager.cpp)
     void AddPostPass(const char* name, PostPassFn fn, int priority, void* ud);
     void RemovePostPass(const char* name);
@@ -103,7 +100,6 @@ private:
     SdgoModAPI m_api = {};
     IDirect3DDevice9* m_pDevice = nullptr;
     IDirect3DTexture9* m_pDepth = nullptr;
-    IDirect3DTexture9* m_pPreTrans = nullptr;
     float m_nearZ = 0.1f;
     float m_farZ = 1000.0f;
     std::string m_modsDir;

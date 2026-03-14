@@ -21,7 +21,6 @@
 static PostProcessor*      g_hookPostProcess  = nullptr;
 static ModManager*         g_hookModManager   = nullptr;
 static IDirect3DDevice9*   g_hookDevice       = nullptr;
-static IDirect3DTexture9*  g_hookPreTransTex  = nullptr;
 static bool                g_hookInstalled    = false;
 static bool                g_inScene          = false;
 
@@ -42,9 +41,6 @@ static void __fastcall Hook_BeginDrawTexture(void* thisPtr, void* /*edx*/, int w
     // Post-processing runs AFTER BDT so we only need to restore simple 2D state,
     // not the complex 3D state (fog, lighting, transforms, etc.).
     if (flag && g_hookPostProcess && g_hookDevice) {
-        // Pass pre-transparent scene capture to mod manager for SSAO fog masking
-        if (g_hookModManager)
-            g_hookModManager->SetPreTransTexture(g_hookPreTransTex);
         g_hookPostProcess->Apply(g_hookDevice, g_hookModManager);
     }
 }
@@ -134,7 +130,6 @@ Direct3DDevice9Proxy::~Direct3DDevice9Proxy()
         delete m_modManager;
         m_modManager = nullptr;
     }
-    ReleasePreTransCapture();
     ReleaseINTZDepth();
     if (m_texManager) {
         m_texManager->Release();
@@ -195,28 +190,6 @@ void Direct3DDevice9Proxy::ReleaseINTZDepth()
     if (m_pDepthTexture) { m_pDepthTexture->Release(); m_pDepthTexture = nullptr; }
 }
 
-void Direct3DDevice9Proxy::SetupPreTransCapture()
-{
-    IDirect3DSurface9* pBB = nullptr;
-    m_pReal->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBB);
-    if (!pBB) return;
-    D3DSURFACE_DESC desc;
-    pBB->GetDesc(&desc);
-    pBB->Release();
-
-    HRESULT hr = m_pReal->CreateTexture(desc.Width, desc.Height, 1,
-        D3DUSAGE_RENDERTARGET, desc.Format, D3DPOOL_DEFAULT,
-        &m_pPreTransTex, nullptr);
-    if (SUCCEEDED(hr))
-        m_pPreTransTex->GetSurfaceLevel(0, &m_pPreTransSurf);
-}
-
-void Direct3DDevice9Proxy::ReleasePreTransCapture()
-{
-    if (m_pPreTransSurf) { m_pPreTransSurf->Release(); m_pPreTransSurf = nullptr; }
-    if (m_pPreTransTex)  { m_pPreTransTex->Release();  m_pPreTransTex = nullptr; }
-}
-
 // ============================================================
 // IUnknown
 // ============================================================
@@ -248,10 +221,6 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9Proxy::BeginScene()
     m_inScene = true;
     g_inScene = true;
     m_drawCount = 0;
-    m_capturedPreTrans = false;
-    m_zWriteWasEnabled = true;
-    g_hookPreTransTex = nullptr;
-
     // Lazy-install engine hook: zoa_graphics.dll may not be loaded
     // at d3d9.dll init time, so we retry each frame until it succeeds.
     if (!g_hookInstalled && m_postProcess)
@@ -283,7 +252,6 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9Proxy::Present(
 
 HRESULT STDMETHODCALLTYPE Direct3DDevice9Proxy::Reset(D3DPRESENT_PARAMETERS* pPresentationParameters)
 {
-    ReleasePreTransCapture();
     ReleaseINTZDepth();
     if (m_modManager)
         m_modManager->OnReset();
@@ -511,24 +479,6 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice9Proxy::GetClipPlane(DWORD Index, float*
 
 HRESULT STDMETHODCALLTYPE Direct3DDevice9Proxy::SetRenderState(D3DRENDERSTATETYPE State, DWORD Value)
 {
-    // Detect opaque→transparent transition (ZWRITEENABLE TRUE→FALSE).
-    // Capture backbuffer at this point as "pre-transparent" scene for SSAO fog masking.
-    if (State == D3DRS_ZWRITEENABLE && !m_inPostProcess) {
-        if (m_zWriteWasEnabled && Value == FALSE && !m_capturedPreTrans && m_inScene) {
-            if (!m_pPreTransTex)
-                SetupPreTransCapture();
-            if (m_pPreTransSurf) {
-                IDirect3DSurface9* pBB = nullptr;
-                if (SUCCEEDED(m_pReal->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBB)) && pBB) {
-                    m_pReal->StretchRect(pBB, nullptr, m_pPreTransSurf, nullptr, D3DTEXF_NONE);
-                    pBB->Release();
-                    m_capturedPreTrans = true;
-                    g_hookPreTransTex = m_pPreTransTex;
-                }
-            }
-        }
-        m_zWriteWasEnabled = (Value != FALSE);
-    }
     return m_pReal->SetRenderState(State, Value);
 }
 

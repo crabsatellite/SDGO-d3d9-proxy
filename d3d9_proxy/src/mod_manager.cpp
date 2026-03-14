@@ -76,7 +76,6 @@ namespace ModAPI_Impl
 
     static void* GetModuleHandleFunc(const char* moduleName);
     static void* GetExportAddress(const char* moduleName, const char* funcName);
-    static IDirect3DTexture9* GetPreTransparentTexture();
 }
 
 // ============================================================
@@ -237,12 +236,6 @@ void* ModAPI_Impl::GetExportAddress(const char* moduleName, const char* funcName
     return (void*)::GetProcAddress(hMod, funcName);
 }
 
-IDirect3DTexture9* ModAPI_Impl::GetPreTransparentTexture()
-{
-    if (!g_pModManager) return nullptr;
-    return g_pModManager->GetPreTransTexture();
-}
-
 // ============================================================
 // ModManager Implementation
 // ============================================================
@@ -304,7 +297,6 @@ void ModManager::BuildAPI()
     m_api.GetModuleHandle     = ModAPI_Impl::GetModuleHandleFunc;
     m_api.GetExportAddress    = ModAPI_Impl::GetExportAddress;
     m_api.DrawFullscreenQuad  = API_DrawFullscreenQuad;
-    m_api.GetPreTransparentTexture = ModAPI_Impl::GetPreTransparentTexture;
 }
 
 bool ModManager::Init(IDirect3DDevice9* pDevice, const char* modsDir)

@@ -165,15 +165,6 @@ private:
     // Captured projection matrix parameters for SSAO
     float m_projParams[4] = { 0.1f, 1000.0f, 0.0f, 0.0f };  // nearZ, farZ, fovY, aspect
 
-    // Pre-transparent scene capture for fog/particle masking in SSAO
-    // Captured when ZWRITEENABLE transitions TRUE→FALSE (opaque→transparent boundary)
-    IDirect3DTexture9*  m_pPreTransTex = nullptr;
-    IDirect3DSurface9*  m_pPreTransSurf = nullptr;
-    bool m_zWriteWasEnabled = true;
-    bool m_capturedPreTrans = false;
-    void SetupPreTransCapture();
-    void ReleasePreTransCapture();
-
     // Normal mapping state
     void DrawWithNormalMap(IDirect3DTexture9* pNormalMap);
     void RestoreAfterNormalMap();

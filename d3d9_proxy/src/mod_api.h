@@ -139,13 +139,6 @@ struct SdgoModAPI
 
     // Draw a fullscreen quad with the current shader and textures.
     void (*DrawFullscreenQuad)(IDirect3DDevice9* pDevice, float w, float h);
-
-    // --- Pre-transparent scene (for fog/particle masking) ---
-
-    // Returns the backbuffer captured just before transparent objects rendered.
-    // Use in SSAO to detect fog/particle pixels (compare with final scene).
-    // Returns nullptr if not available this frame.
-    IDirect3DTexture9* (*GetPreTransparentTexture)();
 };
 
 // ============================================================
