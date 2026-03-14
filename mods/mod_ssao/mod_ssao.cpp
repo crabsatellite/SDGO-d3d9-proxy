@@ -11,12 +11,14 @@ static SdgoModAPI* g_api = nullptr;
 static IDirect3DPixelShader9* g_pShader = nullptr;
 static float g_radius = 1.0f;
 static float g_intensity = 1.5f;
+static float g_fogThreshold = 0.06f;
 
 static const char* g_szShader = R"(
     sampler2D SceneSampler : register(s0);
     sampler2D DepthSampler : register(s1);
+    sampler2D PreTransSampler : register(s2);
     float4 Params : register(c0);   // x=1/width, y=1/height, z=radius, w=intensity
-    float4 ProjInfo : register(c1); // x=nearZ, y=farZ
+    float4 ProjInfo : register(c1); // x=nearZ, y=farZ, z=fogThreshold, w=hasPreTrans
 
     float linearizeDepth(float z)
     {
@@ -41,6 +43,17 @@ static const char* g_szShader = R"(
 
         if (depth > 0.999)
             return float4(color, 1.0);
+
+        // Fog/particle masking: compare pre-transparent vs final scene
+        // Large color difference = fog/smoke/particle pixel, skip SSAO
+        if (ProjInfo.w > 0.5)
+        {
+            float3 preTrans = tex2D(PreTransSampler, uv).rgb;
+            float transDiff = length(color - preTrans);
+            float fogMask = smoothstep(ProjInfo.z * 0.5, ProjInfo.z, transDiff);
+            if (fogMask > 0.95)
+                return float4(color, 1.0);
+        }
 
         float3 pos = getViewPos(uv);
 
@@ -98,6 +111,15 @@ static const char* g_szShader = R"(
         occlusion = 1.0 - (occlusion / samples) * Params.w;
         occlusion = saturate(occlusion);
 
+        // Partial fog masking: blend SSAO based on fog amount
+        if (ProjInfo.w > 0.5)
+        {
+            float3 preTrans = tex2D(PreTransSampler, uv).rgb;
+            float transDiff = length(color - preTrans);
+            float fogMask = smoothstep(ProjInfo.z * 0.5, ProjInfo.z, transDiff);
+            occlusion = lerp(occlusion, 1.0, fogMask);
+        }
+
         return float4(color * occlusion, 1.0);
     }
 )";
@@ -122,9 +144,22 @@ static bool SSAOPass(IDirect3DDevice9* dev,
     dev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
     dev->SetSamplerState(1, D3DSAMP_SRGBTEXTURE, FALSE);
 
+    // Bind pre-transparent texture for fog masking
+    IDirect3DTexture9* pPreTrans = g_api->GetPreTransparentTexture();
+    float hasPreTrans = 0.0f;
+    if (pPreTrans) {
+        dev->SetTexture(2, pPreTrans);
+        dev->SetSamplerState(2, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+        dev->SetSamplerState(2, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+        dev->SetSamplerState(2, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        dev->SetSamplerState(2, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        dev->SetSamplerState(2, D3DSAMP_SRGBTEXTURE, FALSE);
+        hasPreTrans = 1.0f;
+    }
+
     float c0[4] = { 1.0f / w, 1.0f / h, g_radius, g_intensity };
     dev->SetPixelShaderConstantF(0, c0, 1);
-    float c1[4] = { nearZ, farZ, 0, 0 };
+    float c1[4] = { nearZ, farZ, g_fogThreshold, hasPreTrans };
     dev->SetPixelShaderConstantF(1, c1, 1);
 
     dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
@@ -132,6 +167,7 @@ static bool SSAOPass(IDirect3DDevice9* dev,
     g_api->DrawFullscreenQuad(dev, w, h);
 
     dev->SetTexture(1, nullptr);
+    dev->SetTexture(2, nullptr);
     dev->SetPixelShader(nullptr);
     return true;
 }
@@ -139,8 +175,9 @@ static bool SSAOPass(IDirect3DDevice9* dev,
 SDGO_MOD_EXPORT bool ModLoad(SdgoModAPI* api)
 {
     g_api = api;
-    g_radius    = api->GetConfigFloat("SSAO", "Radius",    1.0f);
-    g_intensity = api->GetConfigFloat("SSAO", "Intensity", 1.5f);
+    g_radius       = api->GetConfigFloat("SSAO", "Radius",       1.0f);
+    g_intensity    = api->GetConfigFloat("SSAO", "Intensity",    1.5f);
+    g_fogThreshold = api->GetConfigFloat("SSAO", "FogThreshold", 0.06f);
 
     g_pShader = api->CompilePixelShader(g_szShader, "main");
     if (!g_pShader) {
@@ -148,7 +185,8 @@ SDGO_MOD_EXPORT bool ModLoad(SdgoModAPI* api)
         return false;
     }
     api->RegisterPostPass("ssao", SSAOPass, 200, nullptr);
-    api->Log("mod_ssao: OK (radius=%.2f intensity=%.2f)", g_radius, g_intensity);
+    api->Log("mod_ssao: OK (radius=%.2f intensity=%.2f fogThresh=%.3f)",
+             g_radius, g_intensity, g_fogThreshold);
     return true;
 }
 

@@ -5,11 +5,20 @@ mods/build/
 
 # Compiled binaries
 *.dll
+*.dll.disabled
+*.dll.old
 *.lib
 *.exp
 *.pdb
 *.ilk
 *.obj
+
+# Disabled mods & old files
+mods/_disabled/
+
+# Duplicate configs in subdirs
+d3d9_proxy/d3d9.ini
+d3d9_proxy/.gitignore
 
 # IDE
 .vs/
