@@ -78,6 +78,7 @@ static void LoadConfig()
 struct MachineData {
     int machineId;
     int unitCount;
+    int oldUnits[8];      // original unit IDs for position matching
     int units[8];
     char sprs[8][2][64];  // [slot][0=spr0, 1=spr1][path]
     int rrank[8];
@@ -271,7 +272,10 @@ static bool ParseEventJson(const char* buf, MachineData* machines, int maxMachin
             if (*p == ':') p++;
             p = SkipWs(p);
 
-            if (strcmp(fieldName, "units") == 0) {
+            if (strcmp(fieldName, "oldUnits") == 0) {
+                int oldCount = 0;
+                p = ParseIntArray(p, m.oldUnits, 8, &oldCount);
+            } else if (strcmp(fieldName, "units") == 0) {
                 p = ParseIntArray(p, m.units, 8, &m.unitCount);
             } else if (strcmp(fieldName, "sprs") == 0) {
                 int sprCount = 0;
@@ -411,15 +415,20 @@ static void PatchAllMachines(void* thisPtr)
         int unitCount = entry[OFF_UNIT_COUNT];
         if (unitCount <= 0 || unitCount > 8) continue;
 
-        // Replace units by position (same approach as working machine-78 mod)
-        int replaceCount = (md->unitCount < unitCount) ? md->unitCount : unitCount;
+        // Match by original unit ID so display positions stay correct
         int* unitSlots = (int*)(entry + OFF_UNIT_IDS);
 
-        for (int j = 0; j < replaceCount; j++) {
-            unitSlots[j] = md->units[j];
-            entry[OFF_RRANK_FLAGS + j] = (uint8_t)(md->rrank[j] ? 1 : 0);
-            WriteSprPath(entry, j, 0, md->sprs[j][0]);
-            WriteSprPath(entry, j, 1, md->sprs[j][1]);
+        for (int j = 0; j < unitCount; j++) {
+            int origUnit = unitSlots[j];
+            for (int k = 0; k < md->unitCount; k++) {
+                if (md->oldUnits[k] == origUnit) {
+                    unitSlots[j] = md->units[k];
+                    entry[OFF_RRANK_FLAGS + j] = (uint8_t)(md->rrank[k] ? 1 : 0);
+                    WriteSprPath(entry, j, 0, md->sprs[k][0]);
+                    WriteSprPath(entry, j, 1, md->sprs[k][1]);
+                    break;
+                }
+            }
         }
 
         patchedMachines++;
