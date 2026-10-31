@@ -34,9 +34,9 @@
 // same units as remote copies (unit+0x2B65 = 1), as the mission NPC registration does on a
 // client that is not the master; creating them in the same order gives them the same object
 // ids. The start point index of an AI player follows the humans of its team, as the PvP Init
-// counts them per team. As in mission_ai, the player count (UM+0x8C) stays at the humans:
-// the PvP game treats every counted slot as a network peer. Lookups of an AI player's server
-// pilot id are answered from this mod's table instead.
+// counts them per team. As in the AI battle mode, the player count (UM+0x8C) then counts the
+// AI players too (the HUD sums team scores over the counted slots), and the unit manager's
+// object id -> player slot steps answer for them the way that mode's PlayerSlot remap does.
 
 #include <windows.h>
 
@@ -110,6 +110,8 @@ namespace
     using ObjectIdFromPilotFn = uint32_t(__thiscall*)(void* um, uint32_t pilotId);
     using SetSlotColourFn = void(__thiscall*)(void* um, int index, int colour);
     using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
+    using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
+    using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -162,6 +164,9 @@ namespace
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
+    IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
+    PlayerSlotFn g_originalPlayerSlot = nullptr;
+    SetPlayerCountFn g_setPlayerCount = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -317,6 +322,12 @@ namespace
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
                        static_cast<unsigned long>(npcData), team, slot,
                        master ? "AI runs here" : "copy of the room master's");
+        }
+        if (spawned > 0) {
+            // the AI battle mode's player count: humans and AI players (0x0040417C)
+            g_setPlayerCount(um, humans + spawned);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "player count %d (%d humans, %d AI players)", humans + spawned, humans,
+                       spawned);
         }
         g_game.calculateTeam(um);
     }
@@ -592,6 +603,36 @@ namespace
         return g_originalObjectIdFromPilot(um, pilotId);
     }
 
+    // Kills, deaths and score: the PT_NTF_DEAD_UNIT and PT_NTF_MAP_DAMAGE handlers credit them
+    // to UM::PlayerSlot(object id - 1) only when UM::IsPlayerObject(object id) (1..12); the AI
+    // battle mode credits an NPC killer through PlayerSlot, which there maps object id - 1 >=
+    // 1000 to the AI players' slots. For a PvP mode both answer for this battle's AI players
+    // the same way; the score sync (0x004C5140) and the other PlayerSlot(object id - 1) users
+    // then reach the AI player's slot instead of memory far past the unit manager.
+
+    const Bot* BotByObject(uint32_t objectId)
+    {
+        if (objectId < 1001 || g_botTable.empty() || !g_botMode || CurrentPvpMode() != g_botMode)
+            return nullptr;
+        for (const Bot& bot : g_botTable)
+            if (bot.objectId == objectId)
+                return &bot;
+        return nullptr;
+    }
+
+    bool __fastcall IsPlayerObject(void* um, void* /*edx*/, uint32_t objectId)
+    {
+        return g_originalIsPlayerObject(um, objectId) || BotByObject(objectId) != nullptr;
+    }
+
+    uint8_t* __fastcall PlayerSlot(void* um, void* /*edx*/, int index)
+    {
+        if (index >= 1000)
+            if (const Bot* bot = BotByObject(static_cast<uint32_t>(index) + 1))
+                return g_originalPlayerSlot(um, bot->slot);
+        return g_originalPlayerSlot(um, index);
+    }
+
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000 && CurrentPvpMode()) {
@@ -792,7 +833,7 @@ SDGO_MOD_ENTRY
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
-                 Bind(g_findObject, "um.find_object");
+                 Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count");
     if (!bound)
         return 0;
     // The AI players' scripts call these; without them they would jump to address 0.
@@ -814,7 +855,11 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "um.object_id_from_pilot", reinterpret_cast<void*>(&ObjectIdFromPilot),
                        reinterpret_cast<void**>(&g_originalObjectIdFromPilot)) ||
         !api->HookCode(mod, "um.set_slot_colour", reinterpret_cast<void*>(&SetSlotColour),
-                       reinterpret_cast<void**>(&g_originalSetSlotColour)))
+                       reinterpret_cast<void**>(&g_originalSetSlotColour)) ||
+        !api->HookCode(mod, "um.is_player_object", reinterpret_cast<void*>(&IsPlayerObject),
+                       reinterpret_cast<void**>(&g_originalIsPlayerObject)) ||
+        !api->HookCode(mod, "um.player_slot", reinterpret_cast<void*>(&PlayerSlot),
+                       reinterpret_cast<void**>(&g_originalPlayerSlot)))
         return 0;
     if (!api->HookCode(mod, "game.nat_check", reinterpret_cast<void*>(&NatCheck),
                        reinterpret_cast<void**>(&g_originalNatCheck)))
