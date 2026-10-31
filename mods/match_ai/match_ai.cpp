@@ -30,12 +30,13 @@
 // target searches call script mode vftable slots; both are provided for the PvP modes.
 //
 // The AI runs on the room master, found the way CMissionMode::Init finds it: the local
-// player's record (record+0 == room+0x68) has record+0x1C set. The start point index of an
-// AI player follows the humans of its team, as the PvP Init counts them per team. As in
-// mission_ai, the player count (UM+0x8C) stays at the humans: the PvP game keeps a UDP
-// connection to every counted player.
-//
-// Version 0.1 spawns the AI players on the room master only; other clients log them.
+// player's record (record+0 == room+0x68) has record+0x1C set. The other clients create the
+// same units as remote copies (unit+0x2B65 = 1), as the mission NPC registration does on a
+// client that is not the master; creating them in the same order gives them the same object
+// ids. The start point index of an AI player follows the humans of its team, as the PvP Init
+// counts them per team. As in mission_ai, the player count (UM+0x8C) stays at the humans:
+// the PvP game treats every counted slot as a network peer. Lookups of an AI player's server
+// pilot id are answered from this mod's table instead.
 
 #include <windows.h>
 
@@ -106,6 +107,9 @@ namespace
     using LuaRunLuaFunctionFn = void(__cdecl*)(int index);
     using LuaTeamSearchFn = int(__cdecl*)(uint8_t* npc);
     using NatCheckFn = void(__thiscall*)(uint8_t* gameMain);
+    using ObjectIdFromPilotFn = uint32_t(__thiscall*)(void* um, uint32_t pilotId);
+    using SetSlotColourFn = void(__thiscall*)(void* um, int index, int colour);
+    using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -155,6 +159,9 @@ namespace
     LuaTeamSearchFn g_originalTeamSearch = nullptr;
     NatCheckFn g_originalNatCheck = nullptr;
     bool g_natCheckSkipped = false;
+    ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
+    SetSlotColourFn g_originalSetSlotColour = nullptr;
+    FindObjectFn g_findObject = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -162,6 +169,15 @@ namespace
     uint8_t* g_botMode = nullptr;
     // The game mode of a battle with AI players whose only human is this client.
     uint8_t* g_soloAiMode = nullptr;
+
+    // The AI players of the battle in g_botMode: server pilot id, object id, player slot.
+    struct Bot
+    {
+        uint32_t pilotId;
+        uint32_t objectId;
+        int slot;
+    };
+    std::vector<Bot> g_botTable;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
 
     struct ModeClass
@@ -204,6 +220,7 @@ namespace
     void SpawnAiPlayers(uint8_t* mode, const char* className)
     {
         g_bots.clear();
+        g_botTable.clear();
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
@@ -220,11 +237,7 @@ namespace
             return;
         }
         void* um = *g_game.unitManager;
-        if (!LocalIsRoomMaster(room) || g_game.isObserver(um)) {
-            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: %d AI player(s) run on the room master; not shown here (version 0.1)",
-                       className, count);
-            return;
-        }
+        bool master = LocalIsRoomMaster(room) && !g_game.isObserver(um);
         auto vtable = *reinterpret_cast<void* const* const*>(mode);
         if (vtable[kModeCreateNpcSlot] != reinterpret_cast<void*>(g_game.baseCreateNpc)) {
             g_api->Log(g_mod, SDGO_LOG_ERROR, "%s: CreateNpc is not the CBaseGameMode one; AI players not spawned",
@@ -272,14 +285,19 @@ namespace
                            static_cast<unsigned long>(serverId), static_cast<unsigned long>(npcData));
                 continue;
             }
-            // what CScriptControlMode::CreateNpc and the master branch of the mission NPC
-            // registration add for a network game
+            // what CScriptControlMode::CreateNpc and the mission NPC registration (0x00ACED20)
+            // add for a network game: the room master runs the AI, the other clients get a
+            // remote copy
             *reinterpret_cast<uint32_t*>(unit + kUnitNpcDataId) = npcData;
             g_game.addObject(um, unit, 0, 0);
             unit[kUnitNpcFlag] = 0;
-            unit[kUnitLocalControl] = 1;
-            unit[kUnitMasterNpc] = 1;
-            unit[kUnitRemote] = 0;
+            if (master) {
+                unit[kUnitLocalControl] = 1;
+                unit[kUnitMasterNpc] = 1;
+                unit[kUnitRemote] = 0;
+            } else {
+                unit[kUnitRemote] = 1;
+            }
             *reinterpret_cast<uint32_t*>(unit + kUnitNpcState) = 2;
             int slot = humans + spawned;
             uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
@@ -292,11 +310,13 @@ namespace
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
+            g_botTable.push_back({serverId, objectId, slot});
             g_logPackets = true;
             ++spawned;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d)",
+            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
-                       static_cast<unsigned long>(npcData), team, slot);
+                       static_cast<unsigned long>(npcData), team, slot,
+                       master ? "AI runs here" : "copy of the room master's");
         }
         g_game.calculateTeam(um);
     }
@@ -543,6 +563,53 @@ namespace
         return g_originalTeamSearch(npc);
     }
 
+    // ---- server pilot ids of the AI players ----------------------------------------------
+    //
+    // The battle packets name a player by server pilot id; UM::ObjectIdFromPilotId (0x0049BF00)
+    // finds the object id among the player slots below the player count (UM +0x8C), then
+    // among the live AI units (UM +0x70). The AI battle mode counts its AI players in UM +0x8C
+    // (0x0040417C); here that count stays at the humans, so a dead AI player was not found
+    // and its respawn (PT_NTF_PLAYBACK_UNIT) was dropped. The lookup now answers for the AI
+    // players of this battle the way their slot would.
+    // The respawn handler then calls UM::SetSlotColour(object id - 1, colour) (0x004C1DD0),
+    // which maps NPC object ids to their slot only in the AI modes; for a PvP mode it gets
+    // the AI player's slot.
+
+    const Bot* BotByPilot(uint32_t pilotId)
+    {
+        if (!(pilotId & kAiPilotBit) || g_botTable.empty() || !g_botMode || CurrentPvpMode() != g_botMode)
+            return nullptr;
+        for (const Bot& bot : g_botTable)
+            if (bot.pilotId == pilotId)
+                return &bot;
+        return nullptr;
+    }
+
+    uint32_t __fastcall ObjectIdFromPilot(void* um, void* /*edx*/, uint32_t pilotId)
+    {
+        if (const Bot* bot = BotByPilot(pilotId))
+            return bot->objectId;
+        return g_originalObjectIdFromPilot(um, pilotId);
+    }
+
+    void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
+    {
+        if (index >= 1000 && CurrentPvpMode()) {
+            for (const Bot& bot : g_botTable) {
+                if (bot.objectId != static_cast<uint32_t>(index + 1))
+                    continue;
+                g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX respawns: object %lu %s, slot %d, colour %d",
+                           static_cast<unsigned long>(bot.pilotId), static_cast<unsigned long>(bot.objectId),
+                           g_findObject(um, bot.objectId) ? "present" : "MISSING", bot.slot, colour);
+                g_originalSetSlotColour(um, bot.slot, colour);
+                return;
+            }
+            g_api->Log(g_mod, SDGO_LOG_WARN, "respawn colour for object %d not set: no AI player slot", index + 1);
+            return;
+        }
+        g_originalSetSlotColour(um, index, colour);
+    }
+
     // ---- diagnostics: who runs CNPC::Think ------------------------------------------------
 
     void* g_thinkCallers[8] = {};
@@ -724,7 +791,8 @@ SDGO_MOD_ENTRY
                  Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
-                 Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function");
+                 Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
+                 Bind(g_findObject, "um.find_object");
     if (!bound)
         return 0;
     // The AI players' scripts call these; without them they would jump to address 0.
@@ -740,6 +808,13 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_originalRunLuaFunction)) ||
         !api->HookCode(mod, "lua.our_team_target_search", reinterpret_cast<void*>(&TeamSearch),
                        reinterpret_cast<void**>(&g_originalTeamSearch)))
+        return 0;
+    // Without these an AI player that died does not come back, and SetSlotColour would write
+    // out of bounds for it.
+    if (!api->HookCode(mod, "um.object_id_from_pilot", reinterpret_cast<void*>(&ObjectIdFromPilot),
+                       reinterpret_cast<void**>(&g_originalObjectIdFromPilot)) ||
+        !api->HookCode(mod, "um.set_slot_colour", reinterpret_cast<void*>(&SetSlotColour),
+                       reinterpret_cast<void**>(&g_originalSetSlotColour)))
         return 0;
     if (!api->HookCode(mod, "game.nat_check", reinterpret_cast<void*>(&NatCheck),
                        reinterpret_cast<void**>(&g_originalNatCheck)))

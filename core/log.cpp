@@ -36,6 +36,11 @@ void sdgo::log::Open(const std::wstring& dir, int minLevel)
     const std::wstring previous = dir + L"\\sdgo.prev.log";
     MoveFileExW(current.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
     g_file = _wfsopen(current.c_str(), L"w", _SH_DENYWR);
+    if (!g_file) {
+        // another instance of the game holds sdgo.log
+        const std::wstring own = dir + L"\\sdgo." + std::to_wstring(GetCurrentProcessId()) + L".log";
+        g_file = _wfsopen(own.c_str(), L"w", _SH_DENYWR);
+    }
 }
 
 void sdgo::log::Write(const char* source, int level, const char* fmt, va_list args)
