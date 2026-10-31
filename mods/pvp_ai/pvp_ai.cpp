@@ -383,6 +383,15 @@ namespace
         lifeCost = cost;
     }
 
+    // Grid and tag match (modes 6, 7): the respawn (0x00487030, cases 6 and 7) passes byte +0x24
+    // of the record at pilot +0x50 to the unit change notice for the pilot's own client
+    // (0x004797B0), without a NULL check. The human setup sets +0x50 from a global table
+    // (0x004D7CA0: 0x0043F340 on slot info +0xEA); an AI pilot has none and its respawn read
+    // through NULL, so it never got its next unit. An AI pilot of these modes gets a zero
+    // record there (it has no client to notify).
+    constexpr size_t kPilotUserRecord = 0x50;
+    alignas(16) uint8_t g_aiUserRecord[0x40] = {};
+
     // Same steps as the AI battle mode (0x004B79D0) for an AI slot, with the given team.
     bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team, uint8_t colour)
     {
@@ -431,6 +440,8 @@ namespace
             return false;
         }
         ApplyPlayerLifeCost(room, pilot, unit);
+        if (room[kRoomMode] == 6 || room[kRoomMode] == 7)
+            *reinterpret_cast<uint8_t**>(pilot + kPilotUserRecord) = g_aiUserRecord;
         g_api->Log(g_mod, SDGO_LOG_INFO,
                    "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u; unit grade %u, life cost %u, max HP %lu, "
                    "power %u, life cost %u",
