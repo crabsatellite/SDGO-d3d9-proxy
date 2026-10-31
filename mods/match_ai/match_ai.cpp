@@ -189,6 +189,7 @@ namespace
         uint32_t pilotId;
         uint32_t objectId;
         int slot;
+        uint8_t* unit;
     };
     std::vector<Bot> g_botTable;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
@@ -366,7 +367,7 @@ namespace
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
-            g_botTable.push_back({serverId, objectId, slot});
+            g_botTable.push_back({serverId, objectId, slot, unit});
             g_logPackets = true;
             ++spawned;
             g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
@@ -969,11 +970,91 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_WARN, "access violation logging not available");
     }
 
+    // ---- dead AI players stay for their respawn ------------------------------------------
+    //
+    // UnitManager::Update (0x0049F6A0) handles an object that is gone in two steps, each
+    // decided by the current mode's IsA(9) (the AI battle mode): it removes an NPC from the
+    // NPC list (+0x70) and moves it into the NPC reuse pool (mapPool +0x1EA0), which then owns
+    // it. Only the AI battle modes keep their dead NPCs, for the respawn. A PvP mode pooled the
+    // dead AI player; its respawn (CUnit::Add) brought the pooled object back while the pool
+    // still owned it, and the teardown failed on it (heap corruption freeing the unit). For an
+    // AI player of this battle both steps now get the AI battle mode's answer.
+
+    int g_keptLogs = 0;
+
+    int __stdcall KeepDeadAiPlayer(uint8_t* node, int step)
+    {
+        __try {
+            uint8_t* object = *reinterpret_cast<uint8_t**>(node + 0x10);
+            if (!object || !g_botMode || CurrentPvpMode() != g_botMode)
+                return 0;
+            for (const Bot& bot : g_botTable) {
+                if (bot.unit != object)
+                    continue;
+                if (g_keptLogs < 20) {
+                    ++g_keptLogs;
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX (object %lu) is down: kept for its respawn (%s)",
+                               static_cast<unsigned long>(bot.pilotId), static_cast<unsigned long>(bot.objectId),
+                               step == 0 ? "NPC list" : "not pooled");
+                }
+                return 1;
+            }
+            return 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    }
+
     template <typename Fn>
     bool Bind(Fn& out, const char* symbol)
     {
         out = reinterpret_cast<Fn>(g_api->Symbol(g_mod, symbol));
         return out != nullptr;
+    }
+}
+
+// The two decisions of UnitManager::Update: al holds mode->IsA(9), ebx the object's node. The
+// detours set al for an AI player of this battle, then resume with the original test/jne.
+static void* g_deadListResume = nullptr;
+static void* g_deadPoolResume = nullptr;
+
+static int __stdcall KeepDeadInList(uint8_t* node)
+{
+    return KeepDeadAiPlayer(node, 0);
+}
+
+static int __stdcall KeepDeadOutOfPool(uint8_t* node)
+{
+    return KeepDeadAiPlayer(node, 1);
+}
+
+static __declspec(naked) void DeadNpcListDetour()
+{
+    __asm {
+        pushad
+        push ebx
+        call KeepDeadInList
+        test eax, eax
+        jz keep_answer
+        mov byte ptr [esp + 28], 1
+    keep_answer:
+        popad
+        jmp dword ptr [g_deadListResume]
+    }
+}
+
+static __declspec(naked) void DeadNpcPoolDetour()
+{
+    __asm {
+        pushad
+        push ebx
+        call KeepDeadOutOfPool
+        test eax, eax
+        jz keep_answer
+        mov byte ptr [esp + 28], 1
+    keep_answer:
+        popad
+        jmp dword ptr [g_deadPoolResume]
     }
 }
 
@@ -1018,6 +1099,12 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
                        reinterpret_cast<void**>(&g_originalFindPlayer)))
+        return 0;
+    // Without these a dead AI player is pooled, and its respawn corrupts the heap.
+    if (!api->HookCode(mod, "um.update_dead_npc_list", reinterpret_cast<void*>(&DeadNpcListDetour),
+                       &g_deadListResume) ||
+        !api->HookCode(mod, "um.update_dead_npc_pool", reinterpret_cast<void*>(&DeadNpcPoolDetour),
+                       &g_deadPoolResume))
         return 0;
     if (!api->HookCode(mod, "game.nat_check", reinterpret_cast<void*>(&NatCheck),
                        reinterpret_cast<void**>(&g_originalNatCheck)))
