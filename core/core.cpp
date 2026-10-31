@@ -179,6 +179,34 @@ namespace
         return 1;
     }
 
+    int Api_HookSystemExport(SdgoMod* mod, const wchar_t* dll, const char* function, void* detour, void** original)
+    {
+        if (!mod || !dll || !dll[0] || wcspbrk(dll, L"\\/:") || !function || !function[0])
+            return 0;
+        wchar_t path[MAX_PATH] = {};
+        UINT length = GetSystemDirectoryW(path, MAX_PATH);
+        if (!length || length >= MAX_PATH || length + 1 + wcslen(dll) >= MAX_PATH)
+            return 0;
+        wcscat_s(path, L"\\");
+        wcscat_s(path, dll);
+        // Do not load a DLL on behalf of a mod, or resolve an app-local namesake.
+        HMODULE module = GetModuleHandleW(path);
+        void* target = module ? reinterpret_cast<void*>(GetProcAddress(module, function)) : nullptr;
+        if (!target) {
+            sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "system export %s!%s not loaded or missing",
+                              Narrow(dll).c_str(), function);
+            return 0;
+        }
+        std::string error;
+        if (!sdgo::hooks::HookCode(mod->id, target, detour, original, error)) {
+            sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "hook system export %s!%s failed: %s",
+                              Narrow(dll).c_str(), function, error.c_str());
+            return 0;
+        }
+        sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "hooked system export %s!%s", Narrow(dll).c_str(), function);
+        return 1;
+    }
+
     int Api_SettingInt(SdgoMod* mod, const char* key, int def)
     {
         if (!mod || !key)
@@ -363,6 +391,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.SettingInt = Api_SettingInt;
     g_api.SettingString = Api_SettingString;
     g_api.ModDirectory = Api_ModDirectory;
+    g_api.HookSystemExport = Api_HookSystemExport;
 
     LoadMods();
     size_t active = 0;

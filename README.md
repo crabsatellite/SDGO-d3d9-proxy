@@ -23,6 +23,7 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 |---|---|---|---|---|
 | Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
 | IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [docs/ime-fix.md](docs/ime-fix.md) |
+| Input method compatibility | Stops input methods such as iFlytek from freezing or crashing the game: the repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game, and this restores it for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
 
 A feature that lists the battle server works only when the battle servers have the server
