@@ -14,12 +14,20 @@
 //   UM->SetPlayerInfo(slot, 0, unit+4, record+4, record)            (0x0049DFE0)
 //   UM->PlayerSlot(slot)+8 = NPC name (npc data +5)                 (0x004039E0, 0x004026F0)
 //   UM->AddAiUnit(unit); unit+0x2B68 = record+0 (server id)         (0x0049DB40)
-// and, as that mode does, counts them as players (UM+0x8C = humans + AI, 0x00497C50) before
-// UM->CalculateTeam (0x0049E0F0).
+//   UM->CalculateTeam()                                             (0x0049E0F0)
+//
+// The CBaseGameMode CreateNpc leaves out what CScriptControlMode::CreateNpc (0x00ADF970)
+// and the mode's NPC registration (CMissionMode vt slot 24, 0x00ACED20) do for a network
+// game, so right after it this does those steps, minus the mission-only ones (objective
+// list, the mode as the unit's owner, whose callbacks are mission vftable slots):
+//   unit+0x3238 = npc data id; UM->AddObject(unit, 0, 0) (0x0049BA20: object id, world);
+//   on the room master: +0x31ED = 0, +0x2B64 = 1, +0x3074 = 1, +0x2B65 = 0, +0x3070 = 2.
 //
 // The AI runs on the room master, found the way CMissionMode::Init finds it: the local
 // player's record (record+0 == room+0x68) has record+0x1C set. The start point index of an
-// AI player follows the humans of its team, as the PvP Init counts them per team.
+// AI player follows the humans of its team, as the PvP Init counts them per team. As in
+// mission_ai, the player count (UM+0x8C) stays at the humans: the PvP game keeps a UDP
+// connection to every counted player.
 //
 // Version 0.1 spawns the AI players on the room master only; other clients log them.
 
@@ -49,6 +57,12 @@ namespace
     constexpr size_t kUnitObjectId = 0x04;
     constexpr size_t kUnitServerId = 0x2B68;
     constexpr size_t kUnitNpcData = 0x320C;     // npc data*, name (wchar) at +5
+    constexpr size_t kUnitNpcDataId = 0x3238;   // u32
+    constexpr size_t kUnitLocalControl = 0x2B64; // u8, 0x00670290
+    constexpr size_t kUnitRemote = 0x2B65;      // u8, 0x006702A0 (1: no local AI)
+    constexpr size_t kUnitNpcState = 0x3070;    // u32, 0x0065EEF0
+    constexpr size_t kUnitMasterNpc = 0x3074;   // u8
+    constexpr size_t kUnitNpcFlag = 0x31ED;     // u8
     constexpr size_t kSlotName = 0x08;          // std::wstring in the player slot
     constexpr size_t kModeCreateNpcSlot = 13;
 
@@ -63,6 +77,7 @@ namespace
     using PlayerSlotFn = uint8_t*(__thiscall*)(void* um, int slot);
     using WStringAssignFn = void(__thiscall*)(void* string, const wchar_t* text, size_t length);
     using AddAiUnitFn = void(__thiscall*)(void* um, uint8_t* unit);
+    using AddObjectFn = void(__thiscall*)(void* um, uint8_t* unit, uint32_t id, int flag);
     using CalculateTeamFn = void(__thiscall*)(void* um);
 
     const SdgoApi* g_api = nullptr;
@@ -79,6 +94,7 @@ namespace
         PlayerSlotFn playerSlot;
         WStringAssignFn assign;
         AddAiUnitFn addAiUnit;
+        AddObjectFn addObject;
         CalculateTeamFn calculateTeam;
     };
     GameCalls g_game = {};
@@ -176,6 +192,15 @@ namespace
                            static_cast<unsigned long>(serverId), static_cast<unsigned long>(npcData));
                 continue;
             }
+            // what CScriptControlMode::CreateNpc and the master branch of the mission NPC
+            // registration add for a network game
+            *reinterpret_cast<uint32_t*>(unit + kUnitNpcDataId) = npcData;
+            g_game.addObject(um, unit, 0, 0);
+            unit[kUnitNpcFlag] = 0;
+            unit[kUnitLocalControl] = 1;
+            unit[kUnitMasterNpc] = 1;
+            unit[kUnitRemote] = 0;
+            *reinterpret_cast<uint32_t*>(unit + kUnitNpcState) = 2;
             int slot = humans + spawned;
             uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
             g_game.setPlayerInfo(um, slot, 0, objectId, *reinterpret_cast<uint32_t*>(record + kRecordConnection), record);
@@ -191,7 +216,6 @@ namespace
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
                        static_cast<unsigned long>(npcData), team, slot);
         }
-        *reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(um) + 0x8C) = humans + spawned;
         g_game.calculateTeam(um);
     }
 
@@ -234,7 +258,8 @@ SDGO_MOD_ENTRY
                  Bind(g_game.findStartPoint, "um.find_start_point") && Bind(g_game.isObserver, "um.is_observer") &&
                  Bind(g_game.baseCreateNpc, "mode.base_create_npc") && Bind(g_game.setPlayerInfo, "um.set_player_info") &&
                  Bind(g_game.playerSlot, "um.player_slot") && Bind(g_game.assign, "wstring.assign") &&
-                 Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.calculateTeam, "um.calculate_team");
+                 Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
+                 Bind(g_game.calculateTeam, "um.calculate_team");
     if (!bound)
         return 0;
     int hooked = 0;
