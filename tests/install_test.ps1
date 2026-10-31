@@ -12,9 +12,13 @@
     3. -OverwriteConfig installs mod.ini and sdgo.ini as they are in package 2.
   The battle server installer gets the same update check.
 #>
+param([string]$BuildDir = "build")
+
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$work = Join-Path $repo "build\install_test_run"
+$buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
+$work = [IO.Path]::GetFullPath((Join-Path $buildRoot "install_test_run"))
+if (-not $work.StartsWith($buildRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe test directory" }
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 
 Add-Type -Namespace SdgoInstallTest -Name Ini -MemberDefinition @'

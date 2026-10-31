@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/ai_scoring.h"
 
 namespace
 {
@@ -142,9 +143,16 @@ namespace
             if (*p < '0' || *p > '9')
                 break;
             uint32_t value = 0;
-            while (*p >= '0' && *p <= '9')
-                value = value * 10 + static_cast<uint32_t>(*p++ - '0');
-            ids.push_back(value);
+            bool overflow = false;
+            while (*p >= '0' && *p <= '9') {
+                uint32_t digit = static_cast<uint32_t>(*p++ - '0');
+                if (value > (UINT32_MAX - digit) / 10)
+                    overflow = true;
+                if (!overflow)
+                    value = value * 10 + digit;
+            }
+            if (!overflow)
+                ids.push_back(value);
         }
         return ids;
     }
@@ -205,8 +213,13 @@ namespace
     int ReadNumber(const char*& p)
     {
         int value = 0;
-        while (*p >= '0' && *p <= '9')
-            value = value * 10 + (*p++ - '0');
+        while (*p >= '0' && *p <= '9') {
+            int digit = *p++ - '0';
+            if (value < kSlotsPerTeam)
+                value = value * 10 + digit;
+            if (value > kSlotsPerTeam)
+                value = kSlotsPerTeam;
+        }
         return value;
     }
 
@@ -218,7 +231,7 @@ namespace
         plan.level = g_settings.defaultLevel;
         char lower[kRoomTitleMax + 1];
         size_t n = 0;
-        for (; title[n] && n < kRoomTitleMax; ++n)
+        for (; n < kRoomTitleMax && title[n]; ++n)
             lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
         lower[n] = '\0';
         const char* command = strstr(lower, "!ai");
@@ -345,7 +358,7 @@ namespace
                        copy[kRoomMode], copy[kRoomType],
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(copy + kRoomPlayers)), view.humans[1],
                        view.humans[2], Printable(view.title).c_str(), plan.enabled ? "requested" : "not requested");
-        return plan.enabled;
+        return plan.enabled && (plan.enemies != 0 || plan.allies != 0);
     }
 
     int GuardedDecide(uint8_t* frame, bool log)
@@ -634,17 +647,6 @@ namespace
     constexpr size_t kRoomTagUnits1 = 0x32116;   // u8
     constexpr size_t kRoomTagUnits2 = 0x32117;   // u8
 
-    int GridGauge(int perTeam)
-    {
-        switch (perTeam) {
-        case 1: case 2: case 4: return 0x50;
-        case 3: return 0x3C;
-        case 5: return 0x78;
-        case 6: return 0xA0;
-        default: return -1;
-        }
-    }
-
     void RecountBattle(uint8_t* room)
     {
         int count[3] = {};
@@ -666,10 +668,13 @@ namespace
             field(kRoomPower1) = size1 * 1000;
             field(kRoomPower2) = size2 * 1000;
         } else if (mode == 6) {
-            if (GridGauge(size1) > 0)
-                field(kRoomGauge1) = GridGauge(size1);
-            if (GridGauge(size2) > 0)
-                field(kRoomGauge2) = GridGauge(size2);
+            // The client and its HUD have one full-bar value. Different server
+            // totals (e.g. 80/60 in a 1v3 room) cannot match that display.
+            int gauge = sdgo::ai::GridGaugeForTeams(size1, size2);
+            if (gauge > 0) {
+                field(kRoomGauge1) = gauge;
+                field(kRoomGauge2) = gauge;
+            }
         } else if (mode == 7) {
             for (int slot = 0; slot < kSlots; ++slot) {
                 if (!(SlotPilotId(room, slot) & kAiPilotBit))

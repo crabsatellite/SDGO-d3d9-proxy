@@ -9,15 +9,17 @@
     3. chain to the shim  -> refuses the self-chain and falls back to the system d3d9.dll
   Build first: cmake --build build --config Release (target loader_test).
 #>
-param([string]$Config = "Release")
+param([string]$Config = "Release", [string]$BuildDir = "build")
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$exe = Join-Path $repo "build\$Config\loader_test.exe"
-$stage = Join-Path $repo "build\stage\$Config\client"
+$buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
+$exe = Join-Path $buildRoot "$Config\loader_test.exe"
+$stage = Join-Path $buildRoot "stage\$Config\client"
 $systemD3d9 = Join-Path $env:WINDIR "SysWOW64\d3d9.dll"
 if (-not (Test-Path $exe)) { throw "Build loader_test first" }
-$work = Join-Path $repo "build\loader_test_run"
+$work = [IO.Path]::GetFullPath((Join-Path $buildRoot "loader_test_run"))
+if (-not $work.StartsWith($buildRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe test directory" }
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 
 function New-Case([string]$name, [string]$chain, [string]$chainFile) {
