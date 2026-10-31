@@ -1,20 +1,33 @@
 # SDGO mod framework
 
 A mod loader for the SD Gundam Online game client (`GOnline.exe`) and battle server
-(`BattleServer.exe`), plus the mods built on it. The headline mod adds **AI wingmen to co-op
-missions**: AI pilots that join your team the way the game's own AI battle mode adds bots,
-fight with the game's own bot AI, score real kills and can be shot down.
+(`BattleServer.exe`). It puts a small core into both programs that checks the exe build,
+verifies every code address before using it and loads mods. Features are built as mods on
+top of it, on the client, the battle server, or both.
 
 Unofficial fan project. It contains no game files; SD Gundam Online and its assets belong
 to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
 
+* [Features](#features)
 * [What is in the package](#what-is-in-the-package)
 * [Supported game builds](#supported-game-builds)
 * [Install](#install) · [Uninstall](#uninstall)
-* [Co-op mission wingmen](#co-op-mission-wingmen)
-* [Adding more bot units](#adding-more-bot-units)
 * [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
-* [Building from source](#building-from-source) · [Writing mods](docs/framework.md)
+* [Building from source](#building-from-source) · [Adding a feature](#adding-a-feature)
+
+## Features
+
+Each feature is one or more mods with its own guide (use, settings, logs, how it works).
+
+| feature | what it does | mods | install on | guide |
+|---|---|---|---|---|
+| Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
+| IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [docs/ime-fix.md](docs/ime-fix.md) |
+| Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
+
+A feature that lists the battle server works only when the battle servers have the server
+part and the players have the client part. Players without the client part simply do not
+get the feature; the game is otherwise unaffected.
 
 ## What is in the package
 
@@ -35,14 +48,8 @@ SDGO-ModFramework-<version>/
 | `sdgo\symbols\*.ini` | both | Verified addresses and byte signatures, one file per supported exe build. |
 | `sdgo\mods\<id>\` | both | One folder per mod: `<id>.dll`, `mod.ini` (manifest + settings), extra files. |
 
-Mods in this release:
-
-| mod | host | what it does |
-|---|---|---|
-| `coop_ai` | battle server | Adds AI wingmen to co-op missions whose room title asks for them (`!ai3 lv4`). |
-| `mission_ai` | client | Spawns those wingmen in the mission and lets mission enemies target them. |
-| `ime_fix` | client | Fixes IME (Chinese/Japanese/Korean input) commits at one call site that reads a byte count as a character count. |
-| `net_probe` | client | Diagnostic packet logger for mod development; off by default. |
+`client\` holds the client mods and `server\` the battle server mods; the installers copy
+whatever the package contains, so new features need no installer changes.
 
 ## Supported game builds
 
@@ -89,7 +96,7 @@ Check: after the game has started, `sdgo\logs\sdgo.log` begins with
 
 ### Battle server (whoever hosts the server)
 
-Stop the battle servers, then:
+Only needed for features that list the battle server. Stop the battle servers, then:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"
@@ -98,11 +105,9 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 `-ServerRoot` is either one battle server folder (with `BattleServer.exe`) or the folder
 that holds several (`BattleServer1`, `BattleServer2`, ...). `-Only BattleServer3` limits it to
 named folders. Start the battle servers again afterwards. How they are started (a server
-manager, batch files, a service) does not matter. Manual install: copy the contents of
-`server\` into each battle server folder.
-
-The wingmen need both halves: `coop_ai` on the battle servers and `mission_ai` on the
-clients. Players without the client part do not see the wingmen.
+manager, batch files, a service) does not matter. An existing `winmm.dll` is chained the
+same way as on the client. Manual install: copy the contents of `server\` into each battle
+server folder.
 
 ## Uninstall
 
@@ -115,89 +120,6 @@ This removes the loader DLL and `sdgo\` (to the Recycle Bin) and puts a chained
 `d3d9.dll`/`winmm.dll` back under its original name. To turn a single mod off instead, set
 `<mod id>=0` under `[mods]` in `sdgo\sdgo.ini`.
 
-## Co-op mission wingmen
-
-Put a command in the co-op mission room title (the title holds 20 bytes):
-
-| title | effect |
-|---|---|
-| `!ai` | fill the free player slots with wingmen |
-| `!ai2` | two wingmen (still capped by the free slots) |
-| `!ai3 lv4` | three wingmen from the level 4 pool |
-| no `!ai` | no wingmen (unless `RequireRoomCommand=0`) |
-
-* Wingmen are added when the mission starts. They are AI pilots on your team, added by the
-  battle server the same way the AI battle modes add theirs, so the game treats them as
-  real participants: their kills count, enemies' hits on them count, and they are destroyed
-  like any unit.
-* They fight with the game's own AI battle bot AI (the `VSAI_*` scripts of the AI battle
-  bots), on the room host's client.
-* The squad never exceeds `SquadSize` (4) players: wingmen = SquadSize minus humans, or
-  fewer if `!aiN` asks for fewer.
-* Levels pick from the AI battle bot units (`tbl_NpcData` 3604001–3604030). Default pools:
-  `lv1` Dynames, Nadleeh, Exia, Sword Calamity, Launcher/Sword Strike, Deathscythe Hell,
-  Blitz, Berga-Giros, Palace Athene; `lv2` Brave, Blu Duel, Aile Strike, Vigna Ghina,
-  Gundam (MC), Hyaku Shiki; `lv3` mobile armors (Val-Walo, Big-Zam, Psycho Gundam,
-  Apsalus II); `lv4`/`lv5` Strike Freedom, Zeta (awakened), Crossbone X3, Sandrock,
-  Infinite Justice, Seravee, Master Gundam, Deathscythe Hell (EW), Heavy Arms (EW), Neue Ziel.
-  Without `lvN` the room uses `DefaultLevel` (2).
-* Mission enemies normally only target human players; the client mod lets an enemy switch
-  to a wingman that is closer than its current target (`EnemiesTargetWingmen`).
-
-Settings: `sdgo\mods\coop_ai\mod.ini` on the battle server, `sdgo\mods\mission_ai\mod.ini` on
-the client. Details: [docs/mods.md](docs/mods.md).
-
-## Adding more bot units
-
-The level pools can only use NPCs that the battle server knows as AI battle bots. A battle
-server builds that list when it starts: every row of `GOnlineGame.dbo.tbl_NpcData` whose
-`NpcDataID` is between **3604001 and 3607000** becomes an AI bot (the stock database has 30,
-3604001–3604030). The mods never write to the database; a pool id that is not in the list
-is skipped, and the battle server log says
-`no NPC of LevelN is in the server's AI-NPC list` if a whole pool is missing.
-
-A new bot unit needs three things that match each other:
-
-1. **A server database row** in `tbl_NpcData` with a new `NpcDataID` in the range.
-   `UseUnitID` is the unit it flies; `UseUnitHP`, `NpcPoint` and `NpcUnitLevel` set its
-   strength. The simplest start is a copy of an existing bot:
-
-   ```sql
-   INSERT INTO GOnlineGame.dbo.tbl_NpcData
-     (NpcDataID, NpcName, UseUnitID, UseUnitHP, NpcPoint, ObjectHpUp, NpcType, AddUnitEXP,
-      AddPoint, BossFlag, NpcUnitLevel, ItemBuffNumber, CreateUnitHp, DestroyUnitHp)
-   SELECT 3604031, 'MY NEW BOT', UseUnitID, 16000, NpcPoint, ObjectHpUp, NpcType, AddUnitEXP,
-          AddPoint, BossFlag, NpcUnitLevel, ItemBuffNumber, CreateUnitHp, DestroyUnitHp
-   FROM GOnlineGame.dbo.tbl_NpcData WHERE NpcDataID = 3604001;
-   ```
-
-   The unit (`UseUnitID`) must exist in the server's unit data. The stock bots use the
-   dedicated AI units 3607001–3607030; a different, non-AI unit has not been tested.
-
-2. **A client NPC record** with the same id. Every player's client needs it, or it cannot
-   spawn the unit. NPC records live in the client's grid data, table `0198` (inside
-   `GPackData`, encrypted). Rows are 598 bytes:
-
-   | offset | field |
-   |---|---|
-   | `0x00` | NPC data id (u32), e.g. 3604031 |
-   | `0x05` | display name (UTF-16) |
-   | `0x69` | unit id (u32), e.g. 3607001 |
-   | `0x6D` | AI script name (UTF-16): one of the AI battle bot scripts, `VSAI_Gunfighter_01`–`10`, `VSAI_Infighter_01`–`07`, `VSAI_Tanker_01`–`05`, `VSAI_Stoker_01`–`08` |
-   | `0xE5` | HP (u32) |
-
-   The unit must exist in the client's unit tables as well (the AI units are in tables
-   `0199` and `0245`). This repository has no grid data editor; any tool that decrypts and
-   rewrites the client's `.gdt` tables can do it.
-
-3. **A pool entry**: add the id to a `LevelN=` line in the battle server's
-   `sdgo\mods\coop_ai\mod.ini`, then restart the battle servers (they load the NPC table and
-   the mod settings at start).
-
-Check: the battle server log (`sdgo\logs\sdgo.log` in its folder) shows
-`slot N: AI pilot ... (NPC 3604031) joined on team 1`, and the room host's client log shows
-`AI participant ... joined as object ... (NPC 3604031 ...)`.
-
 ## Configuration
 
 `sdgo\sdgo.ini` (one per exe folder):
@@ -209,12 +131,12 @@ Check: the battle server log (`sdgo\logs\sdgo.log` in its folder) shows
 | `[mods] <id>=0` | turn a mod off |
 
 Each mod's settings are in the `[settings]` section of its `mod.ini`; every key is
-documented there and in [docs/mods.md](docs/mods.md).
+documented there and in the feature's guide.
 
 ## Troubleshooting
 
 All diagnostics go to `sdgo\logs\sdgo.log` next to the exe (the previous run is
-`sdgo.prev.log`).
+`sdgo.prev.log`). Framework messages:
 
 | log line | meaning |
 |---|---|
@@ -222,7 +144,8 @@ All diagnostics go to `sdgo\logs\sdgo.log` next to the exe (the previous run is
 | `no symbol file for host ...` | unsupported exe build; every mod stays off and the game is unaffected |
 | `symbol X rejected: byte +N is .., expected ..` | the code at that address differs (another patch or a different build); mods that need X stay off |
 | `required symbol X ...` / `0 of N mods active` | a mod could not start because a symbol it needs failed |
-| server: `mission start: ... title '...'` | the battle server read the room title; `wingmen not requested` means no `!ai` |
+
+Messages of a particular feature are listed in its guide.
 
 ### Other game builds
 
@@ -243,8 +166,14 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1     # dist\SDGO-ModFr
 
 The install scripts also install straight from a build:
 `tools\install_client.ps1 -GameDir ... -Source build\stage\Release\client`.
-Architecture, the mod API, symbol files, tests and how to write a mod:
-[docs/framework.md](docs/framework.md).
+
+## Adding a feature
+
+A new feature is one or more mods under `mods/`, registered in `CMakeLists.txt`, plus a guide
+in `docs/` and a row in the [Features](#features) table of both READMEs. The build stages it
+into `client\` or `server\`, and the installers and the package pick it up without changes.
+Step by step, with the mod API, symbol files and the guide outline:
+[docs/framework.md](docs/framework.md#adding-a-feature).
 
 ## License
 

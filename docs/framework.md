@@ -1,7 +1,8 @@
 # Framework reference
 
-For people who build the framework or write mods. Installing and using the released mods
-is covered in the [README](../README.md).
+For people who build the framework or write mods. Installing is covered in the
+[README](../README.md); using each feature in its guide, linked from the README's
+[Features](../README.md#features) table.
 
 * [How the framework gets into the process](#how-the-framework-gets-into-the-process)
 * [Folder layout and configuration](#folder-layout-and-configuration)
@@ -9,6 +10,7 @@ is covered in the [README](../README.md).
 * [Mod manifest (mod.ini)](#mod-manifest-modini)
 * [Mod API](#mod-api)
 * [Writing a mod](#writing-a-mod)
+* [Adding a feature](#adding-a-feature)
 * [Building, testing, packaging](#building-testing-packaging)
 * [Source tree](#source-tree)
 
@@ -210,7 +212,68 @@ SDGO_MOD_ENTRY
 
 Real examples: `ime_fix` (one import hook), `mission_ai` (code + vtable hooks, calls into the
 game, runs Lua in the game's Lua 5.0 state), `coop_ai` (server side, calls game functions
-under the game's own locks). See [mods.md](mods.md).
+under the game's own locks). Their internals are in the "How it works" section of
+[coop-wingmen.md](coop-wingmen.md) and [ime-fix.md](ime-fix.md).
+
+## Adding a feature
+
+A feature is what players see: one or more mods that work together, with one guide. The
+build, the installers and the package handle any number of mods, so a new feature touches
+only its own files plus the two READMEs.
+
+1. **Symbols.** Add what the feature needs to `symbols/<host key>.ini` of each exe it runs in,
+   with a comment above every entry, and check it with `tools/verify_symbols.py`
+   (see [Symbol files](#symbol-files)).
+2. **Mods.** One mod per program: `mods/<id>/<id>.cpp` and `mods/<id>/mod.ini`. A feature that
+   needs both the client and the battle server has two mods, as the wingmen have `mission_ai`
+   (client) and `coop_ai` (server).
+   * `mod.ini`: a header comment saying what the mod does and which feature it belongs to,
+     `hosts`, `requires`, and every setting with a comment above it.
+   * An update keeps the player's existing `mod.ini` (only `-OverwriteConfig` replaces it).
+     Give every setting the same default in code (`SettingInt(mod, key, default)`) as in
+     `mod.ini`, so a key added later works with an old file.
+   * A feature not meant for everyone starts with `enabled=0`.
+3. **Build.** Register each mod in `CMakeLists.txt` with `sdgo_add_mod` (`SERVER` for the
+   battle server, `FILES` for files the mod reads). It is staged into
+   `build/stage/<config>/client` or `server`, and from there goes into the package and
+   through the installers. List it in the commented `[mods]` block of `config/sdgo.ini`.
+4. **Tests.** Checks that run without the game live next to the mod (`mods/<id>/test/`),
+   like `mods/mission_ai/test/sim_mission.lua`.
+5. **Guide.** Write `docs/<feature>.md` with the outline below; add `docs/<feature>.zh-CN.md`
+   when the feature is meant for players.
+6. **Catalog.** Add a row to the Features table in `README.md` and `README.zh-CN.md`: name,
+   what it does and how to trigger it in one or two sentences, mods, where to install
+   (`clients`, or `battle server + clients`), guide link.
+7. **Version.** Bump `VERSION` and each changed mod's `version=` before packaging.
+
+Guide outline (the existing guides follow it; [coop-wingmen.md](coop-wingmen.md) is the
+complete example):
+
+```markdown
+# <Feature name>
+
+What the player gets, in one paragraph.
+
+| mod | host | part |
+|---|---|---|
+| `<id>` | client / battle server | what this mod does for the feature |
+
+## Use
+How to turn it on or trigger it, and what happens.
+
+## Settings
+One table per mod: key, default, meaning. Say when a change takes effect.
+
+## Logs and troubleshooting
+Example log lines, then a table: symptom or log line -> cause.
+
+## Extending
+Only for data-driven features: how users add their own content. Name the section after
+what is added (the wingmen guide has "Adding more bot units").
+
+## How it works
+Hook points, symbols, the game functions it calls, its tests.
+```
 
 ## Building, testing, packaging
 
@@ -241,6 +304,7 @@ cmake --build build --config Release
 | `symbols/` | one verified symbol file per supported exe build |
 | `mods/` | the mods (one folder each) |
 | `config/sdgo.ini` | default global settings |
+| `docs/` | this reference and one guide per feature (`<feature>.md`, `<feature>.zh-CN.md`) |
 | `cmake/version.rc.in` | version resource of every DLL |
 | `tests/`, `tools/` | tests, install/package scripts, symbol checker |
 | `third_party/minhook` | MinHook 1.3.4, unmodified (BSD 2-Clause) |

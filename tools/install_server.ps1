@@ -159,5 +159,5 @@ foreach ($target in $targets) {
     Write-Host "$name : installed ($copied files copied, $kept settings files kept)"
 }
 if (-not $Uninstall) {
-    Write-Host "Start the battle servers again. Players also need the client install (install_client.ps1) for the wingmen."
+    Write-Host "Start the battle servers again. Features with a server part also need the client install (install_client.ps1) on the players' machines."
 }
