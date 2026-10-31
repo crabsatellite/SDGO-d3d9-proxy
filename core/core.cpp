@@ -343,8 +343,19 @@ namespace
         std::stable_sort(g_mods.begin(), g_mods.end(), [](const SdgoMod* a, const SdgoMod* b) {
             return a->order != b->order ? a->order < b->order : a->id < b->id;
         });
+        // The game's own code has not started yet, so the code hooks of all mods are switched
+        // on together after the last mod has loaded. One by one they took about 70 ms each,
+        // and GUpdate.exe gives the game 3 s to reach WinMain (it closes the "9YOU SDGO"
+        // event the game opens there; without it the game exits silently).
+        sdgo::hooks::BeginBatch();
         for (SdgoMod* mod : g_mods)
             LoadMod(mod);
+        size_t enabled = 0;
+        std::string error;
+        if (sdgo::hooks::EndBatch(&enabled, error))
+            sdgo::log::Writef("core", SDGO_LOG_INFO, "%u code hooks switched on", static_cast<unsigned>(enabled));
+        else
+            sdgo::log::Writef("core", SDGO_LOG_ERROR, "switching on the code hooks failed (%s)", error.c_str());
     }
 }
 

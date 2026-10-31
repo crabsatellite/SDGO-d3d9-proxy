@@ -16,4 +16,10 @@ namespace sdgo::hooks
 
     // Removes every hook of the owner, newest first. Used when a mod fails to load.
     void Rollback(const std::string& owner);
+
+    // While a batch is open (the mods' load), HookCode queues the code hooks it creates;
+    // EndBatch switches them all on with one thread freeze instead of one per hook (each
+    // freeze takes a snapshot of every thread in the system, tens of milliseconds).
+    void BeginBatch();
+    bool EndBatch(size_t* enabled, std::string& error);
 }

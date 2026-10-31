@@ -19,6 +19,8 @@ namespace
     std::vector<Record> g_records;
     CRITICAL_SECTION g_lock;
     bool g_ready = false;
+    bool g_batch = false;
+    size_t g_queued = 0;
 
     struct Guard
     {
@@ -81,13 +83,40 @@ bool sdgo::hooks::HookCode(const std::string& owner, void* target, void* detour,
         return false;
     MH_STATUS status = MH_CreateHook(target, detour, original);
     if (status == MH_OK)
-        status = MH_EnableHook(target);
+        status = g_batch ? MH_QueueEnableHook(target) : MH_EnableHook(target);
     if (status != MH_OK) {
         MH_RemoveHook(target);
         error = MH_StatusToString(status);
         return false;
     }
+    if (g_batch)
+        ++g_queued;
     g_records.push_back({owner, Kind::Code, target, *original});
+    return true;
+}
+
+void sdgo::hooks::BeginBatch()
+{
+    if (!g_ready)
+        return;
+    Guard guard;
+    g_batch = true;
+    g_queued = 0;
+}
+
+bool sdgo::hooks::EndBatch(size_t* enabled, std::string& error)
+{
+    if (!g_ready)
+        return true;
+    Guard guard;
+    g_batch = false;
+    if (enabled)
+        *enabled = g_queued;
+    MH_STATUS status = MH_ApplyQueued();
+    if (status != MH_OK) {
+        error = MH_StatusToString(status);
+        return false;
+    }
     return true;
 }
 
@@ -155,6 +184,8 @@ void sdgo::hooks::Rollback(const std::string& owner)
         if (record.kind == Kind::Code) {
             MH_DisableHook(record.site);
             MH_RemoveHook(record.site);
+            if (g_batch && g_queued > 0)
+                --g_queued;
         } else {
             WritePointer(static_cast<void**>(record.site), record.original);
         }
