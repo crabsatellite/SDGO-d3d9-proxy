@@ -1307,6 +1307,28 @@ static __declspec(naked) void DeckCheckDetour()
     }
 }
 
+// CUnit::SwitchDeck's skill setup (esi = the unit) reads the owner's human record at index
+// object id - 1; an AI player's unit (object 1001 and up) has none and the record read past
+// the humans crashed the game at its first deck switch (CSkill, 0x00669189). Its unit goes
+// to the end of the block, as when the skill system is off.
+static void* g_switchSkillResume = nullptr;
+static void* g_switchSkillSkip = nullptr;
+
+static __declspec(naked) void SwitchSkillDetour()
+{
+    __asm {
+        pushad
+        push esi
+        call KeepOwnUnitThunk
+        test eax, eax
+        popad
+        jnz skip_skills
+        jmp dword ptr [g_switchSkillResume]
+    skip_skills:
+        jmp dword ptr [g_switchSkillSkip]
+    }
+}
+
 static __declspec(naked) void DeadNpcListDetour()
 {
     __asm {
@@ -1389,6 +1411,12 @@ SDGO_MOD_ENTRY
     g_deckSkip = api->Symbol(mod, "unit.init_deck_skip");
     if (!g_deckSkip ||
         !api->HookCode(mod, "unit.init_deck_check", reinterpret_cast<void*>(&DeckCheckDetour), &g_deckCheckResume))
+        return 0;
+    // Without this the first deck switch of an AI player (mode 7) crashes the game.
+    g_switchSkillSkip = api->Symbol(mod, "unit.switch_deck_skill_skip");
+    if (!g_switchSkillSkip ||
+        !api->HookCode(mod, "unit.switch_deck_skill_check", reinterpret_cast<void*>(&SwitchSkillDetour),
+                       &g_switchSkillResume))
         return 0;
     // Without these a dead AI player is pooled, and its respawn corrupts the heap.
     if (!api->HookCode(mod, "um.update_dead_npc_list", reinterpret_cast<void*>(&DeadNpcListDetour),
