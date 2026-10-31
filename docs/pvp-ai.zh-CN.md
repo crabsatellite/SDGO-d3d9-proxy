@@ -18,7 +18,7 @@ English: [pvp-ai.md](pvp-ai.md)
 | `pvp_ai` | 对战服务器 |
 | `match_ai` | 每个参战玩家的客户端 |
 
-按[安装说明](../README.zh-CN.md#安装)安装，然后使用平常的启动器进入游戏。
+按[安装说明](setup.zh-CN.md#安装)安装，然后使用平常的启动器进入游戏。
 
 ## 使用
 

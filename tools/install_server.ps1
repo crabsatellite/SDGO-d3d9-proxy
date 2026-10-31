@@ -37,6 +37,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "install_common.ps1")
 $ProductName = "SDGO mod framework"
 $Loader = "winmm.dll"
 $Chain = "winmm_chain.dll"
@@ -148,6 +149,7 @@ if (-not $Uninstall) {
         if (-not (Test-Path -LiteralPath $Source)) { $Source = Join-Path $PSScriptRoot "..\build\stage\Release\server" }
     }
     $Source = (Resolve-Path -LiteralPath $Source).Path
+    $preservedConfigFiles = @(Get-ModConfigPaths $Source)
     if (-not (Test-Path -LiteralPath (Join-Path $Source $Loader))) { throw "$Source has no $Loader; pass -Source <package>\server" }
     $modInis = @()
     Get-ChildItem -LiteralPath (Join-Path $Source "sdgo\mods") -Directory | ForEach-Object { $modInis += "sdgo\mods\$($_.Name)\mod.ini" }
@@ -194,6 +196,10 @@ foreach ($target in $targets) {
         if ((Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
             if ($relative -eq "sdgo\sdgo.ini") {
                 $iniKept = $true
+                return
+            }
+            if ($preservedConfigFiles -contains $relative) {
+                Write-Host "$name : kept $relative"
                 return
             }
             if ($modInis -contains $relative) {

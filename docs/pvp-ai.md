@@ -18,7 +18,7 @@ Use a Beta build containing both parts, with matching versions on every particip
 | `pvp_ai` | Battle servers |
 | `match_ai` | Every participating client |
 
-Follow the [installation guide](../README.md#install), then use your usual launcher.
+Follow the [installation guide](setup.md#install), then use your usual launcher.
 
 ## Use
 

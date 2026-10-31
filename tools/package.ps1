@@ -1,51 +1,76 @@
-<#
-.SYNOPSIS
-  Builds the release zip from a built tree.
-
-.DESCRIPTION
-  Collects build\stage\<Config>\client and \server, the two install scripts, the docs and
-  the licenses into dist\SDGO-ModFramework-<version>\ and zips it to
-  dist\SDGO-ModFramework-<version>.zip. The version comes from the VERSION file.
-  Build first: cmake --build build --config Release
-
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File tools\package.ps1
-#>
+<# Build a full, base-fixes or selected-feature package from a staged build. #>
 param(
-    [string]$Config = "Release"
+    [string]$Config = 'Release',
+    [string]$BuildDir = 'build',
+    [ValidateSet('Full','Base')][string]$Edition = 'Full',
+    [string[]]$Features = @(),
+    [string]$OutputDir
 )
-
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$version = (Get-Content -LiteralPath (Join-Path $repo "VERSION") -TotalCount 1).Trim()
-$stage = Join-Path $repo "build\stage\$Config"
-foreach ($tree in "client", "server") {
-    if (-not (Test-Path -LiteralPath (Join-Path $stage $tree))) { throw "No $tree tree in $stage; build first" }
+$version = (Get-Content -LiteralPath (Join-Path $repo 'VERSION') -TotalCount 1).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+([+-][a-zA-Z0-9.-]+)?$') { throw 'Invalid package version' }
+$buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
+$stage = Join-Path $buildRoot "stage\$Config"
+$requested = @(($Features -join ',') -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+$catalogArgs = @((Join-Path $PSScriptRoot 'mod_catalog.py'), '--root', $repo, '--stage', $stage, '--profile', $Edition.ToLowerInvariant())
+if ($requested.Count) { $catalogArgs += @('--features', ($requested -join ',')) }
+$catalogText = & python @catalogArgs
+if ($LASTEXITCODE -ne 0) { throw 'Mod catalog/payload validation failed; build the selected mods first' }
+$catalog = ($catalogText -join "`n") | ConvertFrom-Json
+$suffix = if ($requested.Count) { '-Features-' + ($requested -join '-') } elseif ($Edition -eq 'Base') { '-Base' } else { '' }
+$name = "SDGO-ModFramework-$version$suffix"
+if (-not $OutputDir) { $OutputDir = Join-Path $repo 'dist' }
+$dist = [IO.Path]::GetFullPath($OutputDir)
+$out = [IO.Path]::GetFullPath((Join-Path $dist $name))
+if (-not $out.StartsWith($dist.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe package output path' }
+$zip = Join-Path $dist "$name.zip"
+if ((Test-Path -LiteralPath $out) -or (Test-Path -LiteralPath $zip)) {
+    throw 'Package output already exists; choose another -OutputDir or increment VERSION.'
 }
-
-$name = "SDGO-ModFramework-$version"
-$dist = Join-Path $repo "dist"
-$out = Join-Path $dist $name
-if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-Copy-Item -LiteralPath (Join-Path $stage "client") -Destination $out -Recurse
-Copy-Item -LiteralPath (Join-Path $stage "server") -Destination $out -Recurse
-Copy-Item -LiteralPath (Join-Path $repo "tools\install_client.ps1") -Destination $out
-Copy-Item -LiteralPath (Join-Path $repo "tools\install_server.ps1") -Destination $out
-Copy-Item -LiteralPath (Join-Path $repo "README.md") -Destination $out
-Copy-Item -LiteralPath (Join-Path $repo "README.zh-CN.md") -Destination $out
-Copy-Item -LiteralPath (Join-Path $repo "docs") -Destination $out -Recurse
-Copy-Item -LiteralPath (Join-Path $repo "THIRD_PARTY_NOTICES.md") -Destination $out
-if (Test-Path -LiteralPath (Join-Path $repo "LICENSE")) { Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $out }
-New-Item -ItemType Directory -Force -Path (Join-Path $out "licenses") | Out-Null
-Copy-Item -LiteralPath (Join-Path $repo "third_party\minhook\LICENSE.txt") -Destination (Join-Path $out "licenses\MinHook-LICENSE.txt")
-
-$zip = Join-Path $dist "$name.zip"
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-# ZipFile writes '/' separators; Compress-Archive in Windows PowerShell 5.1 writes '\'.
+# Core files are always present. Only catalog-owned, complete mod payloads enter
+# the archive, so stale build folders cannot silently add features or user files.
+foreach ($tree in @('client','server')) {
+    $dest = Join-Path $out $tree
+    New-Item -ItemType Directory -Force -Path (Join-Path $dest 'sdgo\mods'), (Join-Path $dest 'sdgo\symbols') | Out-Null
+    $loader = if ($tree -eq 'client') { 'd3d9.dll' } else { 'winmm.dll' }
+    foreach ($file in @($loader,'sdgo\core.dll','sdgo\sdgo.ini')) {
+        Copy-Item -LiteralPath (Join-Path $stage "$tree\$file") -Destination (Join-Path $dest $file)
+    }
+    Get-ChildItem -LiteralPath (Join-Path $stage "$tree\sdgo\symbols") -File -Filter '*.ini' | Copy-Item -Destination (Join-Path $dest 'sdgo\symbols')
+    [IO.File]::WriteAllText((Join-Path $dest 'sdgo\catalog.json'), ($catalogText -join "`n"), (New-Object Text.UTF8Encoding $false))
+}
+foreach ($mod in $catalog.mods) {
+    $relative = "$($mod.target)\sdgo\mods\$($mod.id)"
+    $destination = Join-Path $out $relative
+    foreach ($file in @("$($mod.id).dll",'mod.ini') + @($mod.files)) {
+        $target = Join-Path $destination $file
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $stage "$relative\$file") -Destination $target
+    }
+}
+foreach ($file in @('install_client.ps1','install_server.ps1','install_common.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $out
+}
+foreach ($file in @('README.md','README.zh-CN.md','THIRD_PARTY_NOTICES.md','LICENSE')) {
+    Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $out
+}
+Copy-Item -LiteralPath (Join-Path $repo 'docs') -Destination $out -Recurse
+New-Item -ItemType Directory -Force -Path (Join-Path $out 'licenses') | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'third_party\minhook\LICENSE.txt') -Destination (Join-Path $out 'licenses\MinHook-LICENSE.txt')
+$contents = @('# Included features', '', '| Category | Feature | Channel | Mods |', '|---|---|---|---|')
+foreach ($feature in $catalog.features.PSObject.Properties) {
+    $item = $feature.Value
+    $contents += "| $($item.category) | $($feature.Name) | $($item.channel) | $($item.mods -join ', ') |"
+}
+[IO.File]::WriteAllText((Join-Path $out 'CONTENTS.md'), ($contents -join "`n"), (New-Object Text.UTF8Encoding $false))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
-$hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
-Write-Host "$zip"
+Write-Host $zip
+$hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+$zipStream = [IO.File]::OpenRead($zip)
+try { $hash = [BitConverter]::ToString($hashAlgorithm.ComputeHash($zipStream)).Replace('-','') }
+finally { $zipStream.Dispose(); $hashAlgorithm.Dispose() }
 Write-Host "SHA256 $hash"

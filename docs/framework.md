@@ -2,7 +2,7 @@
 
 For people who build the framework or write mods. Installing is covered in the
 [README](../README.md); using each feature in its guide, linked from the README's
-[Features](../README.md#features) table.
+[feature categories](../README.md#core-fixes).
 
 * [How the framework gets into the process](#how-the-framework-gets-into-the-process)
 * [Folder layout and configuration](#folder-layout-and-configuration)
@@ -119,9 +119,26 @@ its signature and how it is referenced), create `symbols/<new host key>.ini`, ru
 
 ## Mod manifest (mod.ini)
 
+Bundled mods declare `category`, `feature`, `channel`, and `activation` in `[mod]`.
+Categories are `fixes`, `gameplay`, `network`, and `development`; release channels
+(`stable`, `beta`, `experimental`) are independent of category. Several mods can
+share one feature id: for example `coop_ai` and `mission_ai` both belong to
+`coop-wingmen`. Their category/channel/activation must agree.
+
+`tools/mod_catalog.py` validates these declarations against CMake registration,
+feature guides and both README category tables. Builds generate
+`sdgo/catalog.json`; publishers use the same catalog for complete-feature package
+selection. Unknown/incomplete bundled feature metadata fails validation rather
+than silently appearing in a package. The runtime still accepts older third-party
+manifests without these optional fields.
+
 ```ini
 [mod]
 id=my_mod                 ; folder name by default
+category=gameplay
+feature=my-feature
+channel=beta
+activation=manual
 name=My mod
 version=1.0.0
 api=1                     ; SDGO_API_VERSION the mod was built for
@@ -130,6 +147,8 @@ order=100                 ; load order, lower first
 enabled=1                 ; 0 skips the mod (sdgo.ini [mods] my_mod=0 does the same)
 hosts=GOnline-54BE1568-00C97000          ; comma list; the mod loads only into these
 requires=CMissionMode.Init,lua.pcall     ; symbols that must verify, or the mod is skipped
+files=rules.example.json              ; extra shipped data, also list in CMake FILES
+config_files=config.ini,roster.json    ; user-owned files to preserve during updates
 
 [settings]
 ; free-form; read with SettingInt / SettingString
@@ -139,6 +158,18 @@ MySetting=1
 A mod is loaded when it is enabled, its `api` is supported, the running host key is listed
 in `hosts`, and every symbol in `requires` verified. The reason for skipping a mod is
 logged.
+
+`[categories] <category>=0` and `[features] <feature>=0` in `sdgo.ini` disable the
+whole group on that host. They cannot override `enabled=0` or `[mods] <id>=0`.
+All mod folders remain directly under `sdgo/mods`; category is metadata, not an
+extra directory layer. The public ABI and mod IDs remain unchanged.
+
+`files` lists additional payload files relative to the mod directory. `config_files`
+lists user configuration files owned by that mod; updaters preserve existing ones
+unless `-OverwriteConfig` is explicit. Shipped examples and code still update.
+Only relative config/data paths are allowed: no parent traversal, absolute paths,
+DLLs or replacement manifests. Mods read their own data via `ModDirectory`; this
+does not change the existing `[settings]` API or invent a new data format.
 
 ## Mod API
 
@@ -264,10 +295,13 @@ only its own files plus the two READMEs.
    like `mods/mission_ai/test/sim_mission.lua`.
 5. **Guide.** Write `docs/<feature>.md` with the outline below; add `docs/<feature>.zh-CN.md`
    when the feature is meant for players.
-6. **Catalog.** Add a row to the Features table in `README.md` and `README.zh-CN.md`: name,
-   what it does and how to trigger it in one or two sentences, mods, where to install
-   (`clients`, or `battle server + clients`), guide link. Add its mods to the package listing
-   ("What is in the package") of both READMEs.
+6. **Catalog.** Declare the category, feature id, channel and activation in every
+   participating `mod.ini`; list additional payload/config files when needed. Add
+   one feature row to the matching category block in both READMEs, including all
+   participating mod IDs, its guide and any Beta/experimental channel. Run
+   `python tools/mod_catalog.py` to check build, documentation and distribution
+   consistency. New NPC pools/random-unit gameplay belong to `gameplay`; hosting
+   and connectivity belong to `network`; diagnostic modules start disabled.
 7. **Version.** Bump `VERSION` and each changed mod's `version=` before packaging.
 
 Guide outline (the existing guides follow it; [coop-wingmen.md](coop-wingmen.md) is the
@@ -317,7 +351,12 @@ cmake --build build --config Release
 * `mods/mission_ai/test/sim_mission.lua`: drives `mission_ai.lua` against a mock of the game's
   script API under real Lua 5.0 (`tools/lua50_host.c`, built against Lua 5.0.3 sources).
 * `tools/verify_symbols.py <exe>`: offline check of a symbol file.
-* `tools/package.ps1`: zips `dist/SDGO-ModFramework-<VERSION>.zip`.
+* `tools/package.ps1`: a full package by default; `-Edition Base` selects core fixes,
+  and `-Features pvp-ai` selects the fixes plus that complete client/server feature.
+  `-BuildDir` chooses the staged build and `-OutputDir` chooses a fresh destination.
+  Existing output is not deleted. Each package includes `CONTENTS.md`, the selected
+  catalog, both installers and their shared config-preservation helper. Stale mod
+  folders, undeclared files, logs and user data do not enter a mod payload.
 * `tools/install_client.ps1` / `install_server.ps1 -Source build/stage/Release/<tree>`:
   install straight from a build.
 
