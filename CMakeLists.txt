@@ -98,6 +98,8 @@ function(sdgo_add_mod id)
     sdgo_version_resource(${id} ${id}.dll "SDGO mod: ${MOD_DESCRIPTION}")
     sdgo_stage(${id} "${root}/mods/${id}")
     foreach(file mod.ini ${MOD_FILES})
+        # A script/config edit must restage the add-on even if its C++ did not change.
+        set_property(TARGET ${id} APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}")
         add_custom_command(TARGET ${id} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
@@ -113,6 +115,8 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery"
+             SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua config.example.ini)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -144,3 +148,21 @@ foreach(fixture SDPlus generic_input_method)
     target_link_libraries(findwindow_fixture_${fixture} PRIVATE user32)
     sdgo_strict(findwindow_fixture_${fixture})
 endforeach()
+
+# Optional, isolated test VM. Never linked into a shipped mod or installed game.
+set(SDGO_LUA50_SOURCE "" CACHE PATH "Extracted official Lua 5.0.3 source for AI tests")
+if(SDGO_LUA50_SOURCE)
+    file(GLOB LUA50_CORE CONFIGURE_DEPENDS "${SDGO_LUA50_SOURCE}/src/*.c")
+    add_library(lua50_test_vm STATIC ${LUA50_CORE}
+        "${SDGO_LUA50_SOURCE}/src/lib/lauxlib.c"
+        "${SDGO_LUA50_SOURCE}/src/lib/lbaselib.c"
+        "${SDGO_LUA50_SOURCE}/src/lib/lstrlib.c")
+    target_include_directories(lua50_test_vm PUBLIC "${SDGO_LUA50_SOURCE}/include")
+    target_include_directories(lua50_test_vm PRIVATE "${SDGO_LUA50_SOURCE}/src")
+    target_compile_definitions(lua50_test_vm PRIVATE _CRT_SECURE_NO_WARNINGS)
+    add_executable(battle_ai_lua_test tools/lua50_host.c)
+    target_link_libraries(battle_ai_lua_test PRIVATE lua50_test_vm)
+    add_executable(battle_ai_native_test tests/battle_ai_native_test.cpp)
+    target_link_libraries(battle_ai_native_test PRIVATE lua50_test_vm sdgo_api)
+    sdgo_strict(battle_ai_native_test)
+endif()
