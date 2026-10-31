@@ -275,3 +275,10 @@ if(BUILD_TESTING)
         message(STATUS "Lua simulation disabled; set SDGO_LUA50_SOURCE to include it")
     endif()
 endif()
+
+# Optional full-title adapters use the current shared command grammar.
+foreach(mode coop pvp)
+    add_executable(${mode}_title_rules_test tests/${mode}_title_rules_test.cpp)
+    target_link_libraries(${mode}_title_rules_test PRIVATE sdgo_api)
+    sdgo_strict(${mode}_title_rules_test)
+endforeach()
