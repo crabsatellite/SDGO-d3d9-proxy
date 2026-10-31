@@ -9,7 +9,7 @@
  * Reference: docs/framework.md.
  *
  * Rules every mod follows:
- *   - Never patch raw addresses. Ask the core for a named symbol from the
+ *   - Never patch raw game addresses. Ask the core for a named symbol from the
  *     host's symbol file (sdgo/symbols/<host_key>.ini). The core only hands
  *     out addresses whose bytes matched the recorded signature, so a client
  *     update or a conflicting patch disables the mod instead of crashing.
@@ -67,6 +67,15 @@ typedef struct SdgoApi {
 
     /* Absolute directory of the mod (contains mod.ini and the mod's own files). */
     const wchar_t* (*ModDirectory)(SdgoMod* mod);
+
+    /* Inline detour on a named export of an already loaded system DLL. dll is a
+     * basename (e.g. L"user32.dll"); the core resolves it in the system directory.
+     * When MinHook can relocate the entry, the trampoline retains its prior call
+     * chain (including an existing external detour). Same ownership
+     * and failed-load rollback as HookCode. Install only during SdgoModLoad.
+     * Optional API 1 extension: check size before reading this field. */
+    int (*HookSystemExport)(SdgoMod* mod, const wchar_t* dll, const char* function,
+                            void* detour, void** original);
 } SdgoApi;
 
 /* Every mod DLL exports this. Return nonzero when the mod is active. */

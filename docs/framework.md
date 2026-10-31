@@ -162,6 +162,15 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `HookImport(mod, dll, function, detour, &original)` | replace an entry of the exe's import table |
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
+| `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
+
+Before reading `HookSystemExport`, check
+`api->size >= offsetof(SdgoApi, HookSystemExport) + sizeof(api->HookSystemExport)`
+and then that the pointer is non-null. Older API 1 mods keep their existing ABI.
+This API does not load DLLs or resolve application-local DLLs. It shares the
+ownership and rollback mechanism with `HookCode`. When MinHook can relocate an
+existing external detour, `original` calls that prior chain; the framework does
+not remove it. The system DLL must stay loaded for the hook's process lifetime.
 
 Rules: one owner per hook site (a second hook on the same site fails); install hooks in
 `SdgoModLoad`, so a failed load can roll them back; detours run on whatever thread the host
@@ -213,7 +222,8 @@ SDGO_MOD_ENTRY
 Real examples: `ime_fix` (one import hook), `mission_ai` (code + vtable hooks, calls into the
 game, runs Lua in the game's Lua 5.0 state), `coop_ai` (server side, calls game functions
 under the game's own locks). Their internals are in the "How it works" section of
-[coop-wingmen.md](coop-wingmen.md) and [ime-fix.md](ime-fix.md).
+[coop-wingmen.md](coop-wingmen.md), [ime-fix.md](ime-fix.md), and
+[findwindow-fix.md](findwindow-fix.md) (`HookSystemExport` on a user32 export, scoped by calling module).
 
 ## Adding a feature
 

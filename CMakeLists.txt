@@ -107,6 +107,7 @@ endfunction()
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
 sdgo_add_mod(ime_fix DESCRIPTION "IME commit length fix" SOURCES mods/ime_fix/ime_fix.cpp)
+sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindow_fix/findwindow_fix.cpp LIBS user32)
 sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_probe.cpp)
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 
@@ -125,3 +126,18 @@ add_custom_target(sdgo_data ALL
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+
+# ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
+# None of these are staged into the client or server package.
+add_executable(findwindow_fix_test tests/findwindow_fix_test.cpp)
+target_link_libraries(findwindow_fix_test PRIVATE sdgo_api minhook user32)
+sdgo_strict(findwindow_fix_test)
+add_library(export_hook_test_mod SHARED tests/export_hook_test_mod.cpp)
+target_link_libraries(export_hook_test_mod PRIVATE sdgo_api user32)
+sdgo_strict(export_hook_test_mod)
+foreach(fixture SDPlus generic_input_method)
+    add_library(findwindow_fixture_${fixture} SHARED tests/findwindow_caller_fixture.cpp)
+    set_target_properties(findwindow_fixture_${fixture} PROPERTIES OUTPUT_NAME ${fixture})
+    target_link_libraries(findwindow_fixture_${fixture} PRIVATE user32)
+    sdgo_strict(findwindow_fixture_${fixture})
+endforeach()
