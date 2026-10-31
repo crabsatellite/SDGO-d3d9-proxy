@@ -30,6 +30,18 @@ A feature that lists the battle server works only when the battle servers have t
 part and the players have the client part. Players without the client part simply do not
 get the feature; the game is otherwise unaffected.
 
+### In game
+
+Co-op mission wingmen: a mission room with `!ai` in its title. AI wingmen fly with the
+player and fight the mission's enemies.
+
+![Co-op mission with AI wingmen fighting alongside the player](docs/coop-wingmen-demo.webp)
+
+Input method compatibility: the game lobby with the iFlytek input method switched on (its
+toolbar is boxed in red). Without `findwindow_fix`, switching to iFlytek freezes the game.
+
+![Game lobby with the iFlytek input method active](docs/findwindow-fix-ifly.png)
+
 ## What is in the package
 
 ```
