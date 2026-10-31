@@ -87,8 +87,13 @@ namespace
     using GameReadyFn = void(__thiscall*)(uint8_t* service);
     using EnableAiFn = void(__thiscall*)(uint8_t* unit);
     using ErrorNameFn = const char*(__cdecl*)(int code);
+    using ThinkFn = void(__thiscall*)(uint8_t* unit);
+    using UdpSetupFn = void(__thiscall*)(uint8_t* waitRoom);
 
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
+    constexpr size_t kWaitRoomSlots = 0xA00;    // CServiceWaitRoomMgr: pilot id per slot
+    constexpr size_t kWaitRoomSlotStride = 0x48E;
+    constexpr uint32_t kAiPilotBit = 0x80000000u;
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
@@ -111,6 +116,8 @@ namespace
     GameCalls g_game = {};
     GameReadyFn g_originalGameReady = nullptr;
     ErrorNameFn g_originalErrorName = nullptr;
+    ThinkFn g_originalThink = nullptr;
+    UdpSetupFn g_originalUdpSetup = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -298,6 +305,65 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
     }
 
+    // ---- battle start: no UDP link to AI pilots ------------------------------------------
+    //
+    // On a normal wait room's battle start (0x00A0FE80) the client asks for a UDP link to the
+    // pilot of every other slot and counts the requests against the links that come back.
+    // An AI pilot has no client to answer, so for that call its slot reads as empty.
+
+    void __fastcall UdpSetup(uint8_t* waitRoom, void* /*edx*/)
+    {
+        uint32_t hidden[12] = {};
+        int count = 0;
+        if (waitRoom) {
+            for (int slot = 0; slot < 12; ++slot) {
+                auto id = reinterpret_cast<uint32_t*>(waitRoom + kWaitRoomSlots + slot * kWaitRoomSlotStride);
+                if (*id & kAiPilotBit) {
+                    hidden[slot] = *id;
+                    *id = 0;
+                    ++count;
+                }
+            }
+        }
+        g_originalUdpSetup(waitRoom);
+        for (int slot = 0; slot < 12 && count; ++slot)
+            if (hidden[slot])
+                *reinterpret_cast<uint32_t*>(waitRoom + kWaitRoomSlots + slot * kWaitRoomSlotStride) = hidden[slot];
+        if (count)
+            g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: no UDP link asked for %d AI pilot(s)", count);
+    }
+
+    // ---- diagnostics: who runs CNPC::Think ------------------------------------------------
+
+    void* g_thinkCallers[8] = {};
+    int g_thinkSamples = 0;
+
+    void __fastcall Think(uint8_t* unit, void* /*edx*/)
+    {
+        if (g_thinkSamples >= 5000) {
+            g_originalThink(unit);
+            return;
+        }
+        ++g_thinkSamples;
+        void* frames[4] = {};
+        USHORT n = RtlCaptureStackBackTrace(1, 4, frames, nullptr);
+        if (n > 0) {
+            for (void*& seen : g_thinkCallers) {
+                if (seen == frames[0])
+                    break;
+                if (!seen) {
+                    seen = frames[0];
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "CNPC::Think on object %lu, called from %p %p %p %p",
+                               static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitObjectId)),
+                               frames[0], n > 1 ? frames[1] : nullptr, n > 2 ? frames[2] : nullptr,
+                               n > 3 ? frames[3] : nullptr);
+                    break;
+                }
+            }
+        }
+        g_originalThink(unit);
+    }
+
     // ---- diagnostics: every error the client names ------------------------------------
     //
     // The server error popup (0x006FD480) and the client error popups name the error code
@@ -307,6 +373,8 @@ namespace
     const char* __cdecl ErrorName(int code)
     {
         const char* name = g_originalErrorName(code);
+        if (code == 0)
+            return name; // ERR_NULL: named for every server message, not an error
         void* frames[4] = {};
         USHORT n = RtlCaptureStackBackTrace(1, 4, frames, nullptr);
         g_api->Log(g_mod, SDGO_LOG_INFO, "error %d (%s), called from %p %p %p %p", code, name ? name : "?", n > 0 ? frames[0] : nullptr,
@@ -337,6 +405,12 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "game.service_game_ready", reinterpret_cast<void*>(&GameReady),
                        reinterpret_cast<void**>(&g_originalGameReady)))
         return 0;
+    if (!api->HookCode(mod, "waitroom.battle_udp_setup", reinterpret_cast<void*>(&UdpSetup),
+                       reinterpret_cast<void**>(&g_originalUdpSetup)))
+        return 0;
+    if (api->SettingInt(mod, "LogThinkCallers", 1) != 0 &&
+        !api->HookCode(mod, "npc.think", reinterpret_cast<void*>(&Think), reinterpret_cast<void**>(&g_originalThink)))
+        api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
     if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
         !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
                        reinterpret_cast<void**>(&g_originalErrorName)))
