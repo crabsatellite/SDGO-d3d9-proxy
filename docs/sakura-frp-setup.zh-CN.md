@@ -1,4 +1,4 @@
-# Sakura FRP 联机设置
+# Sakura FRP 联机设置（Beta）
 
 当前安装与分发流程统一见[可分发 FRP 网络 Mod](frp-distribution.zh-CN.md)。
 

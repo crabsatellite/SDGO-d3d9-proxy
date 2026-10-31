@@ -1,4 +1,6 @@
-# 可分发的 FRP 网络 Mod
+# FRP 网络 Mod（Beta）
+
+本功能为 **Beta**，通过服主配置启用；真人登录、房间、完整对局与重连仍由用户手动验收。
 
 此包沿用 SDGO Mod Framework。客户端安装 `net_route`，Agent 安装
 `agent_udp_pool` 和 `agent_relay_log_fix`。公共框架为本分支最新的 1.1.3 开发版本，

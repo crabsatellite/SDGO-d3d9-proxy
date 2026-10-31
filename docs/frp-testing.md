@@ -1,4 +1,4 @@
-# FRP build and verification
+# FRP Beta build and verification
 
 Run these commands in a source checkout on Windows with Visual Studio C++ tools,
 CMake and Python. No game, Sakura account, server, database or credentials are
@@ -39,6 +39,6 @@ writes to the reference client. Its reference core must predate the candidate ki
 for the downgrade check. Tests and game files are not shipped in the Mod kit.
 
 Real launcher behavior, account login, room creation, complete multiplayer matches
-and reconnects remain manual acceptance. The network mods are experimental and
+and reconnects remain manual acceptance. The network mods are in Beta and
 disabled in the general framework package until the owner configures them through
 the incremental installer. See [the distribution tutorial](frp-distribution.zh-CN.md).

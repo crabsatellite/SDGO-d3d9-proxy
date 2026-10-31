@@ -17,7 +17,7 @@ to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
 
 ## Features
 
-For incremental FRP mod installation and owner/player configuration, see the
+FRP networking is in **Beta**. For incremental installation and owner/player configuration, see the
 [distribution guide](docs/frp-distribution.zh-CN.md). The bundled framework is updated;
 other mods and global switches are preserved. Players use their existing launcher;
 no special networking launch script is required. Human multiplayer acceptance remains manual.
@@ -31,8 +31,8 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 | General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
-| Endpoint routing (experimental) | Configurable TCP/UDP destinations and UDP reply addresses for arbitrary tunnel ports. Battle relay acceptance is separate. Off by default. | `net_route` | clients | [English](docs/net-route.md) · [中文](docs/net-route.zh-CN.md) |
-| Native UDP port pool (experimental) | Bounds per-user Agent UDP sockets to reusable tunnelled ports. Off by default. | `agent_udp_pool` | Agent servers | [Sakura setup](docs/sakura-frp-setup.zh-CN.md) |
+| Endpoint routing (Beta) | Configurable TCP/UDP destinations and UDP reply addresses for arbitrary tunnel ports. Battle relay acceptance is separate. Off by default. | `net_route` | clients | [English](docs/net-route.md) · [中文](docs/net-route.zh-CN.md) |
+| Native UDP port pool (Beta) | Bounds per-user Agent UDP sockets to reusable tunnelled ports. Off by default. | `agent_udp_pool` | Agent servers | [Sakura setup](docs/sakura-frp-setup.zh-CN.md) |
 | Native relay diagnostic fix | Corrects a verified integer-IP printf format that can crash the original Agent after UDP relay forwarding. Enabled by default. | `agent_relay_log_fix` | Agent servers | [Sakura setup](docs/sakura-frp-setup.zh-CN.md) |
 
 A feature that lists the battle server works only when the battle servers have the server
@@ -136,7 +136,7 @@ Check: after the game has started, `sdgo\logs\sdgo.log` begins with
 
 ### Battle server (whoever hosts the server)
 
-For the experimental native UDP pool, install into **AgentServer** folders with
+For the Beta native UDP pool, install into **AgentServer** folders with
 `install_server.ps1 -ServerRoot ... -Role Agent`; see the [Sakura setup guide](docs/sakura-frp-setup.zh-CN.md).
 The default role remains Battle for existing AI features.
 
