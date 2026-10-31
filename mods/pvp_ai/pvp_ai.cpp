@@ -54,6 +54,8 @@ namespace
     constexpr size_t kPilots = 0x3CE4;          // BattlePilot records, stride 0x1F54
     constexpr size_t kPilotStride = 0x1F54;
     constexpr size_t kPilotForm = 0x33C;        // u8, selects the unit record
+    constexpr size_t kPilotTagCost = 0x1CA0;     // u8, sum of the pilot's unit costs
+    constexpr size_t kPilotTagUnits = 0x1CA1;    // u8
     constexpr size_t kPilotUnits = 0x340;       // unit records, stride 0x658
     constexpr size_t kUnitStride = 0x658;
     // Death match lives (RespawnPilot 0x00487030, modes 3/14): the pilot's power (pilot +0x1E,
@@ -467,6 +469,95 @@ namespace
 
     // Adds up to `wanted` AI pilots of `team` in the free slots of that team's half
     // (team 1: slots 0-5, team 2: slots 6-11, as the AI battle modes place theirs).
+    // ---- mode 7: a deck of units per AI pilot ------------------------------------------
+    //
+    // In mode 7 a pilot plays a deck of up to 4 units, each one life: the player setup
+    // (0x004D6F40) builds a unit record per deck unit and adds up their points (unit data
+    // +0xB, the DB's Star: C 2, B 3, A 4, S 5; a deck holds up to 10) in pilot +0x1CA0 and their
+    // number in +0x1CA1. A kill takes the dead unit's points off its team's gauge and one unit
+    // off the pilot (0x0047C240); the respawn (0x00487030, case 7) takes the next unit still
+    // alive. The battle start (0x004B61E0) sends every slot's 4 unit records (first 0x32
+    // bytes: NPC data id, HP, cost, points, grade for an AI unit) and the deck totals.
+    // An AI pilot gets more units of its level pool (all different) the way its first one was
+    // built (AI pilot build 0x00485720, then the AI pilot setup 0x004D7A10 on that unit), as
+    // many as fit in 10 points, the closest to 10 first.
+    constexpr size_t kUnitPoints = 0x0A;       // u8, unit record: points (unit data +0xB)
+    constexpr int kDeckPoints = 10;
+    constexpr int kDeckUnits = 4;
+    alignas(16) uint8_t g_scratchPilot[kPilotStride];
+
+    // Builds the unit of AI NPC `npc` in a scratch pilot and copies it to `unitOut` (when set);
+    // returns its points, 0 when the NPC has no unit.
+    uint8_t BuildNpcUnit(uint8_t* room, uint32_t npc, uint8_t* unitOut)
+    {
+        memset(g_scratchPilot, 0, sizeof(g_scratchPilot));
+        uint8_t* unit = g_scratchPilot + kPilotUnits;
+        if (!g_buildAiPilot(room, g_scratchPilot, unit, npc))
+            return 0;
+        if (unitOut)
+            memcpy(unitOut, unit, kUnitStride);
+        return unit[kUnitPoints];
+    }
+
+    void BuildDeck(uint8_t* room, int slot, uint32_t firstNpc, const std::vector<uint32_t>& pool)
+    {
+        uint8_t* pilot = room + kPilots + slot * kPilotStride;
+        uint8_t* info = room + kSlotInfo + slot * kSlotInfoStride;
+        uint8_t* first = pilot + kPilotUnits;
+        int points = first[kUnitPoints];
+        int units = 1;
+        std::vector<uint32_t> candidates;
+        std::vector<uint8_t> candidatePoints;
+        for (uint32_t npc : pool) {
+            if (npc == firstNpc || Contains(candidates, npc))
+                continue;
+            uint8_t p = BuildNpcUnit(room, npc, nullptr);
+            if (p == 0)
+                continue;
+            candidates.push_back(npc);
+            candidatePoints.push_back(p);
+        }
+        char deck[96];
+        int length = sprintf_s(deck, "%lu (%d)", static_cast<unsigned long>(firstNpc), points);
+        auto savedPower = *reinterpret_cast<uint16_t*>(pilot + kPilotPower);
+        auto savedLifeCost = *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost);
+        while (units < kDeckUnits && !candidates.empty()) {
+            int left = kDeckPoints - points;
+            int best = -1;
+            unsigned offset = candidates.empty() ? 0 : NextRandom() % candidates.size();
+            for (size_t k = 0; k < candidates.size(); ++k) {
+                size_t i = (k + offset) % candidates.size();
+                int p = candidatePoints[i];
+                if (p > left)
+                    continue;
+                if (best < 0 || p > candidatePoints[best])
+                    best = static_cast<int>(i);
+            }
+            if (best < 0)
+                break;
+            uint32_t npc = candidates[best];
+            uint8_t* unit = pilot + kPilotUnits + units * kUnitStride;
+            int p = BuildNpcUnit(room, npc, unit);
+            pilot[kPilotForm] = static_cast<uint8_t>(units);
+            bool ok = p > 0 && g_setupAiPilot(g_waitRoomProc, info, pilot, room[kRoomType], room[kRoomMode]);
+            pilot[kPilotForm] = 0;
+            candidates.erase(candidates.begin() + best);
+            candidatePoints.erase(candidatePoints.begin() + best);
+            if (!ok) {
+                memset(unit, 0, kUnitStride);
+                continue;
+            }
+            points += p;
+            ++units;
+            length += sprintf_s(deck + length, sizeof(deck) - length, " + %lu (%d)", static_cast<unsigned long>(npc), p);
+        }
+        *reinterpret_cast<uint16_t*>(pilot + kPilotPower) = savedPower;
+        *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost) = savedLifeCost;
+        pilot[kPilotTagCost] = static_cast<uint8_t>(points);
+        pilot[kPilotTagUnits] = static_cast<uint8_t>(units);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "slot %d: deck %s = %d points, %d units", slot, deck, points, units);
+    }
+
     int AddTeam(uint8_t* room, uint8_t team, int wanted, const std::vector<uint32_t>& pool)
     {
         int added = 0;
@@ -484,8 +575,11 @@ namespace
                     break;
                 pick = pool[NextRandom() % pool.size()];
             }
-            if (AddAiPilot(room, slot, pick, team, colour))
+            if (AddAiPilot(room, slot, pick, team, colour)) {
+                if (room[kRoomMode] == 7)
+                    BuildDeck(room, slot, pick, pool);
                 ++added;
+            }
         }
         return added;
     }
@@ -508,8 +602,6 @@ namespace
     constexpr size_t kRoomGauge2 = 0x2EEF8;
     constexpr size_t kRoomTagUnits1 = 0x32116;   // u8
     constexpr size_t kRoomTagUnits2 = 0x32117;   // u8
-    constexpr size_t kPilotTagCost = 0x1CA0;     // u8, sum of the pilot's unit costs
-    constexpr size_t kPilotTagUnits = 0x1CA1;    // u8
     constexpr size_t kUnitCost = 0x0A;           // u8, unit record: cost (kill points)
 
     int GridGauge(int perTeam)
@@ -553,12 +645,13 @@ namespace
                 if (!(SlotPilotId(room, slot) & kAiPilotBit))
                     continue;
                 uint8_t* pilot = room + kPilots + slot * kPilotStride;
-                uint8_t cost = pilot[kPilotUnits + pilot[kPilotForm] * kUnitStride + kUnitCost];
-                pilot[kPilotTagCost] = cost;
-                pilot[kPilotTagUnits] = 1;
+                if (pilot[kPilotTagUnits] == 0) {
+                    pilot[kPilotTagCost] = pilot[kPilotUnits + pilot[kPilotForm] * kUnitStride + kUnitCost];
+                    pilot[kPilotTagUnits] = 1;
+                }
                 bool team1 = SlotTeam(room, slot) == 1;
-                field(team1 ? kRoomGauge1 : kRoomGauge2) += cost;
-                ++room[team1 ? kRoomTagUnits1 : kRoomTagUnits2];
+                field(team1 ? kRoomGauge1 : kRoomGauge2) += pilot[kPilotTagCost];
+                room[team1 ? kRoomTagUnits1 : kRoomTagUnits2] += pilot[kPilotTagUnits];
             }
         }
         g_api->Log(g_mod, SDGO_LOG_INFO,
