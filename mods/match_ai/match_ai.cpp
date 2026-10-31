@@ -112,6 +112,7 @@ namespace
     using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
+    using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -167,6 +168,7 @@ namespace
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
+    FindPlayerFn g_originalFindPlayer = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -665,6 +667,18 @@ namespace
         return g_originalPlayerSlot(um, index);
     }
 
+    // With the AI players counted, HUD loops over the player slots look up each slot's unit
+    // with UM::FindPlayer (0x004999A0), which knows only the units AddPlayer added (humans).
+    // For an AI player's slot it now returns that AI player's unit; the death match HUD
+    // (0x00530010) reads it without a NULL check and skips NPC units (IsA 10).
+    void* __fastcall FindPlayer(void* um, void* /*edx*/, uint32_t objectId)
+    {
+        void* unit = g_originalFindPlayer(um, objectId);
+        if (!unit && BotByObject(objectId))
+            unit = g_findObject(um, objectId);
+        return unit;
+    }
+
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000 && CurrentPvpMode()) {
@@ -891,7 +905,9 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "um.is_player_object", reinterpret_cast<void*>(&IsPlayerObject),
                        reinterpret_cast<void**>(&g_originalIsPlayerObject)) ||
         !api->HookCode(mod, "um.player_slot", reinterpret_cast<void*>(&PlayerSlot),
-                       reinterpret_cast<void**>(&g_originalPlayerSlot)))
+                       reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
+        !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
+                       reinterpret_cast<void**>(&g_originalFindPlayer)))
         return 0;
     if (!api->HookCode(mod, "game.nat_check", reinterpret_cast<void*>(&NatCheck),
                        reinterpret_cast<void**>(&g_originalNatCheck)))
