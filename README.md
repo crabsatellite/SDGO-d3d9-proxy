@@ -22,7 +22,7 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 | feature | what it does | mods | install on | guide |
 |---|---|---|---|---|
 | Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
-| IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [docs/ime-fix.md](docs/ime-fix.md) |
+| IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [English](docs/ime-fix.md) · [中文](docs/ime-fix.zh-CN.md) |
 | General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
@@ -48,23 +48,33 @@ looks up a window freezes or crashes the game as soon as it is switched on.
 
 ```
 SDGO-ModFramework-<version>/
-  client/             goes next to GOnline.exe       d3d9.dll + sdgo\
-  server/             goes next to BattleServer.exe  winmm.dll + sdgo\
-  install_client.ps1  installs client\ into a game folder
-  install_server.ps1  installs server\ into battle server folders
+  client/                 goes next to GOnline.exe
+    d3d9.dll
+    sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
+    sdgo\mods\            findwindow_fix, ime_fix, mission_ai, net_probe (off), startup_crash_fix
+  server/                 goes next to BattleServer.exe
+    winmm.dll
+    sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
+    sdgo\mods\            coop_ai
+  install_client.ps1      installs client\ into a game folder
+  install_server.ps1      installs server\ into battle server folders
   README.md, README.zh-CN.md, docs\, LICENSE, THIRD_PARTY_NOTICES.md, licenses\
 ```
+
+The mods are the features in [Features](#features); `net_probe` is off until it is switched
+on in its `mod.ini`.
 
 | part | where | what it does |
 |---|---|---|
 | `d3d9.dll` | game folder | Loader: GOnline.exe loads it at start; it starts `sdgo\core.dll` and forwards Direct3D to the real `d3d9.dll`. |
 | `winmm.dll` | battle server folder | Same loader for BattleServer.exe (forwards `timeGetTime`). |
 | `sdgo\core.dll` | both | Framework core: checks the exe build, verifies every code address it hands out, owns all hooks, loads mods. |
+| `sdgo\sdgo.ini` | both | Framework settings: log level, a chained loader, single mods turned off (see [Configuration](#configuration)). |
 | `sdgo\symbols\*.ini` | both | Verified addresses and byte signatures, one file per supported exe build. |
 | `sdgo\mods\<id>\` | both | One folder per mod: `<id>.dll`, `mod.ini` (manifest + settings), extra files. |
 
-`client\` holds the client mods and `server\` the battle server mods; the installers copy
-whatever the package contains, so new features need no installer changes.
+The installers copy whatever the package contains, so new features need no installer
+changes.
 
 ## Supported game builds
 
@@ -102,10 +112,13 @@ powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games
   `SDPlus.dll` in the Ultimate Repack) keep working. If the folder already has a `d3d9.dll`
   from another mod (a graphics wrapper, say), the installer renames it to `d3d9_chain.dll`
   and chains it, so both run.
-* Re-running the script updates an existing install and keeps your edited `.ini` files
-  (`-OverwriteConfig` replaces them with the defaults).
+* Re-running the script updates an existing install. It keeps `sdgo\sdgo.ini`, and installs
+  each mod's new `mod.ini` with your own values written back (`[mod] enabled` and every
+  `[settings]` value that differs from the new file); the output lists them.
+  `-OverwriteConfig` installs both as they are in the package.
 
 Manual install: copy the contents of `client\` into the game folder (next to GOnline.exe).
+This replaces `sdgo.ini` and every `mod.ini` with the package's.
 
 Check: after the game has started, `sdgo\logs\sdgo.log` begins with
 `core: SDGO core started by d3d9 loader ...`, `symbols: N of N verified` and one
@@ -122,9 +135,9 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 `-ServerRoot` is either one battle server folder (with `BattleServer.exe`) or the folder
 that holds several (`BattleServer1`, `BattleServer2`, ...). `-Only BattleServer3` limits it to
 named folders. Start the battle servers again afterwards. How they are started (a server
-manager, batch files, a service) does not matter. An existing `winmm.dll` is chained the
-same way as on the client. Manual install: copy the contents of `server\` into each battle
-server folder.
+manager, batch files, a service) does not matter. An existing `winmm.dll` is chained, and an
+update keeps the settings, the same way as on the client. Manual install: copy the contents
+of `server\` into each battle server folder.
 
 ## Uninstall
 
@@ -187,7 +200,8 @@ The install scripts also install straight from a build:
 ## Adding a feature
 
 A new feature is one or more mods under `mods/`, registered in `CMakeLists.txt`, plus a guide
-in `docs/` and a row in the [Features](#features) table of both READMEs. The build stages it
+in `docs/`, a row in the [Features](#features) table of both READMEs and its mods in their
+[package listing](#what-is-in-the-package). The build stages it
 into `client\` or `server\`, and the installers and the package pick it up without changes.
 Step by step, with the mod API, symbol files and the guide outline:
 [docs/framework.md](docs/framework.md#adding-a-feature).
