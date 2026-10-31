@@ -1,0 +1,34 @@
+name: Mod framework and FRP checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Configure Win32
+        run: cmake -S . -B build -A Win32
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Profiles and distribution
+        run: python -m unittest discover -s tests -p "test_frp*.py" -v
+      - name: Framework regressions
+        shell: powershell
+        run: |
+          & tests/loader_test.ps1
+          & tests/findwindow_fix_test.ps1
+          & tests/install_test.ps1
+      - name: FRP runtime and installer
+        shell: powershell
+        run: |
+          & tests/net_route_test.ps1
+          & tests/net_login_test.ps1
+          & tests/agent_udp_pool_test.ps1
+          & tests/frp_install_test.ps1
+      - name: Full release packaging
+        shell: powershell
+        run: '& tools/package.ps1'

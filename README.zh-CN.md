@@ -1,6 +1,6 @@
 # SDGO mod 框架
 
-SD敢达 Online 游戏客户端（`GOnline.exe`）与对战服务器（`BattleServer.exe`）的 mod 加载框架。它在两个程序里
+SD敢达 Online 游戏客户端（`GOnline.exe`）、Agent 服务器（`AgentServer.exe`）与对战服务器（`BattleServer.exe`）的 mod 加载框架。它在各程序里
 各放入一个小核心：核对 exe 版本、使用前校验每个代码地址、加载 mod。各项功能都以 mod 的形式建在框架之上，
 可以只在客户端、只在对战服务器，或两边配合。
 
@@ -16,6 +16,10 @@ English: [README.md](README.md)
 
 ## 功能
 
+FRP 网络 Mod 的增量安装、服主配置和玩家分发见
+[分发指南](docs/frp-distribution.zh-CN.md)。更新随包框架，保留其他 Mod 和用户设置；玩家使用原启动器，
+不需要专用“开始联机”脚本。真人多人对局仍待手动验收。
+
 每项功能由一个或多个 mod 组成，各有一份说明（使用、设置、日志、实现原理）。
 
 | 功能 | 作用 | mod | 安装在 | 说明 |
@@ -25,6 +29,9 @@ English: [README.md](README.md)
 | 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
 | 开游戏随机崩溃修复 | 修复开游戏时随机崩溃（读取界面闪退，`0x008FE610`）：读取界面随机挑一组，其机体在客户端数据里不存在时会闪退；现在这种组会换成最近的一组机体存在的读取界面。 | `startup_crash_fix` | 客户端 | [中文](docs/startup-crash-fix.zh-CN.md) · [English](docs/startup-crash-fix.md) |
 | 发包日志 | 开发 mod 用的发包记录，默认关闭。 | `net_probe` | 客户端 | [docs/net-probe.md](docs/net-probe.md) |
+| 地址端口映射（实验性） | 按配置转换 TCP/UDP 目标与 UDP 回包来源，适配不同的隧道公网端口；真人战斗 relay 另行验收。默认关闭。 | `net_route` | 客户端 | [中文](docs/net-route.zh-CN.md) · [English](docs/net-route.md) |
+| 原生 UDP 端口池（实验性） | 将 Agent 玩家 UDP 分配限制到可复用的隧道本地端口池，默认关闭。 | `agent_udp_pool` | Agent 服务器 | [Sakura 设置说明](docs/sakura-frp-setup.zh-CN.md) |
+| 原生 relay 日志修复 | 修正原 Agent 把整数 IP 按字符串打印、导致转发后崩溃的问题，默认启用。 | `agent_relay_log_fix` | Agent 服务器 | [Sakura 设置说明](docs/sakura-frp-setup.zh-CN.md) |
 
 "安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装客户端部分才生效。没装客户端部分的玩家
 只是没有这项功能，游戏其它方面不受影响。
@@ -47,11 +54,12 @@ SDGO-ModFramework-<版本>/
   client/                 放到 GOnline.exe 同目录
     d3d9.dll
     sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            findwindow_fix、ime_fix、mission_ai、net_probe（默认关闭）、startup_crash_fix
-  server/                 放到 BattleServer.exe 同目录
+    sdgo\mods\            findwindow_fix、ime_fix、mission_ai、net_probe（默认关闭）、startup_crash_fix、net_route（默认关闭）
+  server/                 放到 BattleServer.exe 或 AgentServer.exe 同目录
     winmm.dll
     sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            coop_ai
+    sdgo\mods\            coop_ai、agent_udp_pool（默认关闭）、agent_relay_log_fix
+  frp/                    完整增量 FRP 包、服主工具和教程
   install_client.ps1      把 client\ 安装到游戏目录
   install_server.ps1      把 server\ 安装到对战服务器目录
   README.md、README.zh-CN.md、docs\、LICENSE、THIRD_PARTY_NOTICES.md、licenses\
@@ -79,6 +87,7 @@ SDGO-ModFramework-<版本>/
 |---|---|---|
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
+| AgentServer.exe | `AgentServer-548A86BC-000D7000` | 同套私服服务端包（AgentServer1..3 目录） |
 
 安装脚本会打印你的 exe 的 host key。其它版本也能装，但框架会记录"没有匹配的 symbol 文件"并关闭所有
 mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
@@ -115,6 +124,9 @@ powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games
 `symbols: N of N verified`，以及每个 mod 一行 `loaded <mod>`。
 
 ### 对战服务器（架服务器的人）
+
+原生 UDP 端口池需装进 **AgentServer** 目录，命令加 `-Role Agent`，见
+[Sakura 设置说明](docs/sakura-frp-setup.zh-CN.md)。默认角色仍为 Battle，用于已有 AI 功能。
 
 只有"安装在"写了对战服务器的功能才需要。先停止对战服务器，然后：
 
@@ -169,7 +181,8 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 
 ## 从源码构建
 
-Visual Studio 2022（C++ 工具）与 CMake 3.20+，两端都是 32 位：
+Visual Studio 2022（C++ 工具）、CMake 3.20+，打包需要 Python 3.10+；所有宿主都是 32 位。
+回归命令见[FRP 验证说明](docs/frp-testing.md)：
 
 ```bash
 cmake -S . -B build -G "Visual Studio 17 2022" -A Win32

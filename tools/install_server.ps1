@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs, updates or removes the SDGO mod framework in battle server folders.
+  Installs, updates or removes the SDGO mod framework in Battle or Agent server folders.
 
 .DESCRIPTION
   -ServerRoot is either one battle server folder (it contains BattleServer.exe) or a folder
@@ -21,6 +21,8 @@
     [mod] enabled and [settings] values are written back into it. -OverwriteConfig installs
     both as they are in the package.
   * -Only limits the install to the named subfolders; -Uninstall removes the framework.
+  * -Role Agent selects AgentServer.exe folders for agent_udp_pool. The default
+    remains Battle (BattleServer.exe), so existing commands keep their meaning.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"
@@ -33,7 +35,8 @@ param(
     [string[]]$Only = @(),
     [string]$Source,
     [switch]$OverwriteConfig,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [ValidateSet("Battle", "Agent")][string]$Role = "Battle"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +44,7 @@ $ProductName = "SDGO mod framework"
 $Loader = "winmm.dll"
 $Chain = "winmm_chain.dll"
 $ChainKey = "chain_winmm"
+$HostExe = if ($Role -eq "Agent") { "AgentServer.exe" } else { "BattleServer.exe" }
 
 Add-Type -Namespace SdgoInstall -Name Ini -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -129,18 +133,18 @@ function Update-ModIni([string]$source, [string]$destination) {
 }
 
 $root = (Resolve-Path -LiteralPath $ServerRoot).Path
-if (Test-Path -LiteralPath (Join-Path $root "BattleServer.exe")) {
+if (Test-Path -LiteralPath (Join-Path $root $HostExe)) {
     $targets = @(Get-Item -LiteralPath $root)
 } else {
     $targets = @(Get-ChildItem -LiteralPath $root -Directory | Where-Object {
-        (Test-Path -LiteralPath (Join-Path $_.FullName "BattleServer.exe")) -and ($Only.Count -eq 0 -or $Only -contains $_.Name)
+        (Test-Path -LiteralPath (Join-Path $_.FullName $HostExe)) -and ($Only.Count -eq 0 -or $Only -contains $_.Name)
     })
 }
-if ($targets.Count -eq 0) { throw "No battle server folder (with BattleServer.exe) at $root" }
+if ($targets.Count -eq 0) { throw "No $Role server folder (with $HostExe) at $root" }
 
-$running = Get-CimInstance Win32_Process -Filter "Name='BattleServer.exe'" | ForEach-Object { Split-Path -Parent $_.ExecutablePath }
+$running = Get-CimInstance Win32_Process -Filter "Name='$HostExe'" | Where-Object { $_.ExecutablePath } | ForEach-Object { Split-Path -Parent $_.ExecutablePath }
 $busy = $targets | Where-Object { $running -contains $_.FullName }
-if ($busy) { throw "Stop the battle servers in $(($busy | ForEach-Object { $_.Name }) -join ', ') first" }
+if ($busy) { throw "Stop the $Role servers in $(($busy | ForEach-Object { $_.Name }) -join ', ') first" }
 
 if (-not $Uninstall) {
     if (-not $Source) {
@@ -172,7 +176,7 @@ foreach ($target in $targets) {
         continue
     }
 
-    $hostKey = Get-HostKey (Join-Path $dir "BattleServer.exe")
+    $hostKey = Get-HostKey (Join-Path $dir $HostExe)
     if (Test-Path -LiteralPath (Join-Path $Source "sdgo\symbols\$hostKey.ini")) {
         Write-Host "$name : server build $hostKey is supported"
     } else {
@@ -214,5 +218,5 @@ foreach ($target in $targets) {
     Write-Host "$name : installed ($($summary -join ', '))"
 }
 if (-not $Uninstall) {
-    Write-Host "Start the battle servers again. Features with a server part also need the client install (install_client.ps1) on the players' machines."
+    Write-Host "Start the $Role servers again. Features with a server part also need the client install (install_client.ps1) on the players' machines."
 }
