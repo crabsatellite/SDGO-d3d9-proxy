@@ -177,9 +177,10 @@ Rules: one owner per hook site (a second hook on the same site fails); install h
 calls them on, so guard shared state; keep detours exception-safe (the bundled mods wrap
 game calls in `__try`/`__except`).
 
-Code hooks (`HookCode`, `HookSystemExport`) made while the mods load are switched on together
-right after the last mod has loaded (`core: N code hooks switched on`), before the host's own
-code runs; `original` works as soon as the call returns. Switching them on one by one froze
+`HookCode` hooks made while the mods load are switched on together right after the last mod
+has loaded (`core: N code hooks switched on`), before the host's own code runs; `original`
+works as soon as the call returns. `HookSystemExport` hooks take effect at once: other threads
+(input methods, other injected DLLs) may run system code at any time. Switching them on one by one froze
 every thread once per hook, about 70 ms each, and the game must reach `WinMain` within 3 s of
 being started by `GUpdate.exe` (it opens the `9YOU SDGO` event there, which `GUpdate.exe`
 closes after 3 s; without it the game exits silently). Keep `SdgoModLoad` short for the same
