@@ -52,7 +52,9 @@ typedef struct SdgoApi {
     /* Address of a verified symbol, or NULL when it is missing or its bytes did not match. */
     void* (*Symbol)(SdgoMod* mod, const char* name);
 
-    /* Inline detour (MinHook) on a verified kind=code symbol. Returns nonzero on success. */
+    /* Inline detour (MinHook) on a verified kind=code symbol. Returns nonzero on success.
+     * Hooks made during SdgoModLoad take effect together right after the last mod has loaded
+     * (before the host's own code runs); `original` can be called at once. */
     int (*HookCode)(SdgoMod* mod, const char* name, void* detour, void** original);
 
     /* Swap the pointer stored in a verified kind=slot symbol (vtable entry, function pointer). */
