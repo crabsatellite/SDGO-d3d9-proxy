@@ -157,6 +157,7 @@ namespace
     LuaOnErrorFn g_originalLuaOnError = nullptr;
     LuaToStringFn g_luaToString = nullptr;
     PacketDispatchFn g_originalPacketDispatch = nullptr;
+    PacketDispatchFn g_originalServicePacket = nullptr;
     RegisterLuaBindingsFn g_registerLuaBindings = nullptr;
     GameLogFn g_originalGameLog = nullptr;
     GameAppFn g_gameApp = nullptr;
@@ -283,14 +284,16 @@ namespace
     // (+0xC), and the first 0x32 bytes of the 4 unit records (+0xE + i * 0x32), whose first
     // dword is an AI unit's NPC data id. Each wait room keeps its own copy (CServiceWaitRoomMgr
     // 0x00A3E590 at +0x4258; the 3D wait room's main state 0x00752E10 in a new 0xCD4-byte
-    // buffer, 0x0074C9B0), so the decks are read where every server packet passes, the packet
-    // dispatch (0x004DC3D0), before the current service gets it. The records the game modes
-    // get carry neither. A player's deck is built from its record by 0x00665CC0, which skips NPC units, and its
-    // message 7 handler switches the deck on a respawn; the NPC handler does neither. Here the
-    // AI unit gets the other deck units with the same AddDeckUnit (unit data id = NPC data
-    // +0x69; NPC data is grid data type 0x29, GridData::Find 0x0059D2B0), and on a respawn
-    // its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the AI
-    // script from it) and the deck switched after it, as CPlayer does.
+    // buffer, 0x0074C9B0), so the decks are read where the packet reaches either: the service
+    // manager's packet slot (CServiceManaged 0x00701DE0), which every game state calls (the
+    // wait room's CGameState 0x004F7740, CGameMain 0x004DC3D0 only in battle). The records
+    // the game modes get carry neither. A player's deck is built from its record by
+    // 0x00665CC0, which skips NPC units, and its message 7 handler switches the deck on a
+    // respawn; the NPC handler does neither. Here the AI unit gets the other deck units with
+    // the same AddDeckUnit (unit data id = NPC data +0x69; NPC data is grid data type 0x29,
+    // GridData::Find 0x0059D2B0), and on a respawn its NPC data is set to the new entry's
+    // before message 7 (CNPC::Add re-inits the AI script from it) and the deck switched
+    // after it, as CPlayer does.
     constexpr int kPacketBattleStart = 0x6C3;
     constexpr size_t kStartPacketSlots = 0x20;
     constexpr size_t kStartSlotStride = 0x10F;
@@ -335,6 +338,25 @@ namespace
             if (deck.pilotId == pilotId && pilotId != 0)
                 return &deck;
         return nullptr;
+    }
+
+    bool GuardedReadStartDecks(const uint8_t* packet)
+    {
+        __try {
+            ReadStartDecks(packet);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            memset(g_startDecks, 0, sizeof(g_startDecks));
+            return false;
+        }
+    }
+
+    int __fastcall ServicePacket(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
+    {
+        if ((opcode & 0xFFFF) == kPacketBattleStart && packet &&
+            !GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
+        return g_originalServicePacket(self, a, b, c, opcode, packet);
     }
 
     constexpr size_t kNpcUnitDataId = 0x69;     // NPC data: its unit data id
@@ -1091,22 +1113,9 @@ namespace
             g_originalGameLog(logger, level, L"%s", text);
     }
 
-    bool GuardedReadStartDecks(const uint8_t* packet)
-    {
-        __try {
-            ReadStartDecks(packet);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            memset(g_startDecks, 0, sizeof(g_startDecks));
-            return false;
-        }
-    }
-
     int __fastcall PacketDispatch(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
         int op = opcode & 0xFFFF;
-        if (op == kPacketBattleStart && packet && !GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
         if (g_logPackets && g_packetLines < 3000) {
             if (op == g_lastOpcode) {
                 ++g_opcodeRepeat;
@@ -1408,10 +1417,13 @@ SDGO_MOD_ENTRY
         if (!api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
                            reinterpret_cast<void**>(&g_originalLuaOnError)))
             api->Log(mod, SDGO_LOG_WARN, "Lua error logging not available");
+        if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
+                           reinterpret_cast<void**>(&g_originalPacketDispatch)))
+            api->Log(mod, SDGO_LOG_WARN, "packet logging not available");
     }
     // Without this an AI player of mode 7 has one unit and its team gauge counts only that.
-    if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
-                       reinterpret_cast<void**>(&g_originalPacketDispatch)))
+    if (!api->HookCode(mod, "service.dispatch_packet", reinterpret_cast<void*>(&ServicePacket),
+                       reinterpret_cast<void**>(&g_originalServicePacket)))
         return 0;
     if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
         !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
