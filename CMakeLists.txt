@@ -113,6 +113,8 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
+             SOURCES mods/hangar_manager/hangar_manager.cpp FILES units.tsv LIBS user32 gdi32)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -149,6 +151,19 @@ endforeach()
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(hangar_model_test tests/hangar_model_test.cpp)
+    target_link_libraries(hangar_model_test PRIVATE sdgo_api)
+    sdgo_strict(hangar_model_test)
+    target_compile_options(hangar_model_test PRIVATE /UNDEBUG)
+    add_test(NAME hangar_model_offline COMMAND hangar_model_test)
+    add_executable(hangar_native_test tests/hangar_native_test.cpp)
+    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32 gdi32)
+    sdgo_strict(hangar_native_test)
+    target_compile_options(hangar_native_test PRIVATE /UNDEBUG)
+    add_test(NAME hangar_native_offline COMMAND hangar_native_test)
+    add_executable(hangar_ui_preview tests/hangar_ui_preview.cpp)
+    target_link_libraries(hangar_ui_preview PRIVATE sdgo_api user32 gdi32)
+    sdgo_strict(hangar_ui_preview)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)

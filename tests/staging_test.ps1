@@ -5,6 +5,11 @@ $repo = Split-Path -Parent $PSScriptRoot
 $buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
 $stage = Join-Path $buildRoot "stage\$Config\client\sdgo\mods\mission_ai"
 $saved = @{}
+function FileHash([string]$path) {
+    $sha=[Security.Cryptography.SHA256]::Create()
+    $stream=[IO.File]::OpenRead($path)
+    try { [BitConverter]::ToString($sha.ComputeHash($stream)) } finally { $stream.Close();$sha.Dispose() }
+}
 try {
     foreach ($name in @('mod.ini', 'mission_ai.lua')) {
         $path = Join-Path $stage $name
@@ -16,7 +21,7 @@ try {
     foreach ($name in @('mod.ini', 'mission_ai.lua')) {
         $source = Join-Path $repo "mods\mission_ai\$name"
         $actual = Join-Path $stage $name
-        if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $actual).Hash) {
+        if ((FileHash $source) -ne (FileHash $actual)) {
             throw "Incremental build did not restage $name"
         }
     }
