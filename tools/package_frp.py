@@ -84,7 +84,7 @@ def contents(repo: Path, binaries: Path) -> dict[str, bytes]:
         ("agent", "AgentServer-548A86BC-000D7000", ("agent.udp_bind_call", "agent.bind_import", "agent.relay_log_format")),
     ):
         files[f"payload/{side}/symbols/{key}.ini"] = symbol_fragment(repo/f"symbols/{key}.ini", names)
-    for name in ("install_frp.ps1", "install_client.ps1", "install_server.ps1"):
+    for name in ("install_frp.ps1", "install_client.ps1", "install_server.ps1", "install_common.ps1"):
         add(name, repo/"tools"/name)
     add("owner-tools/make_frp_profile.py", repo/"tools/make_frp_profile.py")
     add("owner-tools/owner-profile.example.json", repo/"docs/examples/frp-profile.example.json")
