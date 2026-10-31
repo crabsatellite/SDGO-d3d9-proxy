@@ -111,6 +111,8 @@ sdgo_add_mod(findwindow_fix DESCRIPTION "FindWindowW fix" SOURCES mods/findwindo
 sdgo_add_mod(startup_crash_fix DESCRIPTION "random crash at game start fix" SOURCES mods/startup_crash_fix/startup_crash_fix.cpp)
 sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_probe.cpp)
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
+sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
+sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -142,3 +144,56 @@ foreach(fixture SDPlus generic_input_method)
     target_link_libraries(findwindow_fixture_${fixture} PRIVATE user32)
     sdgo_strict(findwindow_fixture_${fixture})
 endforeach()
+
+# Offline AI contracts. The fixtures call production code with synthetic rooms,
+# packets, HUDs and native callbacks; no game executable is loaded.
+include(CTest)
+if(BUILD_TESTING)
+    foreach(mod pvp_ai match_ai coop_ai mission_ai)
+        add_executable(${mod}_test "tests/${mod}_test.cpp")
+        target_link_libraries(${mod}_test PRIVATE sdgo_api)
+        sdgo_strict(${mod}_test)
+        add_test(NAME ${mod}_offline COMMAND ${mod}_test)
+        set_tests_properties(${mod}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+
+    find_program(SDGO_POWERSHELL NAMES powershell pwsh)
+    if(SDGO_POWERSHELL)
+        foreach(check loader findwindow_fix)
+            add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
+                -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"
+                -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+            set_tests_properties(${check}_offline PROPERTIES TIMEOUT 60)
+        endforeach()
+        add_test(NAME installer_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_test.ps1"
+            -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(installer_offline PROPERTIES TIMEOUT 60)
+        add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(mod_staging_offline PROPERTIES TIMEOUT 90)
+    endif()
+
+    # Optional official Lua 5.0.3 source; never linked into a shipped mod.
+    set(SDGO_LUA50_SOURCE "" CACHE PATH "Extracted official Lua 5.0.3 source for offline tests")
+    if(SDGO_LUA50_SOURCE)
+        if(NOT EXISTS "${SDGO_LUA50_SOURCE}/include/lua.h" OR NOT EXISTS "${SDGO_LUA50_SOURCE}/src/lapi.c")
+            message(FATAL_ERROR "SDGO_LUA50_SOURCE must point to extracted official Lua 5.0.3 sources")
+        endif()
+        file(GLOB SDGO_LUA50_CORE CONFIGURE_DEPENDS "${SDGO_LUA50_SOURCE}/src/*.c")
+        add_library(ai_test_lua50 STATIC ${SDGO_LUA50_CORE}
+            "${SDGO_LUA50_SOURCE}/src/lib/lauxlib.c"
+            "${SDGO_LUA50_SOURCE}/src/lib/lbaselib.c"
+            "${SDGO_LUA50_SOURCE}/src/lib/lstrlib.c")
+        target_include_directories(ai_test_lua50 PUBLIC "${SDGO_LUA50_SOURCE}/include")
+        target_include_directories(ai_test_lua50 PRIVATE "${SDGO_LUA50_SOURCE}/src")
+        target_compile_definitions(ai_test_lua50 PRIVATE _CRT_SECURE_NO_WARNINGS)
+        add_executable(mission_ai_lua_test tools/lua50_host.c)
+        target_link_libraries(mission_ai_lua_test PRIVATE ai_test_lua50)
+        add_test(NAME mission_ai_lua_offline COMMAND mission_ai_lua_test mods/mission_ai/test/sim_mission.lua)
+        set_tests_properties(mission_ai_lua_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    else()
+        message(STATUS "Lua simulation disabled; set SDGO_LUA50_SOURCE to include it")
+    endif()
+endif()

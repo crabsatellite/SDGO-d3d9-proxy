@@ -116,9 +116,16 @@ namespace
             if (*p < '0' || *p > '9')
                 break;
             uint32_t value = 0;
-            while (*p >= '0' && *p <= '9')
-                value = value * 10 + static_cast<uint32_t>(*p++ - '0');
-            ids.push_back(value);
+            bool overflow = false;
+            while (*p >= '0' && *p <= '9') {
+                uint32_t digit = static_cast<uint32_t>(*p++ - '0');
+                if (value > (UINT32_MAX - digit) / 10)
+                    overflow = true;
+                if (!overflow)
+                    value = value * 10 + digit;
+            }
+            if (!overflow)
+                ids.push_back(value);
         }
         return ids;
     }
@@ -129,6 +136,12 @@ namespace
         g_settings.defaultCount = g_api->SettingInt(g_mod, "DefaultCount", 0);
         g_settings.squadSize = g_api->SettingInt(g_mod, "SquadSize", 4);
         g_settings.defaultLevel = g_api->SettingInt(g_mod, "DefaultLevel", 2);
+        if (g_settings.defaultCount < 0 || g_settings.defaultCount > kSlots)
+            g_settings.defaultCount = 0;
+        if (g_settings.squadSize < 1 || g_settings.squadSize > kSlots)
+            g_settings.squadSize = 4;
+        if (g_settings.defaultLevel < 1 || g_settings.defaultLevel > 5)
+            g_settings.defaultLevel = 2;
         g_settings.logRoom = g_api->SettingInt(g_mod, "LogRoom", 1);
         for (int level = 1; level <= 5; ++level) {
             char key[16];
@@ -169,7 +182,7 @@ namespace
         plan.level = g_settings.defaultLevel;
         char lower[kRoomTitleMax + 1];
         size_t n = 0;
-        for (; title[n] && n < kRoomTitleMax; ++n)
+        for (; n < kRoomTitleMax && title[n]; ++n)
             lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
         lower[n] = '\0';
         const char* command = strstr(lower, "!ai");
@@ -181,8 +194,13 @@ namespace
         const char* p = command + 3;
         if (*p >= '0' && *p <= '9') {
             plan.count = 0;
-            while (*p >= '0' && *p <= '9')
-                plan.count = plan.count * 10 + (*p++ - '0');
+            while (*p >= '0' && *p <= '9') {
+                int digit = *p++ - '0';
+                if (plan.count < kSlots)
+                    plan.count = plan.count * 10 + digit;
+                if (plan.count > kSlots)
+                    plan.count = kSlots;
+            }
         }
         while (*p) {
             while (*p == ' ')

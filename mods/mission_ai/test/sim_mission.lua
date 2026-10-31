@@ -110,6 +110,51 @@ SDGO_MissionAI_Tick(mode, W.now, 5)
 SearchLockPlayer(20)
 Check(W.objects[20].target == 1001, "reloaded wrapper still diverts (" .. tostring(W.objects[20].target) .. ")")
 
+print("scenario 6: a closer human and out-of-range wingmen keep native targeting")
+NewWorld({ 1001 })
+W.objects[20].pos = vector3(100, 0, 0)
+SDGO_MissionAI_Tick(mode, W.now, 6)
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1, "a closer human stays the target")
+W.objects[20].pos = vector3(10000, 0, 0)
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1, "wingmen beyond EnemyAggroRange are ignored")
+
+print("scenario 7: disabled diversion and missing wingmen remain safe")
+SDGO_MissionAI_Config.EnemiesTargetWingmen = 0
+dofile("mods/mission_ai/mission_ai.lua")
+NewWorld({ 1001 })
+SDGO_MissionAI_Tick(mode, W.now, 7)
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1, "disabled configuration preserves native search")
+SDGO_MissionAI_Config.EnemiesTargetWingmen = 1
+dofile("mods/mission_ai/mission_ai.lua")
+W.objects[1001] = nil
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1, "a removed wingman is not dereferenced")
+
+print("scenario 8: DWORD clock wrap does not keep an expired mission alive")
+NewWorld({ 1001 })
+W.now = 4294967000
+SDGO_MissionAI_Tick(mode, W.now, 8)
+W.now = 100
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1001, "recent mission remains live across clock wrap")
+W.now = 3000
+SearchLockPlayer(20)
+Check(W.objects[20].target == 1, "expired mission stops diversion after clock wrap")
+
+print("scenario 9: status reporting resumes after clock wrap")
+NewWorld({ 1001 })
+W.now = 4294967000
+SDGO_MissionAI_Tick(mode, W.now, 9)
+local beforeWrap = logCount
+W.now = 5500
+SDGO_MissionAI_Tick(mode, W.now, 9)
+Check(logCount == beforeWrap + 1, "one status report after the reporting interval")
+SDGO_MissionAI_Tick(mode, W.now + 1, 9)
+Check(logCount == beforeWrap + 1, "status reports remain throttled")
+
 print("")
 if failures == 0 then
   print("ALL SCENARIOS PASSED")
