@@ -604,10 +604,54 @@ namespace
         g_game.calculateTeam(um);
     }
 
+    // ---- grid match: the gauge counts the AI players ---------------------------------------
+    //
+    // CGridMatchGameMode's Init (0x00ADB790) sets the team gauge (mode +0x30) from the number
+    // of human records, (n - 2) into a table: 2, 4 and 8 players 80, 6 players 60, 10 players
+    // 120, 12 players 160, odd counts nothing. With one human and AI players nothing was set,
+    // so the HUD's grid bar stayed empty while the server scored. With AI players the gauge
+    // is set the way the server sets each team's (pvp_ai GridGauge, from 0x004B6EB0): by the
+    // players per team, humans and AI, the larger team where they differ.
+    constexpr size_t kModeGridGauge = 0x30;
+
+    int GridGauge(int perTeam)
+    {
+        switch (perTeam) {
+        case 1: case 2: case 4: return 0x50;
+        case 3: return 0x3C;
+        case 5: return 0x78;
+        case 6: return 0xA0;
+        default: return 0;
+        }
+    }
+
+    void SetGridGauge(uint8_t* mode)
+    {
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        int team[3] = {};
+        for (size_t begin : {kRoomHumansBegin, kRoomAiBegin}) {
+            uint8_t* records = *reinterpret_cast<uint8_t**>(room + begin);
+            int count = RecordCount(room, begin, begin + 4);
+            for (int k = 0; k < count; ++k) {
+                int t = records[k * kRecordSize + kRecordTeam];
+                ++team[t == 1 || t == 2 ? t : 0];
+            }
+        }
+        int perTeam = team[1] > team[2] ? team[1] : team[2];
+        int gauge = GridGauge(perTeam);
+        auto& field = *reinterpret_cast<int32_t*>(mode + kModeGridGauge);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "grid match: gauge %ld -> %d (teams %d/%d with the AI players)",
+                   static_cast<long>(field), gauge, team[1], team[2]);
+        if (gauge > 0)
+            field = gauge;
+    }
+
     bool GuardedSpawn(uint8_t* mode, const char* className, DWORD* code)
     {
         __try {
             SpawnAiPlayers(mode, className);
+            if (mode == g_botMode && !g_botTable.empty() && ModeClassIndex(mode) == 2)
+                SetGridGauge(mode);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             g_creatingAiUnit = false;
