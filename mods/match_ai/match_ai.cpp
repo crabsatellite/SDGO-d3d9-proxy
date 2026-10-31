@@ -25,7 +25,9 @@
 //
 // A unit's AI runs only once it is switched on (CNPC::EnableAI, unit+0x326C). The game does
 // that for every AI unit at game ready, but only in the script modes; for a PvP battle with
-// AI players this mod does it at the same moment (GameReady, 0x004B2390).
+// AI players this mod does it at the same moment (GameReady, 0x004B2390). The AI scripts
+// need the Lua bindings the script modes register in their Init (0x0050FAB0), and their
+// target searches call script mode vftable slots; both are provided for the PvP modes.
 //
 // The AI runs on the room master, found the way CMissionMode::Init finds it: the local
 // player's record (record+0 == room+0x68) has record+0x1C set. The start point index of an
@@ -95,8 +97,20 @@ namespace
     using PacketDispatchFn = int(__thiscall*)(void* self, int a, int b, int c, int opcode, void* packet);
     using RegisterLuaBindingsFn = void(__cdecl*)();
     using GameLogFn = void(__cdecl*)(void* logger, int level, const wchar_t* format, ...);
+    using GameAppFn = uint8_t*(__cdecl*)();
+    using ModeIsAFn = bool(__thiscall*)(uint8_t* mode, int kind);
+    using LockTargetFn = int(__thiscall*)(void* mode, uint32_t objectId, char p2, char p3);
+    using RunLuaFunctionFn = void(__thiscall*)(void* mode, int index);
+    using LuaLockFn = int(__cdecl*)(uint32_t objectId);
+    using LuaLockSelectFn = int(__cdecl*)(uint32_t objectId, int select);
+    using LuaRunLuaFunctionFn = void(__cdecl*)(int index);
+    using LuaTeamSearchFn = int(__cdecl*)(uint8_t* npc);
 
+    constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
+    constexpr size_t kUnitOwner = 0x3268;       // owning script mode*, 0 from the CBaseGameMode CreateNpc
+    constexpr int kModeIsASlot = 1;
+    constexpr int kModeInitSlot = 4;
     constexpr size_t kWaitRoomSlots = 0xA00;    // CServiceWaitRoomMgr: pilot id per slot
     constexpr size_t kWaitRoomSlotStride = 0x48E;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
@@ -129,6 +143,15 @@ namespace
     PacketDispatchFn g_originalPacketDispatch = nullptr;
     RegisterLuaBindingsFn g_registerLuaBindings = nullptr;
     GameLogFn g_originalGameLog = nullptr;
+    GameAppFn g_gameApp = nullptr;
+    LockTargetFn g_lockTarget = nullptr;
+    RunLuaFunctionFn g_runLuaFunction = nullptr;
+    LuaLockFn g_originalLockPlayerA = nullptr;
+    LuaLockFn g_originalLockPlayer = nullptr;
+    LuaLockFn g_originalLockPlayerAibs = nullptr;
+    LuaLockSelectFn g_originalLockTargetSelect = nullptr;
+    LuaRunLuaFunctionFn g_originalRunLuaFunction = nullptr;
+    LuaTeamSearchFn g_originalTeamSearch = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -149,6 +172,7 @@ namespace
         {"leader match", "CLeaderMatchGameMode.vtbl.Init", nullptr},
         {"tag match", "CTagMatchGameMode.vtbl.Init", nullptr},
     };
+    void** g_vtables[5] = {}; // vftable of each class, from its Init slot
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
@@ -376,6 +400,118 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: no UDP link asked for %d AI pilot(s)", count);
     }
 
+    // ---- the AI's Lua functions that need a script mode ----------------------------------
+    //
+    // The AI scripts aim through SearchLockPlayer & co. (0x00500D50, 0x00500E00, 0x00501120,
+    // 0x00501270), which call vftable slot 18 of the current game mode, and through
+    // GameInterfaceRunLuafunction (0x00502550, slot 22). Only the script modes have those
+    // slots; on CNormalGameMode slot 18 reads 0 and the call jumps to address 0. In a PvP mode
+    // these hooks run what the AI battle mode runs there (CAINormalGameMode slots 18 and 22,
+    // 0x00AE35B0 and 0x00ACBC60). Of the mode, those two read only its objective list
+    // (+0x108/+0x10C, the object ids 0x00AE0160 collects) and its counter list (+0x60C/+0x610);
+    // a PvP battle has neither, so they get a stand-in with both lists empty.
+    // OurTeamTargetSearch (0x0050AA90) reads the NPC's owning script mode, which the AI
+    // players have not (+0x3268 = 0); it returns 0 there, its result for a mode +0xE4 <= 1
+    // (the script mode default, 0x00AE6DF2).
+
+    alignas(16) uint8_t g_scriptModeStandIn[0x620] = {};
+    int g_lockFaults = 0;
+
+    bool IsPvpMode(uint8_t* mode)
+    {
+        if (!mode)
+            return false;
+        void** vtable = *reinterpret_cast<void***>(mode);
+        for (void** known : g_vtables)
+            if (known && vtable == known)
+                return true;
+        return false;
+    }
+
+    // The current game mode when it is one of the PvP modes, else NULL (the way the Lua
+    // functions find it: GameApp +0x4A4 -> service +0x0C).
+    uint8_t* CurrentPvpMode()
+    {
+        __try {
+            uint8_t* app = g_gameApp();
+            uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
+            uint8_t* mode = service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
+            return IsPvpMode(mode) ? mode : nullptr;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
+    }
+
+    bool ModeIsA(uint8_t* mode, int kind)
+    {
+        auto isA = reinterpret_cast<ModeIsAFn>((*reinterpret_cast<void***>(mode))[kModeIsASlot]);
+        return isA(mode, kind);
+    }
+
+    int LockFault(DWORD code, void* address)
+    {
+        if (g_lockFaults < 10) {
+            ++g_lockFaults;
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX at %p in the AI's target search", code, address);
+        }
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+
+    int LockTarget(uint32_t objectId, char p2, char p3)
+    {
+        __try {
+            return g_lockTarget(g_scriptModeStandIn, objectId, p2, p3);
+        } __except (LockFault(GetExceptionCode(), (GetExceptionInformation())->ExceptionRecord->ExceptionAddress)) {
+            return 0;
+        }
+    }
+
+    int __cdecl LockPlayerA(uint32_t objectId)
+    {
+        if (CurrentPvpMode())
+            return LockTarget(objectId, 0, 0);
+        return g_originalLockPlayerA(objectId);
+    }
+
+    int __cdecl LockPlayer(uint32_t objectId)
+    {
+        uint8_t* mode = CurrentPvpMode();
+        if (mode && !ModeIsA(mode, 0))
+            return LockTarget(objectId, 1, 0);
+        return g_originalLockPlayer(objectId);
+    }
+
+    int __cdecl LockPlayerAibs(uint32_t objectId)
+    {
+        if (CurrentPvpMode())
+            return LockTarget(objectId, 1, 0);
+        return g_originalLockPlayerAibs(objectId);
+    }
+
+    int __cdecl LockTargetSelect(uint32_t objectId, int select)
+    {
+        uint8_t* mode = CurrentPvpMode();
+        if (mode && !ModeIsA(mode, 0))
+            return LockTarget(objectId, 1, static_cast<char>(select));
+        return g_originalLockTargetSelect(objectId, select);
+    }
+
+    void __cdecl RunLuaFunction(int index)
+    {
+        if (CurrentPvpMode()) {
+            g_runLuaFunction(g_scriptModeStandIn, index);
+            return;
+        }
+        g_originalRunLuaFunction(index);
+    }
+
+    int __cdecl TeamSearch(uint8_t* npc)
+    {
+        if (npc && *reinterpret_cast<void**>(npc + kUnitOwner) == nullptr)
+            return 0;
+        return g_originalTeamSearch(npc);
+    }
+
     // ---- diagnostics: who runs CNPC::Think ------------------------------------------------
 
     void* g_thinkCallers[8] = {};
@@ -489,6 +625,55 @@ namespace
         return name;
     }
 
+    // ---- diagnostics: access violations ------------------------------------------------
+    //
+    // The game's crash log (zoa_log\Exp_*.txt) has no faulting address and often no call
+    // stack. This logs the first access violations with the address, the registers and the
+    // stack words that point into GOnline.exe (return address candidates).
+
+    int g_faults = 0;
+    uintptr_t g_imageBegin = 0;
+    uintptr_t g_imageEnd = 0;
+
+    LONG CALLBACK FaultLogger(EXCEPTION_POINTERS* info)
+    {
+        if (info->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || g_faults >= 8)
+            return EXCEPTION_CONTINUE_SEARCH;
+        ++g_faults;
+        const CONTEXT* c = info->ContextRecord;
+        const ULONG_PTR* params = info->ExceptionRecord->ExceptionInformation;
+        g_api->Log(g_mod, SDGO_LOG_WARN,
+                   "access violation at %p (%s %08lX): eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX "
+                   "ebp %08lX esp %08lX",
+                   info->ExceptionRecord->ExceptionAddress, params[0] ? "write" : "read",
+                   static_cast<unsigned long>(params[1]), c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+        auto tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+        auto top = reinterpret_cast<uintptr_t>(tib->StackBase);
+        char line[512];
+        int length = 0;
+        int found = 0;
+        for (uintptr_t at = c->Esp; at + 4 <= top && at < c->Esp + 0x800 && found < 16; at += 4) {
+            uintptr_t value = *reinterpret_cast<const uintptr_t*>(at);
+            if (value > g_imageBegin && value < g_imageEnd) {
+                length += sprintf_s(line + length, sizeof(line) - length, " %08lX", static_cast<unsigned long>(value));
+                ++found;
+            }
+        }
+        g_api->Log(g_mod, SDGO_LOG_WARN, "  stack code addresses:%s", found ? line : " none");
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    void InstallFaultLogger()
+    {
+        auto base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+        auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+        auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        g_imageBegin = reinterpret_cast<uintptr_t>(base) + 0x1000;
+        g_imageEnd = reinterpret_cast<uintptr_t>(base) + nt->OptionalHeader.SizeOfImage;
+        if (!AddVectoredExceptionHandler(1, &FaultLogger))
+            g_api->Log(g_mod, SDGO_LOG_WARN, "access violation logging not available");
+    }
+
     template <typename Fn>
     bool Bind(Fn& out, const char* symbol)
     {
@@ -507,8 +692,23 @@ SDGO_MOD_ENTRY
                  Bind(g_game.playerSlot, "um.player_slot") && Bind(g_game.assign, "wstring.assign") &&
                  Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
-                 Bind(g_registerLuaBindings, "lua.register_bindings");
+                 Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
+                 Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function");
     if (!bound)
+        return 0;
+    // The AI players' scripts call these; without them they would jump to address 0.
+    if (!api->HookCode(mod, "lua.search_lock_player_a", reinterpret_cast<void*>(&LockPlayerA),
+                       reinterpret_cast<void**>(&g_originalLockPlayerA)) ||
+        !api->HookCode(mod, "lua.search_lock_player", reinterpret_cast<void*>(&LockPlayer),
+                       reinterpret_cast<void**>(&g_originalLockPlayer)) ||
+        !api->HookCode(mod, "lua.search_lock_player_aibs", reinterpret_cast<void*>(&LockPlayerAibs),
+                       reinterpret_cast<void**>(&g_originalLockPlayerAibs)) ||
+        !api->HookCode(mod, "lua.search_lock_target_select", reinterpret_cast<void*>(&LockTargetSelect),
+                       reinterpret_cast<void**>(&g_originalLockTargetSelect)) ||
+        !api->HookCode(mod, "lua.game_interface_run_lua_function", reinterpret_cast<void*>(&RunLuaFunction),
+                       reinterpret_cast<void**>(&g_originalRunLuaFunction)) ||
+        !api->HookCode(mod, "lua.our_team_target_search", reinterpret_cast<void*>(&TeamSearch),
+                       reinterpret_cast<void**>(&g_originalTeamSearch)))
         return 0;
     if (!api->HookCode(mod, "game.service_game_ready", reinterpret_cast<void*>(&GameReady),
                        reinterpret_cast<void**>(&g_originalGameReady)))
@@ -520,6 +720,7 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "npc.think", reinterpret_cast<void*>(&Think), reinterpret_cast<void**>(&g_originalThink)))
         api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
     if (api->SettingInt(mod, "LogDiagnostics", 1) != 0) {
+        InstallFaultLogger();
         Bind(g_luaToString, "lua.tostring");
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
             api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
@@ -536,6 +737,8 @@ SDGO_MOD_ENTRY
         api->Log(mod, SDGO_LOG_WARN, "error logging not available");
     int hooked = 0;
     for (int i = 0; i < 5; ++i) {
+        if (auto slot = reinterpret_cast<void**>(api->Symbol(mod, g_classes[i].slot)))
+            g_vtables[i] = slot - kModeInitSlot;
         if (api->HookSlot(mod, g_classes[i].slot, reinterpret_cast<void*>(g_detours[i]),
                           reinterpret_cast<void**>(&g_classes[i].original)))
             ++hooked;
