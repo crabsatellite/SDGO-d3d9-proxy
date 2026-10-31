@@ -14,6 +14,7 @@ namespace
         Kind kind;
         void* site;     // code address or pointer slot
         void* original; // trampoline (code) or previous pointer (slot)
+        bool queued;    // code hook waiting for EndBatch
     };
 
     std::vector<Record> g_records;
@@ -72,7 +73,8 @@ bool sdgo::hooks::Initialize(std::string& error)
     return true;
 }
 
-bool sdgo::hooks::HookCode(const std::string& owner, void* target, void* detour, void** original, std::string& error)
+bool sdgo::hooks::HookCode(const std::string& owner, void* target, void* detour, void** original, std::string& error,
+                           bool deferrable)
 {
     if (!g_ready || !target || !detour || !original) {
         error = "invalid arguments";
@@ -81,17 +83,18 @@ bool sdgo::hooks::HookCode(const std::string& owner, void* target, void* detour,
     Guard guard;
     if (SiteTaken(target, error))
         return false;
+    bool queue = g_batch && deferrable;
     MH_STATUS status = MH_CreateHook(target, detour, original);
     if (status == MH_OK)
-        status = g_batch ? MH_QueueEnableHook(target) : MH_EnableHook(target);
+        status = queue ? MH_QueueEnableHook(target) : MH_EnableHook(target);
     if (status != MH_OK) {
         MH_RemoveHook(target);
         error = MH_StatusToString(status);
         return false;
     }
-    if (g_batch)
+    if (queue)
         ++g_queued;
-    g_records.push_back({owner, Kind::Code, target, *original});
+    g_records.push_back({owner, Kind::Code, target, *original, queue});
     return true;
 }
 
@@ -184,7 +187,7 @@ void sdgo::hooks::Rollback(const std::string& owner)
         if (record.kind == Kind::Code) {
             MH_DisableHook(record.site);
             MH_RemoveHook(record.site);
-            if (g_batch && g_queued > 0)
+            if (record.queued && g_batch && g_queued > 0)
                 --g_queued;
         } else {
             WritePointer(static_cast<void**>(record.site), record.original);

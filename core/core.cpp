@@ -143,7 +143,8 @@ namespace
         if (!symbol || !mod)
             return 0;
         std::string error;
-        if (!sdgo::hooks::HookCode(mod->id, reinterpret_cast<void*>(symbol->address), detour, original, error)) {
+        if (!sdgo::hooks::HookCode(mod->id, reinterpret_cast<void*>(symbol->address), detour, original, error,
+                                   true)) {
             sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "hook %s failed: %s", name, error.c_str());
             return 0;
         }
@@ -343,8 +344,9 @@ namespace
         std::stable_sort(g_mods.begin(), g_mods.end(), [](const SdgoMod* a, const SdgoMod* b) {
             return a->order != b->order ? a->order < b->order : a->id < b->id;
         });
-        // The game's own code has not started yet, so the code hooks of all mods are switched
-        // on together after the last mod has loaded. One by one they took about 70 ms each,
+        // The game's own code has not started yet, so the mods' hooks on it (HookCode) are
+        // switched on together after the last mod has loaded; system export hooks stay
+        // immediate, other threads may run that code. One by one they took about 70 ms each,
         // and GUpdate.exe gives the game 3 s to reach WinMain (it closes the "9YOU SDGO"
         // event the game opens there; without it the game exits silently).
         sdgo::hooks::BeginBatch();
