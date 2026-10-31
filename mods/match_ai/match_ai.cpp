@@ -105,6 +105,7 @@ namespace
     using LuaLockSelectFn = int(__cdecl*)(uint32_t objectId, int select);
     using LuaRunLuaFunctionFn = void(__cdecl*)(int index);
     using LuaTeamSearchFn = int(__cdecl*)(uint8_t* npc);
+    using NatCheckFn = void(__thiscall*)(uint8_t* gameMain);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -152,11 +153,15 @@ namespace
     LuaLockSelectFn g_originalLockTargetSelect = nullptr;
     LuaRunLuaFunctionFn g_originalRunLuaFunction = nullptr;
     LuaTeamSearchFn g_originalTeamSearch = nullptr;
+    NatCheckFn g_originalNatCheck = nullptr;
+    bool g_natCheckSkipped = false;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
     std::vector<uint8_t*> g_bots;
     uint8_t* g_botMode = nullptr;
+    // The game mode of a battle with AI players whose only human is this client.
+    uint8_t* g_soloAiMode = nullptr;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
 
     struct ModeClass
@@ -200,12 +205,16 @@ namespace
     {
         g_bots.clear();
         g_botMode = mode;
+        g_soloAiMode = nullptr;
+        g_natCheckSkipped = false;
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
         int count = RecordCount(room, kRoomAiBegin, kRoomAiEnd);
         if (count == 0)
             return;
+        if (RecordCount(room, kRoomHumansBegin, kRoomHumansEnd) == 1)
+            g_soloAiMode = mode;
         if (!g_game.isNetwork()) {
             g_api->Log(g_mod, SDGO_LOG_WARN, "%d AI player(s) in the room, but the battle took the offline path", count);
             return;
@@ -398,6 +407,28 @@ namespace
                 *reinterpret_cast<uint32_t*>(waitRoom + kWaitRoomSlots + slot * kWaitRoomSlotStride) = hidden[slot];
         if (count)
             g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: no UDP link asked for %d AI pilot(s)", count);
+    }
+
+    // ---- NAT check: no peer for the only human ------------------------------------------
+    //
+    // CGameMain's update (vt slot 3, 0x004BC620) runs a NAT check (0x004B6FD0) in a network
+    // battle of every mode but the missions and AI modes (5, 8, 10, 11, 12): once the unit
+    // manager's counter +0x82CC reaches 1000 and no message from another player has come in
+    // (CGameMain +0xF8 and +0xFC, raised by 0x004C2090 and 0x004CBA90), it shows message
+    // 120003 (blocked connection, firewall) and takes the mouse away. The only human of a
+    // battle with AI players has no other player, so for that battle the check is skipped,
+    // as the game skips it for its AI modes.
+
+    void __fastcall NatCheck(uint8_t* gameMain, void* /*edx*/)
+    {
+        if (gameMain && g_soloAiMode && *reinterpret_cast<uint8_t**>(gameMain + kServiceMode) == g_soloAiMode) {
+            if (!g_natCheckSkipped) {
+                g_natCheckSkipped = true;
+                g_api->Log(g_mod, SDGO_LOG_INFO, "NAT check skipped: no other player in this battle with AI players");
+            }
+            return;
+        }
+        g_originalNatCheck(gameMain);
     }
 
     // ---- the AI's Lua functions that need a script mode ----------------------------------
@@ -710,6 +741,9 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "lua.our_team_target_search", reinterpret_cast<void*>(&TeamSearch),
                        reinterpret_cast<void**>(&g_originalTeamSearch)))
         return 0;
+    if (!api->HookCode(mod, "game.nat_check", reinterpret_cast<void*>(&NatCheck),
+                       reinterpret_cast<void**>(&g_originalNatCheck)))
+        api->Log(mod, SDGO_LOG_WARN, "NAT check not hooked; a battle with AI players and one human shows a blocked connection");
     if (!api->HookCode(mod, "game.service_game_ready", reinterpret_cast<void*>(&GameReady),
                        reinterpret_cast<void**>(&g_originalGameReady)))
         return 0;

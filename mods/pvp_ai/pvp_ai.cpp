@@ -580,9 +580,75 @@ namespace
         }
     }
 
+    // Diagnostic: in a PvP room with AI pilots, the team scores (room +0x2EEE4 team 1, +0x2EEE8
+    // team 2; a kill adds to the killer pilot's team in 0x0047BD30) whenever they change, and
+    // the human pilots going down and coming back.
+    constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
+    constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
+
+    struct RoomWatch
+    {
+        uint8_t* room;
+        int32_t score[2];
+        uint16_t humansDown; // bit per slot
+    };
+    RoomWatch g_watch[32];
+
+    void WatchRoom(uint8_t* room)
+    {
+        if (!g_settings.logRoom || !IsPvpMode(room[kRoomMode]))
+            return;
+        bool hasAi = false;
+        for (int slot = 0; slot < kSlots && !hasAi; ++slot)
+            hasAi = (SlotPilotId(room, slot) & kAiPilotBit) != 0;
+        RoomWatch* watch = nullptr;
+        for (RoomWatch& w : g_watch)
+            if (w.room == room)
+                watch = &w;
+        if (!hasAi) {
+            if (watch)
+                watch->room = nullptr;
+            return;
+        }
+        int32_t score1 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam1);
+        int32_t score2 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam2);
+        if (!watch) {
+            for (RoomWatch& w : g_watch)
+                if (!w.room) {
+                    w = {room, {score1, score2}, 0};
+                    watch = &w;
+                    break;
+                }
+            if (!watch)
+                return;
+            g_api->Log(g_mod, SDGO_LOG_INFO, "scores: team 1 %ld, team 2 %ld", static_cast<long>(score1),
+                       static_cast<long>(score2));
+        }
+        if (score1 != watch->score[0] || score2 != watch->score[1]) {
+            g_api->Log(g_mod, SDGO_LOG_INFO, "scores: team 1 %ld -> %ld, team 2 %ld -> %ld",
+                       static_cast<long>(watch->score[0]), static_cast<long>(score1),
+                       static_cast<long>(watch->score[1]), static_cast<long>(score2));
+            watch->score[0] = score1;
+            watch->score[1] = score2;
+        }
+        for (int slot = 0; slot < kSlots; ++slot) {
+            uint32_t id = SlotPilotId(room, slot);
+            if (id == 0 || (id & kAiPilotBit))
+                continue;
+            bool down = *reinterpret_cast<uint32_t*>(SlotUnit(room, slot) + kUnitHp) == 0;
+            bool wasDown = (watch->humansDown >> slot) & 1;
+            if (down != wasDown) {
+                g_api->Log(g_mod, SDGO_LOG_INFO, "human pilot %08lX (slot %d, team %u) %s",
+                           static_cast<unsigned long>(id), slot, SlotTeam(room, slot), down ? "down" : "back");
+                watch->humansDown = static_cast<uint16_t>(watch->humansDown ^ (1u << slot));
+            }
+        }
+    }
+
     bool GuardedRespawn(uint8_t* room, uint32_t now)
     {
         __try {
+            WatchRoom(room);
             RespawnAiPilots(room, now);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
