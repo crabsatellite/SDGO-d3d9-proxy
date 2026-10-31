@@ -18,6 +18,7 @@ Recommended defaults for startup, input method and compatibility problems.
 | IME input fix | Correct the length of committed IME text | `ime_fix` | Clients | [Use](docs/ime-fix.md) |
 | Input method freeze fix | Restore window lookup needed by input methods alongside existing plugins | `findwindow_fix` | Clients | [Use](docs/findwindow-fix.md) |
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
+| Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 <!-- /mod-category:fixes -->
 
 <details>
@@ -59,6 +60,9 @@ category and owner-supplied configuration. They are managed separately from
 gameplay. The package's feature directory lists the tools actually included.
 
 <!-- mod-category:network -->
+| Feature | Purpose | Mods | Install on | Guide |
+|---|---|---|---|---|
+| FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
 <!-- /mod-category:network -->
 
 ## Developer tools

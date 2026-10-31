@@ -30,18 +30,20 @@ class CatalogTests(unittest.TestCase):
 
     def test_complete_source_catalog(self):
         c = catalog.read_catalog(self.root)
-        self.assertEqual(len(c["mods"]), 8)
+        self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
         self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
         self.assertFalse(next(m for m in c["mods"] if m["id"] == "net_probe")["enabled_by_default"])
 
     def test_base_has_only_fixes(self):
         c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
-        self.assertEqual({m["id"] for m in c["mods"]}, {"findwindow_fix", "ime_fix", "startup_crash_fix"})
+        self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
+        self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
 
     def test_selected_feature_brings_both_halves_and_fixes(self):
         c = catalog.select_catalog(catalog.read_catalog(self.root), features=["pvp-ai"])
-        self.assertEqual({m["id"] for m in c["mods"]}, {"findwindow_fix", "ime_fix", "startup_crash_fix", "match_ai", "pvp_ai"})
+        self.assertTrue({"match_ai", "pvp_ai"}.issubset({m["id"] for m in c["mods"]}))
+        self.assertTrue(all(m["category"] == "fixes" or m["feature"] == "pvp-ai" for m in c["mods"]))
         self.assertEqual(c["profile"], "custom")
 
     def test_unknown_feature_is_rejected(self):
@@ -97,7 +99,12 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "channel"):
             catalog.read_catalog(self.root)
 
-    def test_readme_empty_network_category_is_valid(self):
+    def test_network_tools_share_a_complete_feature(self):
+        c = catalog.read_catalog(self.root)
+        self.assertEqual(set(c["features"]["frp-distribution"]["mods"]), {"net_route", "agent_udp_pool"})
+        self.assertEqual(c["features"]["frp-distribution"]["toolkit"], "frp")
+        self.assertEqual(next(m for m in c["mods"] if m["id"] == "agent_udp_pool")["target"], "server")
+    def test_all_categories_have_readme_blocks(self):
         catalog.read_catalog(self.root)
 
     def test_unsafe_and_reserved_payloads(self):

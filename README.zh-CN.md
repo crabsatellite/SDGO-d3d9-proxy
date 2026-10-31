@@ -17,6 +17,7 @@
 | 输入法提交修复 | 修正输入法提交内容的长度计算 | `ime_fix` | 客户端 | [使用说明](docs/ime-fix.zh-CN.md) |
 | 输入法卡死修复 | 恢复输入法需要的窗口查找，兼容已有插件 | `findwindow_fix` | 客户端 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
+| Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
 <details>
@@ -56,6 +57,9 @@
 这些工具与玩法扩展分别管理；安装包内的功能目录列出实际包含的工具。
 
 <!-- mod-category:network -->
+| 功能 | 作用 | Mod | 安装位置 | 说明 |
+|---|---|---|---|---|
+| FRP 联机（Beta） | 服主配置公网地址、端口映射与可复用 UDP 端口池 | `net_route`、`agent_udp_pool` | 客户端 + Agent 服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
 <!-- /mod-category:network -->
 
 ## 开发诊断

@@ -66,6 +66,10 @@ foreach ($feature in $catalog.features.PSObject.Properties) {
     $contents += "| $($item.category) | $($feature.Name) | $($item.channel) | $($item.mods -join ', ') |"
 }
 [IO.File]::WriteAllText((Join-Path $out 'CONTENTS.md'), ($contents -join "`n"), (New-Object Text.UTF8Encoding $false))
+if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -eq 'frp' }).Count) {
+    & python (Join-Path $PSScriptRoot 'package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $buildRoot $Config) --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'FRP toolkit packaging failed' }
+}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
 Write-Host $zip

@@ -49,10 +49,13 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         category = cfg["category"]
         channel = cfg["channel"]
         activation = cfg["activation"]
+        toolkit = cfg.get("toolkit", "")
         if not ID.fullmatch(mod_id) or mod_id != path.parent.name or not ID.fullmatch(feature):
             raise ValueError(f"Invalid mod/feature id in {path}")
         if category not in CATEGORIES or channel not in CHANNELS or activation not in ACTIVATIONS:
             raise ValueError(f"Invalid category/channel/activation in {path}")
+        if toolkit not in {"", "frp"}:
+            raise ValueError(f"Unknown package toolkit in {path}")
         dll = cfg.get("dll", f"{mod_id}.dll")
         if dll != f"{mod_id}.dll":
             raise ValueError(f"Bundled mod DLL must be {mod_id}.dll")
@@ -61,7 +64,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
             stem = host.split("-", 1)[0]
             if stem not in {"GOnline", "BattleServer", "AgentServer"}:
                 raise ValueError(f"Unknown install target in {path}: {host}")
-            targets.add({"GOnline": "client", "BattleServer": "server", "AgentServer": "agent"}[stem])
+            targets.add({"GOnline": "client", "BattleServer": "server", "AgentServer": "server"}[stem])
         if len(targets) != 1:
             raise ValueError(f"A bundled mod needs exactly one install target: {path}")
         files = [safe_file(name) for name in list_value(cfg.get("files", ""))]
@@ -85,6 +88,8 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
             raise ValueError(f"Missing feature guide: {guide.name}")
         mods.append({"id": mod_id, "feature": feature, "category": category,
                      "channel": channel, "activation": activation,
+                     "toolkit": toolkit,
+                     "hosts": list_value(cfg.get("hosts", "")), "version": cfg.get("version", "0"),
                      "target": next(iter(targets)), "enabled_by_default": bool(enabled),
                      "files": files, "config_files": configs,
                      "guide": f"docs/{feature}.md"})
@@ -99,8 +104,8 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
     features = {}
     for mod in mods:
         old = features.setdefault(mod["feature"], {"category": mod["category"], "channel": mod["channel"],
-                                                   "activation": mod["activation"], "mods": [], "guide": mod["guide"]})
-        if any(old[key] != mod[key] for key in ("category", "channel", "activation")):
+                                                   "activation": mod["activation"], "toolkit": mod["toolkit"], "mods": [], "guide": mod["guide"]})
+        if any(old[key] != mod[key] for key in ("category", "channel", "activation", "toolkit")):
             raise ValueError(f"Feature metadata disagrees: {mod['feature']}")
         old["mods"].append(mod["id"])
     catalog = {"schema_version": 1, "categories": CATEGORIES, "features": features, "mods": mods}

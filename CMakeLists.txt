@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
 project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
@@ -98,11 +99,15 @@ function(sdgo_add_mod id)
     sdgo_strict(${id})
     sdgo_version_resource(${id} ${id}.dll "SDGO mod: ${MOD_DESCRIPTION}")
     sdgo_stage(${id} "${root}/mods/${id}")
+    # Copy on every target build: this refreshes changed source data and also
+    # repairs a stale/corrupted staged file whose timestamp is newer than source.
+    set(mod_data_commands COMMAND "${CMAKE_COMMAND}" -E make_directory "${SDGO_STAGE}/${root}/mods/${id}")
     foreach(file mod.ini ${MOD_FILES})
-        add_custom_command(TARGET ${id} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
+        list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
+    add_custom_target(${id}_data ${mod_data_commands} VERBATIM)
+    add_dependencies(${id} ${id}_data)
 endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
@@ -114,6 +119,10 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+
+sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
+sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
+sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -154,6 +163,20 @@ foreach(fixture SDPlus generic_input_method)
     target_link_libraries(findwindow_fixture_${fixture} PRIVATE user32)
     sdgo_strict(findwindow_fixture_${fixture})
 endforeach()
+
+# Real-core transport tests, never staged into release packages.
+add_executable(net_route_test tests/net_route_test.cpp)
+target_link_libraries(net_route_test PRIVATE sdgo_api ws2_32)
+sdgo_strict(net_route_test)
+add_executable(net_login_test tests/net_login_test.cpp)
+target_link_libraries(net_login_test PRIVATE sdgo_api ws2_32 shell32)
+sdgo_strict(net_login_test)
+add_library(net_route_conflict_mod SHARED tests/net_route_conflict_mod.cpp)
+target_link_libraries(net_route_conflict_mod PRIVATE sdgo_api ws2_32)
+sdgo_strict(net_route_conflict_mod)
+add_executable(agent_udp_pool_test tests/agent_udp_pool_test.cpp)
+target_link_libraries(agent_udp_pool_test PRIVATE sdgo_api ws2_32)
+sdgo_strict(agent_udp_pool_test)
 
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
