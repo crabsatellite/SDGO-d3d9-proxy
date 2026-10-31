@@ -116,6 +116,10 @@ namespace
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
     using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
+    using GridFindFn = void*(__thiscall*)(void* map, uint8_t** out, uint32_t* key);
+    using AddDeckUnitFn = void(__thiscall*)(uint8_t* unit, uint32_t unitDataId);
+    using SwitchDeckFn = void(__thiscall*)(uint8_t* unit, int index, char flag);
+    using PlaybackUnitFn = int(__thiscall*)(void* self, uint8_t* packet);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -178,6 +182,11 @@ namespace
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
     FindPlayerFn g_originalFindPlayer = nullptr;
+    void** g_gridManager = nullptr;
+    GridFindFn g_gridFind = nullptr;
+    AddDeckUnitFn g_addDeckUnit = nullptr;
+    SwitchDeckFn g_switchDeck = nullptr;
+    PlaybackUnitFn g_originalPlaybackUnit = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -193,6 +202,12 @@ namespace
         uint32_t objectId;
         int slot;
         uint8_t* unit;
+        // mode 7 deck: NPC data (id and data*) per deck entry, the entry in play, a pending switch
+        int units = 1;
+        uint32_t deckNpc[4] = {};
+        const uint8_t* deckNpcData[4] = {};
+        int form = 0;
+        int pendingForm = -1;
     };
     std::vector<Bot> g_botTable;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
@@ -251,6 +266,76 @@ namespace
                 *cost = *reinterpret_cast<const int32_t*>(npc + kNpcPoints);
             *score = *cost * 100 < 1001 ? *cost * 100 : 1000;
         }
+    }
+
+    // ---- mode 7: the AI player's deck ---------------------------------------------------
+    //
+    // The battle server gives an AI pilot of mode 7 a deck of NPC units (one life each) and
+    // the battle start sends every slot's 4 unit records: for an AI pilot the first dword of
+    // each record entry (+0x44 + i * 0xB4) is that unit's NPC data id. A player's deck is
+    // built from its record by 0x00665CC0, which skips NPC units, and its message 7 handler
+    // switches the deck on a respawn; the NPC handler does neither. Here the AI unit gets the
+    // other deck units with the same AddDeckUnit (unit data id = NPC data +0x69), and on a
+    // respawn its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the
+    // AI script from it) and the deck switched after it, as CPlayer does.
+    constexpr size_t kRecordUnits = 0x44;       // 4 unit entries, stride 0xB4
+    constexpr size_t kRecordUnitStride = 0xB4;
+    constexpr size_t kNpcUnitDataId = 0x69;     // NPC data: its unit data id
+    constexpr uint32_t kGridNpcData = 0x29;     // grid data type of NPC data
+    constexpr size_t kUnitDeckBegin = 0x2ED0;   // unit deck entries, 0x60C bytes each
+    constexpr size_t kUnitDeckEnd = 0x2ED4;
+    constexpr size_t kUnitDeckEntry = 0x60C;
+    constexpr size_t kUnitDeckIndex = 0x2EE4;   // deck entry in play
+    constexpr size_t kModeRoomMode = 0x66;      // u16, room data: battle mode
+
+    const uint8_t* FindNpcData(uint32_t npcId)
+    {
+        void* map = *g_gridManager;
+        if (!map)
+            return nullptr;
+        uint8_t* node = nullptr;
+        uint32_t key = npcId;
+        g_gridFind(map, &node, &key);
+        if (!node || node == *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(map) + 4))
+            return nullptr;
+        auto entry = *reinterpret_cast<uint32_t**>(node + 0x10);
+        if (!entry || entry[0] != kGridNpcData)
+            return nullptr;
+        return reinterpret_cast<const uint8_t*>(entry[1]);
+    }
+
+    int DeckSize(uint8_t* unit)
+    {
+        auto begin = *reinterpret_cast<uint8_t**>(unit + kUnitDeckBegin);
+        auto end = *reinterpret_cast<uint8_t**>(unit + kUnitDeckEnd);
+        return begin && end > begin ? static_cast<int>((end - begin) / kUnitDeckEntry) : 0;
+    }
+
+    // Adds the record's other deck units to the AI player's unit (mode 7).
+    void BuildAiDeck(Bot& bot, uint8_t* record)
+    {
+        bot.deckNpc[0] = *reinterpret_cast<uint32_t*>(record + kRecordUnits);
+        bot.deckNpcData[0] = *reinterpret_cast<const uint8_t**>(bot.unit + kUnitNpcData);
+        char text[128];
+        int length = sprintf_s(text, "%lu", static_cast<unsigned long>(bot.deckNpc[0]));
+        for (int i = 1; i < 4; ++i) {
+            uint32_t npcId = *reinterpret_cast<uint32_t*>(record + kRecordUnits + i * kRecordUnitStride);
+            if (npcId == 0)
+                continue;
+            const uint8_t* npc = FindNpcData(npcId);
+            if (!npc) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: deck unit %d, NPC %lu has no NPC data here",
+                           static_cast<unsigned long>(bot.pilotId), i, static_cast<unsigned long>(npcId));
+                continue;
+            }
+            g_addDeckUnit(bot.unit, *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId));
+            bot.deckNpc[bot.units] = npcId;
+            bot.deckNpcData[bot.units] = npc;
+            ++bot.units;
+            length += sprintf_s(text + length, sizeof(text) - length, " + %lu", static_cast<unsigned long>(npcId));
+        }
+        g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: deck %s, %d unit(s), unit deck size %d",
+                   static_cast<unsigned long>(bot.pilotId), text, bot.units, DeckSize(bot.unit));
     }
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
@@ -373,7 +458,13 @@ namespace
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
-            g_botTable.push_back({serverId, objectId, slot, unit});
+            Bot bot{serverId, objectId, slot, unit};
+            if (*reinterpret_cast<uint16_t*>(room + kModeRoomMode) == 7) {
+                g_creatingAiUnit = true;
+                BuildAiDeck(bot, record);
+                g_creatingAiUnit = false;
+            }
+            g_botTable.push_back(bot);
             g_logPackets = true;
             ++spawned;
             g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, colour %d, slot %d, %s)",
@@ -766,13 +857,62 @@ namespace
         return unit;
     }
 
+    // After the respawn packet (message 7 placed the unit): the deck switch of an AI player
+    // whose deck entry changed, as CPlayer's message 7 handler switches a player's.
+    void SwitchPendingDecks()
+    {
+        for (Bot& bot : g_botTable) {
+            if (bot.pendingForm < 0)
+                continue;
+            int form = bot.pendingForm;
+            bot.pendingForm = -1;
+            int size = DeckSize(bot.unit);
+            if (size < 2 || form >= size) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: deck index %d, but the unit deck has %d entries",
+                           static_cast<unsigned long>(bot.pilotId), form, size);
+                continue;
+            }
+            g_switchDeck(bot.unit, form, 0);
+            *reinterpret_cast<int*>(bot.unit + kUnitDeckIndex) = form;
+            bot.form = form;
+            g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: now deck unit %d (NPC %lu)",
+                       static_cast<unsigned long>(bot.pilotId), form, static_cast<unsigned long>(bot.deckNpc[form]));
+        }
+    }
+
+    int g_deckFaults = 0;
+
+    void GuardedSwitchDecks()
+    {
+        __try {
+            SwitchPendingDecks();
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (g_deckFaults++ < 5)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX switching an AI player's deck", GetExceptionCode());
+        }
+    }
+
+    int __fastcall PlaybackUnit(void* self, void* /*edx*/, uint8_t* packet)
+    {
+        int result = g_originalPlaybackUnit(self, packet);
+        GuardedSwitchDecks();
+        return result;
+    }
+
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000) {
-            if (const Bot* bot = BotByObject(um, static_cast<uint32_t>(index) + 1)) {
-                g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX respawns: object %lu %s, slot %d, colour %d",
+            if (const Bot* found = BotByObject(um, static_cast<uint32_t>(index) + 1)) {
+                Bot* bot = const_cast<Bot*>(found);
+                g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX respawns: object %lu %s, slot %d, deck index %d",
                            static_cast<unsigned long>(bot->pilotId), static_cast<unsigned long>(bot->objectId),
                            g_findObject(um, bot->objectId) ? "present" : "MISSING", bot->slot, colour);
+                if (bot->units > 1 && colour >= 0 && colour < bot->units && colour != bot->form && bot->deckNpcData[colour]) {
+                    // the NPC of the new deck entry, before message 7 re-inits the AI from it
+                    *reinterpret_cast<const uint8_t**>(bot->unit + kUnitNpcData) = bot->deckNpcData[colour];
+                    *reinterpret_cast<uint32_t*>(bot->unit + kUnitNpcDataId) = bot->deckNpc[colour];
+                    bot->pendingForm = colour;
+                }
                 g_originalSetSlotColour(um, bot->slot, colour);
                 return;
             }
@@ -1126,7 +1266,9 @@ SDGO_MOD_ENTRY
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
-                 Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count");
+                 Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count") &&
+                 Bind(g_gridManager, "grid.manager") && Bind(g_gridFind, "grid.find") &&
+                 Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
         return 0;
     // The AI players' scripts call these; without them they would jump to address 0.
@@ -1155,6 +1297,10 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
                        reinterpret_cast<void**>(&g_originalFindPlayer)))
+        return 0;
+    // Without this an AI player keeps its first unit for every life in mode 7.
+    if (!api->HookCode(mod, "game.playback_unit", reinterpret_cast<void*>(&PlaybackUnit),
+                       reinterpret_cast<void**>(&g_originalPlaybackUnit)))
         return 0;
     // Without this an AI player's unit is not created in mode 7.
     g_deckSkip = api->Symbol(mod, "unit.init_deck_skip");
