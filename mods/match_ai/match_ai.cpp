@@ -241,13 +241,16 @@ namespace
     // right after SetPlayerInfo: death match (0x00AD98B0) 1000, the player's share of the
     // team power; tag match (0x00ADB390: the death match Init, then record +0x30 * 100, at
     // most 1000); grid match (0x00ADB790) 1; normal and leader match nothing.
-    // In tag match record +0x30 is the player's unit costs; PT_NTF_DEAD_UNIT divides by the
-    // slot record's +0x30 (0x004D92CB), so an AI player whose record has none gets its one
-    // unit's cost, the NPC points the client counts for an NPC (npc data +0xF1).
+    // In tag match record +0x30 is the player's deck points; PT_NTF_DEAD_UNIT divides by the
+    // slot record's +0x30 (0x004D92CB). An AI player's record has none: it gets its deck's
+    // points from the battle start packet (see the deck block below), else its one unit's
+    // cost, the NPC points the client counts for an NPC (npc data +0xF1).
     constexpr size_t kSlotScore = 0x48;
     constexpr size_t kSlotRecordCopy = 0x44;    // the slot's copy of the player record
     constexpr size_t kRecordTagCost = 0x30;
     constexpr size_t kNpcPoints = 0xF1;
+
+    int StartDeckPoints(uint32_t pilotId);
 
     void InitAiSlot(int classIndex, uint8_t* playerSlot, uint8_t* unit)
     {
@@ -260,9 +263,12 @@ namespace
             uint8_t* record = *reinterpret_cast<uint8_t**>(playerSlot + kSlotRecordCopy);
             auto cost = reinterpret_cast<int32_t*>(record + kRecordTagCost);
             const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
-            g_api->Log(g_mod, SDGO_LOG_INFO, "tag match: AI player %08lX record +0x30 = %ld, NPC points %ld",
-                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)), static_cast<long>(*cost),
+            int deckPoints = StartDeckPoints(*reinterpret_cast<uint32_t*>(record));
+            g_api->Log(g_mod, SDGO_LOG_INFO, "tag match: AI player %08lX record +0x30 = %ld, deck points %d, NPC points %ld",
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)), static_cast<long>(*cost), deckPoints,
                        npc ? static_cast<long>(*reinterpret_cast<const int32_t*>(npc + kNpcPoints)) : -1L);
+            if (*cost <= 0 && deckPoints > 0)
+                *cost = deckPoints;
             if (*cost <= 0 && npc)
                 *cost = *reinterpret_cast<const int32_t*>(npc + kNpcPoints);
             *score = *cost * 100 < 1001 ? *cost * 100 : 1000;
@@ -271,17 +277,62 @@ namespace
 
     // ---- mode 7: the AI player's deck ---------------------------------------------------
     //
-    // The battle server gives an AI pilot of mode 7 a deck of NPC units (one life each) and
-    // the battle start sends every slot's 4 unit records: for an AI pilot the first dword of
-    // each record entry (+0x44 + i * 0xB4) is that unit's NPC data id. A player's deck is
-    // built from its record by 0x00665CC0, which skips NPC units, and its message 7 handler
-    // switches the deck on a respawn; the NPC handler does neither. Here the AI unit gets the
-    // other deck units with the same AddDeckUnit (unit data id = NPC data +0x69; NPC data is
-    // grid data type 0x29, GridData::Find 0x0059D2B0), and on a
-    // respawn its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the
-    // AI script from it) and the deck switched after it, as CPlayer does.
-    constexpr size_t kRecordUnits = 0x44;       // 4 unit entries, stride 0xB4
-    constexpr size_t kRecordUnitStride = 0xB4;
+    // The battle server gives an AI pilot of mode 7 a deck of NPC units (one life each). Its
+    // battle start packet (PT_NTF_BATTLE_START 0x6C3, built by 0x004B61E0) has a 0x10F-byte
+    // entry per slot from +0x20: pilot id (+0), deck points (+0xB, pilot +0x1CA0) and units
+    // (+0xC), and the first 0x32 bytes of the 4 unit records (+0xE + i * 0x32), whose first
+    // dword is an AI unit's NPC data id. The wait room's handler (0x00A3E590) keeps the packet
+    // at CServiceWaitRoomMgr +0x4258 and then calls the battle start UDP setup (0x00A0FE80),
+    // where the AI pilots' decks are read. The records the game modes get carry neither.
+    // A player's deck is built from its record by 0x00665CC0, which skips NPC units, and its
+    // message 7 handler switches the deck on a respawn; the NPC handler does neither. Here the
+    // AI unit gets the other deck units with the same AddDeckUnit (unit data id = NPC data
+    // +0x69; NPC data is grid data type 0x29, GridData::Find 0x0059D2B0), and on a respawn
+    // its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the AI
+    // script from it) and the deck switched after it, as CPlayer does.
+    constexpr size_t kWaitRoomStartPacket = 0x4258;
+    constexpr size_t kStartPacketSlots = 0x20;
+    constexpr size_t kStartSlotStride = 0x10F;
+    constexpr size_t kStartSlotPoints = 0x0B;
+    constexpr size_t kStartSlotUnits = 0x0C;
+    constexpr size_t kStartSlotUnitBlocks = 0x0E;
+    constexpr size_t kStartUnitBlock = 0x32;
+
+    struct StartDeck
+    {
+        uint32_t pilotId;
+        int points;
+        int units;
+        uint32_t npc[4];
+    };
+    StartDeck g_startDecks[12] = {};
+
+    void ReadStartDecks(uint8_t* waitRoom)
+    {
+        memset(g_startDecks, 0, sizeof(g_startDecks));
+        uint8_t* packet = waitRoom + kWaitRoomStartPacket;
+        for (int slot = 0; slot < 12; ++slot) {
+            uint8_t* entry = packet + kStartPacketSlots + slot * kStartSlotStride;
+            uint32_t pilotId = *reinterpret_cast<uint32_t*>(entry);
+            if (!(pilotId & kAiPilotBit))
+                continue;
+            StartDeck& deck = g_startDecks[slot];
+            deck.pilotId = pilotId;
+            deck.points = entry[kStartSlotPoints];
+            deck.units = entry[kStartSlotUnits];
+            for (int i = 0; i < 4; ++i)
+                deck.npc[i] = *reinterpret_cast<uint32_t*>(entry + kStartSlotUnitBlocks + i * kStartUnitBlock);
+        }
+    }
+
+    const StartDeck* FindStartDeck(uint32_t pilotId)
+    {
+        for (const StartDeck& deck : g_startDecks)
+            if (deck.pilotId == pilotId && pilotId != 0)
+                return &deck;
+        return nullptr;
+    }
+
     constexpr size_t kNpcUnitDataId = 0x69;     // NPC data: its unit data id
     constexpr uint32_t kGridNpcData = 0x29;     // grid data type of NPC data
     constexpr size_t kUnitDeckBegin = 0x2ED0;   // unit deck entries, 0x60C bytes each
@@ -305,15 +356,27 @@ namespace
         return begin && end > begin ? static_cast<int>((end - begin) / kUnitDeckEntry) : 0;
     }
 
-    // Adds the record's other deck units to the AI player's unit (mode 7).
-    void BuildAiDeck(Bot& bot, uint8_t* record)
+    int StartDeckPoints(uint32_t pilotId)
     {
-        bot.deckNpc[0] = *reinterpret_cast<uint32_t*>(record + kRecordUnits);
+        const StartDeck* deck = FindStartDeck(pilotId);
+        return deck ? deck->points : 0;
+    }
+
+    // Adds the other units of the AI player's deck (battle start packet) to its unit (mode 7).
+    void BuildAiDeck(Bot& bot, uint32_t firstNpc)
+    {
+        bot.deckNpc[0] = firstNpc;
         bot.deckNpcData[0] = *reinterpret_cast<const uint8_t**>(bot.unit + kUnitNpcData);
+        const StartDeck* deck = FindStartDeck(bot.pilotId);
+        if (!deck) {
+            g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: no deck in the battle start packet; one unit",
+                       static_cast<unsigned long>(bot.pilotId));
+            return;
+        }
         char text[128];
-        int length = sprintf_s(text, "%lu", static_cast<unsigned long>(bot.deckNpc[0]));
+        int length = sprintf_s(text, "%lu", static_cast<unsigned long>(firstNpc));
         for (int i = 1; i < 4; ++i) {
-            uint32_t npcId = *reinterpret_cast<uint32_t*>(record + kRecordUnits + i * kRecordUnitStride);
+            uint32_t npcId = deck->npc[i];
             if (npcId == 0)
                 continue;
             const uint8_t* npc = FindNpcData(npcId);
@@ -328,8 +391,8 @@ namespace
             ++bot.units;
             length += sprintf_s(text + length, sizeof(text) - length, " + %lu", static_cast<unsigned long>(npcId));
         }
-        g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: deck %s, %d unit(s), unit deck size %d",
-                   static_cast<unsigned long>(bot.pilotId), text, bot.units, DeckSize(bot.unit));
+        g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: deck %s, %d unit(s) (server: %d, %d points), unit deck size %d",
+                   static_cast<unsigned long>(bot.pilotId), text, bot.units, deck->units, deck->points, DeckSize(bot.unit));
     }
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
@@ -455,7 +518,7 @@ namespace
             Bot bot{serverId, objectId, slot, unit};
             if (*reinterpret_cast<uint16_t*>(room + kModeRoomMode) == 7) {
                 g_creatingAiUnit = true;
-                BuildAiDeck(bot, record);
+                BuildAiDeck(bot, npcData);
                 g_creatingAiUnit = false;
             }
             g_botTable.push_back(bot);
@@ -562,8 +625,21 @@ namespace
     // pilot of every other slot and counts the requests against the links that come back.
     // An AI pilot has no client to answer, so for that call its slot reads as empty.
 
+    bool GuardedReadStartDecks(uint8_t* waitRoom)
+    {
+        __try {
+            ReadStartDecks(waitRoom);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            memset(g_startDecks, 0, sizeof(g_startDecks));
+            return false;
+        }
+    }
+
     void __fastcall UdpSetup(uint8_t* waitRoom, void* /*edx*/)
     {
+        if (waitRoom && !GuardedReadStartDecks(waitRoom))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
         uint32_t hidden[12] = {};
         int count = 0;
         if (waitRoom) {
