@@ -27,7 +27,7 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 | feature | what it does | mods | install on | guide |
 |---|---|---|---|---|
 | Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
-| PvP AI players (source build) | Use `!ai` in a PvP room title for opponents and teammates, with native scoring, respawn, decks and dead-view support. | `pvp_ai`, `match_ai` | battle server + every participating client | [English](docs/pvp-ai.md) · [中文](docs/pvp-ai.zh-CN.md) |
+| PvP AI players (Beta) | Use `!ai` in a PvP room title for opponents and teammates, with native scoring, respawn, decks and dead-view support. | `pvp_ai`, `match_ai` | battle server + every participating client | [English](docs/pvp-ai.md) · [中文](docs/pvp-ai.zh-CN.md) |
 | IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [English](docs/ime-fix.md) · [中文](docs/ime-fix.zh-CN.md) |
 | General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
@@ -38,7 +38,7 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 
 A feature that lists the battle server works only when the battle servers have the server
 part and the players have matching client parts. Every participant in a PvP AI room
-should use a matching build. The released 1.1.2 package does not contain the new PvP AI feature.
+should use a matching build.
 
 ### In game
 
@@ -47,7 +47,9 @@ player and fight the mission's enemies.
 
 ![Co-op mission with AI wingmen fighting alongside the player](docs/coop-wingmen-demo.webp)
 
-The PvP AI recording is pending; see the [five-clip recording and manual acceptance checklist](docs/pvp-ai-video.zh-CN.md).
+PvP AI (Beta): use the room title to add opponents and teammates. Also supports death match, Grid, leader and Tag modes.
+
+![AI teammates and opponents in PvP](docs/pvp-ai-demo.webp)
 
 General input method fix: the game lobby with an input method switched on (its toolbar is
 boxed in red; iFlytek in this screenshot). Without `findwindow_fix`, any input method that
@@ -214,9 +216,6 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1     # dist\SDGO-ModFr
 
 The install scripts also install straight from a build:
 `tools\install_client.ps1 -GameDir ... -Source build\stage\Release\client`.
-
-Offline tests for AI, HUD scoring and spectator logic (no game required):
-[test guide](docs/ai-offline-tests.md), entry point `tests/run_ai_tests.ps1`.
 
 ## Adding a feature
 
