@@ -6,14 +6,15 @@
 // are added exactly the way the AI battle mode adds its own (0x004B79D0), so the battle
 // treats them as real participants. The client mod match_ai spawns their units.
 //
-// Two steps of the dispatcher's general path are involved:
-//   1. After the per-slot checks it checks the team layout (battle.start_team_checks,
-//      0x004BA146): equal numbers of humans per team, at least three per team in modes
-//      3/6/7/9, or an even room size when room +8 is set. AI pilots do not exist yet and
-//      are never counted there. For a room that asks for AI players this mod takes the
-//      route the co-op mission rooms take at that point: straight on to
-//      battle.start_checks_passed (0x004BA2CF). The other checks (requester state, room
-//      size 2..12, every human ready) still apply.
+// The dispatcher's general path and the battle tick are involved:
+//   1. Two checks count human players only (AI pilots do not exist yet): 2..12 players in
+//      the room (battle.start_size_check, 0x004B9ED5; room +0x71 is the current player
+//      count) and the team layout after the per-slot checks (battle.start_team_checks,
+//      0x004BA146: equal numbers of humans per team, at least three per team in modes
+//      3/6/7/9, or an even player count when room +8 is set). For a room that asks for AI
+//      players this mod takes the route the co-op mission rooms take at both points (on to
+//      battle.start_size_checked 0x004B9F32 and battle.start_checks_passed 0x004BA2CF).
+//      The other checks (requester state, room flags, every human ready) still apply.
 //   2. SetupBattlePilots (battle.setup_humans, 0x004B6EB0) clears every pilot record and
 //      sets up the human pilots. Right after it succeeds, this mod adds the AI pilots:
 //      BuildAiPilot, the slot table, the AI branch of the per-slot setup with the pilot's
@@ -39,7 +40,7 @@ namespace
     // ---- battle room layout (WaitRoomEx), as 0x004B9BF0, 0x004B6EB0 and 0x004B79D0 use it ----
     constexpr size_t kRoomType = 0x04;          // u8, passed to the pilot setup with the mode
     constexpr size_t kRoomMode = 0x05;          // u8
-    constexpr size_t kRoomSize = 0x71;          // u32, players the room holds (2..12)
+    constexpr size_t kRoomPlayers = 0x71;       // u32, current player count (humans only)
     constexpr size_t kRoomHost = 0x4CE;         // u32, pilot id of the room host
     constexpr size_t kRoomTitleMax = 20;
     constexpr int kSlots = 12;
@@ -110,6 +111,7 @@ namespace
     struct Settings
     {
         int defaultLevel = 2;
+        int fillTeamSize = 3;
         int logRoom = 1;
         std::vector<uint32_t> levels[6]; // [1..5]
     } g_settings;
@@ -144,6 +146,7 @@ namespace
     void LoadSettings()
     {
         g_settings.defaultLevel = g_api->SettingInt(g_mod, "DefaultLevel", 2);
+        g_settings.fillTeamSize = g_api->SettingInt(g_mod, "FillTeamSize", 3);
         g_settings.logRoom = g_api->SettingInt(g_mod, "LogRoom", 1);
         for (int level = 1; level <= 5; ++level) {
             char key[16];
@@ -192,7 +195,7 @@ namespace
         return value;
     }
 
-    // "!ai" fills both teams; "!aiN" asks for N enemies; options after it: eN enemies,
+    // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
     // aN allies, lvN level. Case-insensitive.
     Plan ParseTitle(const char* title)
     {
@@ -334,28 +337,28 @@ namespace
         return view;
     }
 
-    // ---- 1. team checks of the dispatcher -------------------------------------------
+    // ---- 1. player count and team checks of the dispatcher ----------------------------
 
-    bool DecideSkipTeamChecks(uint8_t* frame)
+    bool DecideSkipChecks(uint8_t* frame, bool log)
     {
         uint8_t* copy = frame - kDispatcherRoomCopy;
         if (!IsPvpMode(copy[kRoomMode]))
             return false;
         RoomView view = ViewRoom(copy);
         Plan plan = view.titled ? ParseTitle(view.title) : Plan{};
-        if (g_settings.logRoom)
+        if (log && g_settings.logRoom)
             g_api->Log(g_mod, SDGO_LOG_INFO,
-                       "battle start: mode %u type %u size %lu, humans %d/%d (team 1/2), title '%s'; AI players %s",
+                       "battle start: mode %u type %u players %lu, humans %d/%d (team 1/2), title '%s'; AI players %s",
                        copy[kRoomMode], copy[kRoomType],
-                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(copy + kRoomSize)), view.humans[1],
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(copy + kRoomPlayers)), view.humans[1],
                        view.humans[2], Printable(view.title).c_str(), plan.enabled ? "requested" : "not requested");
         return plan.enabled;
     }
 
-    int GuardedDecide(uint8_t* frame)
+    int GuardedDecide(uint8_t* frame, bool log)
     {
         __try {
-            return DecideSkipTeamChecks(frame) ? 1 : 0;
+            return DecideSkipChecks(frame, log) ? 1 : 0;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return 0;
         }
@@ -456,18 +459,23 @@ namespace
         if (!plan.enabled)
             return;
 
-        uint32_t size = *reinterpret_cast<uint32_t*>(room + kRoomSize);
-        int perTeam = static_cast<int>(size / 2);
-        if (perTeam < 1 || perTeam > kSlotsPerTeam)
-            perTeam = kSlotsPerTeam;
+        // "!ai" fills each team to FillTeamSize players; eN/aN are capped by the six slots
+        // of a team.
+        int fill = g_settings.fillTeamSize;
+        if (fill < 1 || fill > kSlotsPerTeam)
+            fill = kSlotsPerTeam;
         uint8_t allyTeam = view.hostTeam;
         uint8_t enemyTeam = allyTeam == 1 ? 2 : 1;
-        int allyRoom = perTeam - view.humans[allyTeam] - view.ai[allyTeam];
-        int enemyRoom = perTeam - view.humans[enemyTeam] - view.ai[enemyTeam];
-        int allies = plan.allies == kFill ? allyRoom : (plan.allies < allyRoom ? plan.allies : allyRoom);
-        int enemies = plan.enemies == kFill ? enemyRoom : (plan.enemies < enemyRoom ? plan.enemies : enemyRoom);
+        int allyFree = kSlotsPerTeam - view.humans[allyTeam] - view.ai[allyTeam];
+        int enemyFree = kSlotsPerTeam - view.humans[enemyTeam] - view.ai[enemyTeam];
+        int allies = plan.allies == kFill ? fill - view.humans[allyTeam] - view.ai[allyTeam] : plan.allies;
+        int enemies = plan.enemies == kFill ? fill - view.humans[enemyTeam] - view.ai[enemyTeam] : plan.enemies;
+        if (allies > allyFree)
+            allies = allyFree;
+        if (enemies > enemyFree)
+            enemies = enemyFree;
         if (allies <= 0 && enemies <= 0) {
-            g_api->Log(g_mod, SDGO_LOG_INFO, "no free slots for AI players (%d per team)", perTeam);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "no AI players to add (teams full or none asked for)");
             return;
         }
 
@@ -606,16 +614,42 @@ namespace
     }
 }
 
-// The team-check detour runs in the middle of the dispatcher: it keeps every register and
-// the flags, asks GuardedDecide with the dispatcher's frame pointer, and then either
-// resumes the original instructions (MinHook trampoline) or continues where the co-op
-// mission rooms continue.
+// The check detours run in the middle of the dispatcher: each keeps every register and the
+// flags, asks GuardedDecide with the dispatcher's frame pointer, and then either resumes the
+// original instructions (MinHook trampoline) or continues where the co-op mission rooms
+// continue. The player count check comes first and logs the room.
+static void* g_sizeCheckResume = nullptr;
+static void* g_sizeChecked = nullptr;
 static void* g_teamChecksResume = nullptr;
 static void* g_teamChecksPassed = nullptr;
 
+static int __stdcall SizeCheckDecision(uint8_t* frame)
+{
+    return GuardedDecide(frame, true);
+}
+
 static int __stdcall TeamChecksDecision(uint8_t* frame)
 {
-    return GuardedDecide(frame);
+    return GuardedDecide(frame, false);
+}
+
+static __declspec(naked) void SizeCheckDetour()
+{
+    __asm {
+        pushad
+        pushfd
+        push ebp
+        call SizeCheckDecision
+        test eax, eax
+        jnz skip_check
+        popfd
+        popad
+        jmp dword ptr [g_sizeCheckResume]
+    skip_check:
+        popfd
+        popad
+        jmp dword ptr [g_sizeChecked]
+    }
 }
 
 static __declspec(naked) void TeamChecksDetour()
@@ -641,7 +675,8 @@ SDGO_MOD_ENTRY
 {
     g_api = api;
     g_mod = mod;
-    bool bound = Bind(g_teamChecksPassed, "battle.start_checks_passed") && Bind(g_aiNpcList, "battle.ai_npc_list") &&
+    bool bound = Bind(g_sizeChecked, "battle.start_size_checked") &&
+                 Bind(g_teamChecksPassed, "battle.start_checks_passed") && Bind(g_aiNpcList, "battle.ai_npc_list") &&
                  Bind(g_waitRoomProc, "battle.waitroom_proc") && Bind(g_buildAiPilot, "battle.build_ai_pilot") &&
                  Bind(g_pilotReset, "battle.pilot_reset") && Bind(g_pilotStateId, "battle.pilot_state_id") &&
                  Bind(g_pilotStateRoom, "battle.pilot_state_room") && Bind(g_pilotStateMode, "battle.pilot_state_mode") &&
@@ -658,6 +693,9 @@ SDGO_MOD_ENTRY
     g_random = static_cast<unsigned>(counter.LowPart ^ GetTickCount() ^ GetCurrentProcessId()) | 1u;
     if (!api->HookCode(mod, "battle.setup_humans", reinterpret_cast<void*>(&SetupHumans),
                        reinterpret_cast<void**>(&g_setupHumans)))
+        return 0;
+    if (!api->HookCode(mod, "battle.start_size_check", reinterpret_cast<void*>(&SizeCheckDetour),
+                       &g_sizeCheckResume))
         return 0;
     if (!api->HookCode(mod, "battle.start_team_checks", reinterpret_cast<void*>(&TeamChecksDetour),
                        &g_teamChecksResume))
