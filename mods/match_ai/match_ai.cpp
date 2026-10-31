@@ -93,7 +93,6 @@ namespace
     using GameReadyFn = void(__thiscall*)(uint8_t* service);
     using EnableAiFn = void(__thiscall*)(uint8_t* unit);
     using ErrorNameFn = const char*(__cdecl*)(int code);
-    using ThinkFn = void(__thiscall*)(uint8_t* unit);
     using UdpSetupFn = void(__thiscall*)(uint8_t* waitRoom);
     struct lua_State;
     using LuaOnErrorFn = int(__cdecl*)(lua_State* L);
@@ -153,7 +152,6 @@ namespace
     GameCalls g_game = {};
     GameReadyFn g_originalGameReady = nullptr;
     ErrorNameFn g_originalErrorName = nullptr;
-    ThinkFn g_originalThink = nullptr;
     UdpSetupFn g_originalUdpSetup = nullptr;
     LuaOnErrorFn g_originalLuaOnError = nullptr;
     LuaToStringFn g_luaToString = nullptr;
@@ -173,10 +171,6 @@ namespace
     NatCheckFn g_originalNatCheck = nullptr;
     bool g_natCheckSkipped = false;
     bool g_creatingAiUnit = false;   // set while CreateNpc builds an AI player's unit
-    bool g_heapChecks = false;       // diagnostics: heap validation during battles with AI players
-    bool g_heapBroken = false;
-    DWORD g_lastHeapCheck = 0;
-    int g_lastCheckedOpcode = -1;
     int g_lastOpcode = -1;           // diagnostics: last server packet
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
@@ -548,10 +542,10 @@ namespace
     {
         g_botTable.clear();
         g_aiEnabled = false;
+        g_logPackets = false;
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
-        g_heapBroken = false;
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
@@ -1140,67 +1134,6 @@ namespace
         g_originalSetSlotColour(um, index, colour);
     }
 
-    // ---- diagnostics: heap check ---------------------------------------------------------
-    //
-    // A heap corruption (0xC0000374) was raised when the units were freed after a death match
-    // with AI players. While a battle has AI players, the process heaps are validated after
-    // server packets and from CNPC::Think, at most twice a second; the first failure is logged
-    // with the packets around it.
-
-    void CheckHeaps(int opcode, const char* where)
-    {
-        if (!g_heapChecks || g_heapBroken || g_botTable.empty())
-            return;
-        DWORD now = GetTickCount();
-        if (now - g_lastHeapCheck < 500)
-            return;
-        g_lastHeapCheck = now;
-        HANDLE heaps[64];
-        DWORD count = GetProcessHeaps(64, heaps);
-        for (DWORD i = 0; i < count && i < 64; ++i) {
-            if (!HeapValidate(heaps[i], 0, nullptr)) {
-                g_heapBroken = true;
-                g_api->Log(g_mod, SDGO_LOG_ERROR,
-                           "heap %p corrupted: found %s (last packet %04X); the check before was fine (after packet %04X)",
-                           heaps[i], where, opcode, g_lastCheckedOpcode);
-                return;
-            }
-        }
-        g_lastCheckedOpcode = opcode;
-    }
-
-    // ---- diagnostics: who runs CNPC::Think ------------------------------------------------
-
-    void* g_thinkCallers[8] = {};
-    int g_thinkSamples = 0;
-
-    void __fastcall Think(uint8_t* unit, void* /*edx*/)
-    {
-        CheckHeaps(g_lastOpcode, "in CNPC::Think");
-        if (g_thinkSamples >= 5000) {
-            g_originalThink(unit);
-            return;
-        }
-        ++g_thinkSamples;
-        void* frames[4] = {};
-        USHORT n = RtlCaptureStackBackTrace(1, 4, frames, nullptr);
-        if (n > 0) {
-            for (void*& seen : g_thinkCallers) {
-                if (seen == frames[0])
-                    break;
-                if (!seen) {
-                    seen = frames[0];
-                    g_api->Log(g_mod, SDGO_LOG_INFO, "CNPC::Think on object %lu, called from %p %p %p %p",
-                               static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitObjectId)),
-                               frames[0], n > 1 ? frames[1] : nullptr, n > 2 ? frames[2] : nullptr,
-                               n > 3 ? frames[3] : nullptr);
-                    break;
-                }
-            }
-        }
-        g_originalThink(unit);
-    }
-
     // ---- diagnostics: Lua errors of unit AI and the server's packets ----------------------
 
     int g_luaErrors = 0;
@@ -1261,9 +1194,7 @@ namespace
                 ++g_packetLines;
             }
         }
-        int result = g_originalPacketDispatch(self, a, b, c, opcode, packet);
-        CheckHeaps(op, "after a packet");
-        return result;
+        return g_originalPacketDispatch(self, a, b, c, opcode, packet);
     }
 
     // ---- diagnostics: every error the client names ------------------------------------
@@ -1272,11 +1203,14 @@ namespace
     // through ErrorName (0x006DFC60); logging the code with the callers shows where an error
     // comes from.
 
+    int g_errorNames = 0;
+
     const char* __cdecl ErrorName(int code)
     {
         const char* name = g_originalErrorName(code);
-        if (code == 0)
+        if (code == 0 || g_errorNames >= 30)
             return name; // ERR_NULL: named for every server message, not an error
+        ++g_errorNames;
         void* frames[4] = {};
         USHORT n = RtlCaptureStackBackTrace(1, 4, frames, nullptr);
         g_api->Log(g_mod, SDGO_LOG_INFO, "error %d (%s), called from %p %p %p %p", code, name ? name : "?", n > 0 ? frames[0] : nullptr,
@@ -1609,12 +1543,8 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "waitroom.battle_udp_setup", reinterpret_cast<void*>(&UdpSetup),
                        reinterpret_cast<void**>(&g_originalUdpSetup)))
         return 0;
-    if (api->SettingInt(mod, "LogThinkCallers", 1) != 0 &&
-        !api->HookCode(mod, "npc.think", reinterpret_cast<void*>(&Think), reinterpret_cast<void**>(&g_originalThink)))
-        api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
-    if (api->SettingInt(mod, "LogDiagnostics", 1) != 0) {
+    if (api->SettingInt(mod, "LogDiagnostics", 0) != 0) {
         InstallFaultLogger();
-        g_heapChecks = api->SettingInt(mod, "HeapChecks", 1) != 0;
         Bind(g_luaToString, "lua.tostring");
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
             api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
@@ -1629,7 +1559,7 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "service.dispatch_packet", reinterpret_cast<void*>(&ServicePacket),
                        reinterpret_cast<void**>(&g_originalServicePacket)))
         return 0;
-    if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
+    if (api->SettingInt(mod, "LogErrors", 0) != 0 &&
         !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
                        reinterpret_cast<void**>(&g_originalErrorName)))
         api->Log(mod, SDGO_LOG_WARN, "error logging not available");
