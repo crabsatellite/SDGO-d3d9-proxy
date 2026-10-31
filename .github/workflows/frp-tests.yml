@@ -22,6 +22,8 @@ jobs:
           & tests/loader_test.ps1
           & tests/findwindow_fix_test.ps1
           & tests/install_test.ps1
+      - name: AI and staging regressions
+        run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|mod_staging_offline)$"
       - name: FRP runtime and installer
         shell: powershell
         run: |

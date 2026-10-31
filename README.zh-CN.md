@@ -25,6 +25,7 @@ FRP 联机功能处于 **Beta 测试阶段**。增量安装、服主配置和玩
 | 功能 | 作用 | mod | 安装在 | 说明 |
 |---|---|---|---|---|
 | 任务模式 AI 僚机 | 任务模式里 AI 驾驶员加入你的队伍，使用游戏原生的 AI 对战机器人 AI，击破正常计算，也会被击落。在房间标题写 `!ai`。 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [中文](docs/coop-wingmen.zh-CN.md) · [English](docs/coop-wingmen.md) |
+| 对战模式 AI 玩家（源码新增） | 在 PvP 房名里用 `!ai` 加入对手和队友，接入原有计分、复活、卡组与死亡后观战。 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [中文](docs/pvp-ai.zh-CN.md) · [English](docs/pvp-ai.md) |
 | 输入法修复 | 修复一处把输入法（中/日/韩）提交的字节数当成字符数的问题。 | `ime_fix` | 客户端 | [中文](docs/ime-fix.zh-CN.md) · [English](docs/ime-fix.md) |
 | 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
 | 开游戏随机崩溃修复 | 修复开游戏时随机崩溃（读取界面闪退，`0x008FE610`）：读取界面随机挑一组，其机体在客户端数据里不存在时会闪退；现在这种组会换成最近的一组机体存在的读取界面。 | `startup_crash_fix` | 客户端 | [中文](docs/startup-crash-fix.zh-CN.md) · [English](docs/startup-crash-fix.md) |
@@ -33,14 +34,16 @@ FRP 联机功能处于 **Beta 测试阶段**。增量安装、服主配置和玩
 | 原生 UDP 端口池（Beta） | 将 Agent 玩家 UDP 分配限制到可复用的隧道本地端口池，默认关闭。 | `agent_udp_pool` | Agent 服务器 | [Sakura 设置说明](docs/sakura-frp-setup.zh-CN.md) |
 | 原生 relay 日志修复 | 修正原 Agent 把整数 IP 按字符串打印、导致转发后崩溃的问题，默认启用。 | `agent_relay_log_fix` | Agent 服务器 | [Sakura 设置说明](docs/sakura-frp-setup.zh-CN.md) |
 
-"安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装客户端部分才生效。没装客户端部分的玩家
-只是没有这项功能，游戏其它方面不受影响。
+"安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装配套的客户端部分才生效。
+AI 对战房间的所有参与者应使用配套版本。已发布的 1.1.2 包不含新增的对战 AI。
 
 ### 游戏内效果
 
 任务模式 AI 僚机：房间标题含 `!ai` 的任务房间，AI 僚机与玩家同行，攻击任务中的敌人。
 
 ![任务模式里 AI 僚机与玩家并肩作战](docs/coop-wingmen-demo.webp)
+
+对战 AI 的新视频尚待录制，见[五段功能展示与手动验收清单](docs/pvp-ai-video.zh-CN.md)。
 
 通用输入法修复：游戏大厅里开启输入法（红框为输入法工具栏，截图中是讯飞）。没有 `findwindow_fix` 时，任何需要查找窗口的
 输入法一开启就会让游戏卡死或崩溃。
@@ -54,11 +57,11 @@ SDGO-ModFramework-<版本>/
   client/                 放到 GOnline.exe 同目录
     d3d9.dll
     sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            findwindow_fix、ime_fix、mission_ai、net_probe（默认关闭）、startup_crash_fix、net_route（默认关闭）
+    sdgo\mods\            findwindow_fix、ime_fix、mission_ai、match_ai、net_probe（默认关闭）、startup_crash_fix、net_route（默认关闭）
   server/                 放到 BattleServer.exe 或 AgentServer.exe 同目录
     winmm.dll
     sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            coop_ai、agent_udp_pool（默认关闭）、agent_relay_log_fix
+    sdgo\mods\            coop_ai、pvp_ai、agent_udp_pool（默认关闭）、agent_relay_log_fix
   frp/                    完整增量 FRP 包、服主工具和教程
   install_client.ps1      把 client\ 安装到游戏目录
   install_server.ps1      把 server\ 安装到对战服务器目录
@@ -191,6 +194,9 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1     # 生成 dist\SDG
 ```
 
 安装脚本也能直接从构建目录安装：`tools\install_client.ps1 -GameDir ... -Source build\stage\Release\client`。
+
+对战 AI、计分条和观战逻辑的离线测试（不开游戏）见
+[测试说明](docs/ai-offline-tests.md)，入口为 `tests\run_ai_tests.ps1`。
 
 ## 新增功能
 
