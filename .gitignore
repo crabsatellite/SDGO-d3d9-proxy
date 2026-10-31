@@ -1,24 +1,13 @@
-# Build outputs
+# Build output (the staged game tree lives in build/stage/<config>)
 build/
-d3d9_proxy/build/
-mods/build/
 
 # Compiled binaries
 *.dll
-*.dll.disabled
-*.dll.old
 *.lib
 *.exp
 *.pdb
 *.ilk
 *.obj
-
-# Disabled mods & old files
-mods/_disabled/
-
-# Duplicate configs in subdirs
-d3d9_proxy/d3d9.ini
-d3d9_proxy/.gitignore
 
 # IDE
 .vs/
@@ -30,3 +19,6 @@ CMakeSettings.json
 # OS
 Thumbs.db
 desktop.ini
+
+# Release packages (tools/package.ps1)
+dist/

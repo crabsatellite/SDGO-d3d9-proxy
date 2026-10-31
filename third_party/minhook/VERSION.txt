@@ -1,0 +1,1 @@
+MinHook v1.3.4 (c3fcafd) from https://github.com/TsudaKageyu/minhook, BSD 2-Clause. Vendored unmodified.
