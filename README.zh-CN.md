@@ -16,6 +16,9 @@ English: [README.md](README.md)
 
 ## 功能
 
+AI 全机体池的[只读检查与 LV 分级规划工具](backend/README.zh-CN.md)随包放在 `backend/`；
+服主使用自己的目录数据。当前输出是扩充规划，尚不提供写库或全机体 AI 运行支持，见[调查结果](docs/ai-catalog-investigation.zh-CN.md)。
+
 每项功能由一个或多个 mod 组成，各有一份说明（使用、设置、日志、实现原理）。
 
 | 功能 | 作用 | mod | 安装在 | 说明 |

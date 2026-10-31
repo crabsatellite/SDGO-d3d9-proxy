@@ -17,6 +17,10 @@ to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
 
 ## Features
 
+The package also includes an owner-side [AI roster audit and LV planning tool](backend/README.zh-CN.md).
+It reads the owner's catalogs without database writes. Expanded client/server AI support is not yet implemented;
+see the [investigation](docs/ai-catalog-investigation.zh-CN.md).
+
 Each feature is one or more mods with its own guide (use, settings, logs, how it works).
 
 | feature | what it does | mods | install on | guide |

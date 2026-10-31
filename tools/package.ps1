@@ -24,8 +24,9 @@ foreach ($tree in "client", "server") {
 }
 
 $name = "SDGO-ModFramework-$version"
-$dist = Join-Path $repo "dist"
-$out = Join-Path $dist $name
+$dist = [IO.Path]::GetFullPath((Join-Path $repo "dist"))
+$out = [IO.Path]::GetFullPath((Join-Path $dist $name))
+if ([IO.Path]::GetDirectoryName($out) -ne $dist) { throw "Package output must stay directly inside $dist" }
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
@@ -36,6 +37,11 @@ Copy-Item -LiteralPath (Join-Path $repo "tools\install_server.ps1") -Destination
 Copy-Item -LiteralPath (Join-Path $repo "README.md") -Destination $out
 Copy-Item -LiteralPath (Join-Path $repo "README.zh-CN.md") -Destination $out
 Copy-Item -LiteralPath (Join-Path $repo "docs") -Destination $out -Recurse
+# Owner-side preparation only. Whitelist sources, never Python caches or generated rosters.
+New-Item -ItemType Directory -Force -Path (Join-Path $out "backend") | Out-Null
+foreach ($file in "ai_catalog.py", "ai_catalog.rules.example.json", "README.zh-CN.md") {
+    Copy-Item -LiteralPath (Join-Path $repo "backend\$file") -Destination (Join-Path $out "backend")
+}
 Copy-Item -LiteralPath (Join-Path $repo "THIRD_PARTY_NOTICES.md") -Destination $out
 if (Test-Path -LiteralPath (Join-Path $repo "LICENSE")) { Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $out }
 New-Item -ItemType Directory -Force -Path (Join-Path $out "licenses") | Out-Null
