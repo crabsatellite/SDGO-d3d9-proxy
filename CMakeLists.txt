@@ -116,7 +116,7 @@ sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" 
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery"
-             SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua config.example.ini)
+             SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -133,6 +133,12 @@ add_custom_target(sdgo_data ALL
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+add_executable(battle_ai_math_test tests/battle_ai_math_test.cpp)
+sdgo_strict(battle_ai_math_test)
+add_executable(battle_ai_capabilities_test tests/battle_ai_capabilities_test.cpp)
+sdgo_strict(battle_ai_capabilities_test)
+add_executable(battle_ai_navigation_test tests/battle_ai_navigation_test.cpp)
+sdgo_strict(battle_ai_navigation_test)
 
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.

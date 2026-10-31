@@ -28,13 +28,15 @@ $sourceMod=Join-Path $Source 'sdgo\mods\battle_ai'
 $symbolName='GOnline-54BE1568-00C97000.ini'
 $sourceSymbols=Join-Path $Source "sdgo\symbols\$symbolName"
 $targetSymbols=Join-Path $game "sdgo\symbols\$symbolName"
-$files=@('battle_ai.dll','battle_ai.lua','mod.ini','config.example.ini')
+$files=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','config.example.ini')
 foreach($file in $files) {
     if(-not (Test-Path -LiteralPath (Join-Path $sourceMod $file))) { throw "Missing add-on file $file" }
 }
 $incoming=[IO.File]::ReadAllText($sourceSymbols)
 $symbols=[IO.File]::ReadAllText($targetSymbols)
-foreach($name in 'npc.think','npc.init_ai') {
+$requires=[regex]::Match([IO.File]::ReadAllText((Join-Path $sourceMod 'mod.ini')),'(?m)^requires=([^\r\n]+)').Groups[1].Value.Split(',')
+if(-not $requires -or $requires.Count -lt 2) { throw 'Missing add-on dependency manifest' }
+foreach($name in $requires) {
     $pattern='(?ms)^\['+[regex]::Escape($name)+'\]\r?\n.*?(?=^\[|\z)'
     $section=[regex]::Match($incoming,$pattern)
     if(-not $section.Success) { throw "Missing incoming symbol $name" }

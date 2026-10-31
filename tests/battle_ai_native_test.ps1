@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $run=Join-Path $repo ('build\battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
 $bin=Join-Path $repo "build\$Config"
-foreach($case in 'enabled','disabled','bad-signature','missing-script') {
+foreach($case in 'enabled','disabled','bad-signature','missing-script','generic') {
     $dir=Join-Path $run $case
     $mod=Join-Path $dir 'sdgo\mods\battle_ai'
     New-Item -ItemType Directory -Force -Path $mod,(Join-Path $dir 'sdgo\symbols') | Out-Null
@@ -13,6 +13,10 @@ foreach($case in 'enabled','disabled','bad-signature','missing-script') {
     $manifest=(Get-Content -LiteralPath (Join-Path $repo 'mods\battle_ai\mod.ini') -Raw).Replace('hosts=GOnline-54BE1568-00C97000','hosts=*')
     [IO.File]::WriteAllText((Join-Path $mod 'mod.ini'),$manifest)
     if($case -ne 'missing-script') { Copy-Item -LiteralPath (Join-Path $repo 'mods\battle_ai\battle_ai.lua') -Destination $mod }
+    Copy-Item -LiteralPath (Join-Path $repo 'mods\battle_ai\universal_ai.lua') -Destination $mod
+    $policy="[settings]`r`nGenericMode=0`r`n"
+    if($case -eq 'generic') { $policy="[settings]`r`nGenericMode=1`r`nReactionMs=0`r`nTargetHoldMs=0`r`nBurstMs=0`r`n" }
+    [IO.File]::WriteAllText((Join-Path $mod 'config.ini'),$policy)
     $cfg="[core]`r`nlog_level=1`r`n[mods]`r`n"
     if($case -eq 'disabled') { $cfg+="battle_ai=0`r`n" }
     [IO.File]::WriteAllText((Join-Path $dir 'sdgo\sdgo.ini'),$cfg)

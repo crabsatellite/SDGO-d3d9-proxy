@@ -5,12 +5,14 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <thread>
 #include "sdgo/sdgo_api.h"
 extern "C" {
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
 }
+#include "battle_ai_native_world.h"
 namespace {
 lua_State* g_L = nullptr;
 int g_failures = 0;
@@ -21,21 +23,20 @@ void Check(bool ok,const char* what) {
 bool Eval(const char* s) {
     int top=lua_gettop(g_L);
     bool ok=luaL_loadbuffer(g_L,s,strlen(s),"=native fixture")==0 && lua_pcall(g_L,0,0,0)==0;
-    if(!ok) std::printf("LUA ERROR %s\n",lua_tostring(g_L,-1));
+    if(!ok) {std::printf("LUA ERROR %s\n",lua_tostring(g_L,-1));++g_failures;}
     lua_settop(g_L,top); return ok;
 }
 lua_State* __cdecl State(lua_State* value) { if(value) g_L=value; return g_L; }
 struct Unit {
     unsigned char bytes[0x3300] = {};
-    __declspec(noinline) void Think() {
-        if(!bytes[0x326C]) return;
-        int top=lua_gettop(g_L);
-        lua_getglobal(g_L,"VSAI_Gunfighter_01_Update"); lua_getglobal(g_L,"npc");
-        Check(lua_pcall(g_L,1,1,0)==0,"native Think can execute decorated callback");
-        Check(lua_tonumber(g_L,-1)==123,"decorator preserves native return value");
-        lua_settop(g_L,top);
+    __declspec(noinline) bool Think() {
+        if(!bytes[0x326C]) return true;
+        int result=native_world::Dispatch("VSAI_Gunfighter_01_Update",bytes);
+        Check(result==123,"native dispatcher callback preserves its return value");
+        reinterpret_cast<native_world::Callbacks*>(this)->Intent();
+        return true;
     }
-    __declspec(noinline) void Init(void* data) { bytes[0]=static_cast<unsigned char>(reinterpret_cast<uintptr_t>(data)); }
+    __declspec(noinline) void Init(void* data) { bytes[0x100]=static_cast<unsigned char>(reinterpret_cast<uintptr_t>(data)); }
 };
 template<typename T> void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*),"single inheritance fixture ABI");
@@ -71,6 +72,10 @@ void Symbols(bool bad) {
     Symbol(f,"lua.settable",reinterpret_cast<void*>(&lua_settable));
     Symbol(f,"lua.pcall",reinterpret_cast<void*>(&lua_pcall));
     Symbol(f,"lua.load",reinterpret_cast<void*>(&lua_load));
+    Symbol(f,"lua.type",reinterpret_cast<void*>(&lua_type));
+    Symbol(f,"lua.tonumber",reinterpret_cast<void*>(&lua_tonumber));
+    Symbol(f,"lua.newtable",reinterpret_cast<void*>(&lua_newtable));
+    native_world::Symbols(f,Symbol);
     fclose(f);
 }
 void Config(const char* value) {
@@ -83,9 +88,11 @@ int wmain(int argc,wchar_t** argv) {
     bool disabled=argc>1 && !wcscmp(argv[1],L"disabled");
     bool bad=argc>1 && !wcscmp(argv[1],L"bad-signature");
     bool missing=argc>1 && !wcscmp(argv[1],L"missing-script");
+    bool generic=argc>1 && !wcscmp(argv[1],L"generic");
     wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr,exe,MAX_PATH); *wcsrchr(exe,L'\\')=0; g_root=exe;
     Symbols(bad);
     g_L=lua_open(); luaopen_base(g_L); lua_settop(g_L,0); luaopen_string(g_L); lua_settop(g_L,0);
+    native_world::state=g_L;
     Check(Eval(R"(
       calls=0; moves=0
       function VSAI_Gunfighter_01_Update(n) calls=calls+1; return 123 end
@@ -105,10 +112,114 @@ int wmain(int argc,wchar_t** argv) {
     SdgoBoot boot={sizeof(boot),"battle_ai_native_test",GetModuleHandleW(nullptr)};
     Check(init(&boot)!=0,"real core initialization");
     Unit unit; unit.bytes[0x326C]=1; *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
+    if(generic) {
+        native_world::Initialize(unit.bytes,g_L);
+        native_world::enemy2[0xDCD]=0;
+        uint32_t shotResult=reinterpret_cast<native_world::Callbacks*>(native_world::fsms[2].data())->Shot(111,2,3);
+        Check(shotResult==0xBEEFF00D,"ranged shot hook forwards the original 32-bit returned object value");
+        Check(*reinterpret_cast<uint32_t*>(native_world::fsms[2].data()+0x100)==116,"ranged shot observation forwards exact original arguments");
+    }
     lua_pushnumber(g_L,987);
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
-    if(disabled||bad||missing) {
+    if(generic) {
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2 and calls==1)"),"generic dispatch chooses real observed lower HP and initializes stock once");
+        unit.Think();
+        Check(unit.bytes[0xDCD]==0,"native attack-intent hook enforces real-time interval between pulses");
+        reinterpret_cast<native_world::Callbacks*>(native_world::fsms[2].data())->Shot(111,2,3);
+        Sleep(130);unit.Think();
+        Check(native_world::jumps==1 && native_world::moves>0,"brief ranged shot event enables native air strafe without gauge refill");
+        Check(unit.bytes[0xDCD]!=0 && *reinterpret_cast<float*>(unit.bytes+0x3204)==0,"cadence resumes while NPC aiming error is removed");
+        native_world::Put(native_world::fsms[0].data(),8,native_world::fsms[0].data()+0x34);
+        native_world::Put(unit.bytes,0x31F4,77);unit.Think();
+        Check(unit.bytes[0xDCD]!=0 && native_world::lastWait==77,"active charge/beam state retains native held input and extra timer");
+        native_world::Put(native_world::fsms[0].data(),8,native_world::fsms[0].data()+0x20);
+        native_world::Ray3 ray;
+        reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);
+        Check(ray.origin.x==12 && ray.origin.y==100 && ray.origin.z==13 && ray.direction.x>0.9f,
+              "native ranged-ray hook keeps original origin and corrects direction");
+        native_world::Put(native_world::enemy1.data(),0x38,50);
+        Sleep(110);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==1 and calls==1)"),"new lower HP is selected without rerunning stock initialization");
+        native_world::Put(native_world::enemy1.data(),0x38,1000);
+        native_world::blocked=true;Sleep(110);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==1)"),"fresh native collision query excludes lower HP behind an obstacle");
+        native_world::blocked=false;Sleep(110);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),"next fresh query sees newly clear target without a two-second shared cache");
+        native_world::Put(native_world::nodes[2].data(),0x90,120.0f);
+        native_world::Put(native_world::scenes[2].data(),0xBC,native_world::Aabb{{1360,50,80},{1440,150,160}});
+        Sleep(100);unit.Think();
+        reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);
+        Check(ray.direction.z>0.15f,"projectile ray leads a laterally moving observed target using native projectile speed");
+        native_world::weapons[1][0x6E9]=1; // opaque initializer: static reader must not guess speed
+        std::array<uint8_t,0xC00> projectile={};std::array<uint8_t,0x300> projectileNode={};
+        std::array<void*,8> projectileVtable={};projectileVtable[0x18/sizeof(void*)]=native_world::Address(&native_world::Callbacks::Projectile);
+        native_world::Put(projectile.data(),0,projectileVtable.data());
+        native_world::Put(projectile.data(),8,projectileNode.data());
+        native_world::Put(projectile.data(),0x9C4,unit.bytes);
+        native_world::Put(projectile.data(),0x9C8,native_world::weapons[1].data());
+        for(int i=0;i<3;++i) {
+            bool result=reinterpret_cast<native_world::Callbacks*>(projectile.data())->Projectile(reinterpret_cast<void*>(0x1234));
+            Check(result && *reinterpret_cast<uintptr_t*>(projectile.data()+0x100)==0x1234,"projectile observer preserves AL result and opaque argument");
+        }
+        Check(Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.weapons[2].projectileSpeed>2699 and o.weapons[2].projectileSpeed<2701); return 123 end"),"measured-speed probe installs");
+        unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        memcpy(native_world::fsms[0].data()+0x56C,native_world::fsms[0].data()+0x24C,4*0xC8);
+        unit.bytes[0xE34]=1;
+        for(int i=0;i<3;++i) reinterpret_cast<native_world::Callbacks*>(projectile.data())->Projectile(nullptr);
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.valid==1 and o.weapons[2].projectileSpeed==0); return 123 end");
+        unit.Think();
+        Check(true,"old-form projectile samples are not learned as the new form's speed");
+        unit.bytes[0xE34]=0;Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.weapons[2].projectileSpeed==0); return 123 end"),"nonlinear-speed probe installs");
+        projectile[0xA38]=1;
+        reinterpret_cast<native_world::Callbacks*>(projectile.data())->Projectile(nullptr);
+        unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        projectile[0xA38]=0;projectileVtable[0x18/sizeof(void*)]=native_world::Address(&native_world::Callbacks::Homing);
+        native_world::Put(native_world::definitions[0].data(),0,uint32_t(987650));
+        for(int i=0;i<3;++i) reinterpret_cast<native_world::Callbacks*>(projectile.data())->Homing(nullptr);
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) local o=SDGO_BattleAI_Observe(); assert(o.weapons[2].projectileSpeed==0); return 123 end");
+        unit.Think();
+        Check(true,"constant-speed homing wrapper is not misclassified as a straight projectile");
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        native_world::weapons[1][0x6E9]=0;
+        // Invoke the real C callback during a generic dispatch, while its actor
+        // context is valid, to exercise route ownership and native deallocation.
+        Check(Eval("savedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); return 123 end"),"route probe installs");
+        unit.Think();
+        Check(native_world::frees>0,"native path buffer copied and released through the EXE allocator");
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        Check(Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); assert(SDGO_BattleAI_Route(999,1)==0); return 123 end"),"failed-repath probe installs");
+        unit.Think();
+        Check(unit.bytes[0x30DC]==0,"failed repath clears the old route and does not reissue its previous motor goal");
+        native_world::pathMode=3;int beforeFree=native_world::frees;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==0); return 123 end");
+        unit.Think();
+        Check(native_world::frees==beforeFree+1 && native_world::protectedPath==nullptr && unit.bytes[0x30DC]==0,
+              "unreadable native path copy still releases allocation and cancels route");
+        native_world::pathMode=0;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); SDGO_BattleAI_CancelRoute(); return 123 end");
+        unit.Think();Check(unit.bytes[0x30DC]==0,"cancelling an owned route releases its motor goal");
+        Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
+        native_world::nullRay=true;unit.Think();native_world::nullRay=false;
+        Check(Eval("assert(calls>=2)"),"failed native ray observation falls back rather than querying from a zero origin");
+        native_world::Ray3 offThreadRay={};
+        std::thread worker([&] {
+            reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&offThreadRay);
+            reinterpret_cast<native_world::Callbacks*>(unit.bytes)->Intent();
+        });worker.join();
+        Check(offThreadRay.direction.x==0 && offThreadRay.direction.z==1,"off-thread native ray retains original behavior without shared policy maps");
+        Eval("priorGenericGeneration=SDGO_BattleAI_Universal.states[20].generation");
+        std::thread initWorker([&] {unit.Init(reinterpret_cast<void*>(3));});initWorker.join();
+        Sleep(110);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].generation>priorGenericGeneration)"),"off-thread spawn reset is queued and applied by the established game thread");
+        Config("[settings]\nGenericMode=1\nEnabled=0\n");Sleep(2100);unit.Think();
+        reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);
+        Check(unit.bytes[0x312A]==0 && unit.bytes[0x30DC]==0 && ray.direction.z==1 && ray.direction.x==0,
+              "disabling generic mode releases owned motor and shooting and retains stock ray");
+    } else if(disabled||bad||missing) {
         Check(Eval("assert(SDGO_BattleAI==nil and calls==1)"),"disabled or rejected mod leaves native AI intact");
     } else {
         Check(Eval("assert(SDGO_BattleAI and SDGO_BattleAI.states[20] and SDGO_BattleAI.faults==0); firstGeneration=SDGO_BattleAI.states[20].generation"),"DLL injects policy on first native Think");
@@ -120,9 +231,9 @@ int wmain(int argc,wchar_t** argv) {
         unit.Think();
         Check(Eval("assert(SDGO_BattleAI.states[20]==nil and calls==4)"),"unrelated native NPC id is excluded");
         *reinterpret_cast<uint32_t*>(unit.bytes+0x3238)=3604001;
-        Config("[settings]\nEnabled=0\nDecisionMs=invalid\n"); Sleep(2100); unit.Think();
+        Config("[settings]\nGenericMode=0\nEnabled=0\nDecisionMs=invalid\n"); Sleep(2100); unit.Think();
         Check(Eval("assert(calls==5 and SDGO_BattleAI.faults==0)"),"separate config.ini reloads and invalid value is bounded");
-        Config("[settings]\nEnabled=1\n"); Sleep(2100); unit.Think();
+        Config("[settings]\nGenericMode=0\nEnabled=1\n"); Sleep(2100); unit.Think();
         Check(Eval("assert(calls==6 and SDGO_BattleAI.states[20])"),"configuration can re-enable policy");
         Eval("function VSAI_Gunfighter_01_Update(n) calls=calls+1; return 123 end");
         Sleep(2100); unit.Think();

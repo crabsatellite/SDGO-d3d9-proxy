@@ -2,7 +2,7 @@
 -- The adapter prefixes this chunk with a local `config` table from config.ini.
 local defaults = { Enabled=1, DecisionMs=150, ReactionMs=300, StuckMs=1400,
   ProgressDistance=30, ArrivalDistance=100, RecoveryDistance=350, RecoveryMs=650,
-  RecoveryCooldownMs=1000, RangedMinDistance=450, TacticCooldownMs=900, LogDecisions=0 }
+  RecoveryCooldownMs=1000, RangedMinDistance=450, TacticCooldownMs=900, LogDecisions=0, GenericMode=0 }
 local C = {}
 for k,v in pairs(defaults) do C[k]=v end
 for k,v in pairs(config or SDGO_BattleAI_TestConfig or {}) do C[k]=v end
@@ -118,6 +118,7 @@ local function Control(npc,s,spec,now,dir,reason,random)
 end
 
 local function Before(npc,spec)
+  if C.GenericMode==1 then return end
   if not Eligible(npc) then return false end
   local now=SDGO_BattleAI_Now()
   local id=npc:GetID()
@@ -134,7 +135,7 @@ local function Before(npc,spec)
 end
 
 local function After(npc,spec)
-  if C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
+  if C.GenericMode==1 or C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
   if not Alive(npc) or npc:CheckHurt() then return end
   local now=SDGO_BattleAI_Now()
   local s=State(npc,now)

@@ -1,89 +1,114 @@
-# Battle AI enhancement / 战斗 AI 增强（预览）
+# Battle AI 0.2 / 通用战斗 AI（预览）
 
-`battle_ai` 为原生 AI 对战机器人及 `match_ai` / `mission_ai` 创建的同类机器人增加决策和脱困。
-配置完成后随正常游戏启动生效；没有额外的联机入口，也不管理 FRP、服务端或数据库。
+`battle_ai` 按当前机体、形态、武装数据选择打法。配置完成后随正常游戏启动生效；
+它不管理 FRP、服务端或数据库，也没有额外的联机启动入口。
 
-## 安装与配置
+## 当前功能
 
-需要先装本项目的 Mod 框架，支持 `GOnline-54BE1568-00C97000`。关闭要更新的那份客户端，运行：
+- **通用武器选择**：读取当前形态的真实 0-based 武器槽、射程、弹量、冷却、估计伤害和移动射击标志，
+  比较当前距离与武器输出；空弹切换其它可用武器。原生切枪是请求，必须观察到实际提交后才发起攻击。
+  不按 Gunfighter/Infighter 等脚本名决定远近战，不要求为每台机体手写配置。
+- **攻击频率与意图**：减少 NPC 额外等待，提供反应时间、攻击间隔、连续进攻与短暂停顿设置。
+  只在原生中立状态调节发起下一次攻击的意图；充能、持续光束、funnel、rush、连段等活动状态保留原生按住输入。
+  实际弹药、武器冷却、动作和伤害仍由原生 FSM 执行。
+- **低血量集火**：在可见、可攻击、处于可用武器有效射程的候选中，优先剩余 HP 少的敌人。
+  极远残血不会抢走眼前可交战目标；短暂目标保持避免不停取消攻击。死亡或失效立即重选。
+- **对射升空与横移**：观察原生射击事件，记住短促射击；对射时交替左右移动，并按间隔请求跳跃。
+  尊重原生跳跃请求许可、推进余量及运动 FSM；移动射击受限的武器在射击时保持其原有限制。
+  这里验证的是正确发出动作请求，是否在某台机体和地图上实际升空仍需实机确认。
+- **瞄准与预判**：移除受控 NPC 的人为瞄偏，保留原始射线起点，修正射击方向。
+  对有已验证速度的物理弹体求拦截提前量；脚本弹体通过连续三次稳定、非曲线/非变速的实际飞行样本学习速度。
+  未知速度、Bezier 或变速轨迹不硬套直线模型；导弹原生引导和所有实际碰撞继续执行。
+  用户选择的是“消除误差、实弹/导弹预判，朝约 90% 命中调校”，不是强制命中或补发伤害。
+- **导航与恢复**：使用本客户端的原生路径搜索，逐点前进，释放原生路径数组时使用游戏自己的分配器。
+  停滞时左右尝试，再重新规划；原地反复跳跃不算水平前进。暂时不可达的目标有独立冷却。
+  目标被遮挡后仅短暂追踪最后可见位置；记忆过期后使用原生随机巡逻，不实时跟踪墙后位置。
+- **逐目标视线**：使用本客户端的纯碰撞原语和 Mod 自有查询缓冲，分别检查每个目标；
+  避免复用旧 AI 的两秒共享缓存，也不调用会改变移动/仇恨的“射击测试”作为只读查询。
+
+只作用于负责模拟的本机战斗机器人（保留的 AI NPC 编号范围）；远端副本、真人控制和任务 Boss AI 不接管。
+“任意机体”指机器人引用的合法原生机体/武装记录，不会自动修补缺失模型、武器或非法数据库内容。
+原生生成机器人仍由既有 `match_ai` / `mission_ai` / 服务端配套 Mod 负责。
+
+## 安装和分发
+
+先安装本项目 Mod 框架，支持 `GOnline-54BE1568-00C97000`。关闭要更新的那份客户端，运行：
 
 ```powershell
 ./tools/install_battle_ai.ps1 -GameDir D:/Games/SDGO -Source ./build/stage/Release/client
 ```
 
-增量安装器只更新四个 `sdgo/mods/battle_ai/` 产品文件和两个已验证的 NPC 符号段，
-保留其它符号、其它 Mod、全局配置及用户 `config.ini`，并备份被更新的文件。
-它不会停止任何进程，不会启动游戏。
+增量安装只更新 `sdgo/mods/battle_ai/` 的五个产品文件及清单要求的符号段，
+保留其它符号、其它 Mod、全局配置和用户 `config.ini`；不会停止任何进程或启动游戏。
+预览包不含游戏文件、账号、SQL、FRP 配置或开发测试 VM。打包目录里的安装器可直接找到同包 `client/`。
 
-`sdgo/mods/battle_ai/config.example.ini` 列出默认值。需要调整时复制成同目录下的 `config.ini`。
-未创建该文件也会使用默认值。更新只覆盖示例，不覆盖用户配置；路径相对于游戏目录。
-`mod.ini` 仅为开发者清单。无需写入 IP、端口、账号或本机绝对路径。
+`config.example.ini` 列出默认值。需要调整时复制成同目录 `config.ini`；未创建时使用默认值。
+更新覆盖示例而保留用户文件。`mod.ini` 是开发者清单，不要求玩家写 IP、端口或本机路径。
 
-要关闭增强，在 `sdgo/sdgo.ini` 的 `[mods]` 下写 `battle_ai=0`，重新启动客户端；
-或在用户配置 `[settings]` 下写 `Enabled=0`，两秒内恢复原生决策。
+关键设置：
 
-## 当前行为
+| 设置 | 含义 |
+|---|---|
+| `GenericMode=1` | 使用通用控制器；设 0 可退回 0.1 的原生脚本增强层 |
+| `ReactionMs` / `AttackIntervalMs` | 反应时间与发起攻击的额外间隔；不是改写武器冷却 |
+| `BurstMs` / `BurstPauseMs` | 连续进攻与暂停时间；活动充能/持续攻击不会被此项截断 |
+| `TargetHoldMs` | 目标保持时间，减少抖动 |
+| `FarTargetSlack` / `FarTargetRatioPercent` | 防止极远残血引走正在近距离交战的 AI |
+| `AirStrafe` / `StrafeSwitchMs` | 对射横移与换向间隔 |
+| `JumpMs` / `JumpCooldownMs` / `BoostReservePercent` | 跳跃请求时长、间隔与推进余量 |
+| `AimAssist` / `ProjectileLead` | 精准方向与弹体提前量开关 |
+| `MaxLeadMs` | 最大外推时间，避免不可信的长距离预判 |
+| `RepathMs` / `StuckMs` | 重新规划间隔与停滞检测时间 |
+| `TargetMemoryMs` / `PatrolMs` | 最后可见位置记忆和无目标巡逻间隔 |
+| `LogDecisions=1` | 记录目标、攻击、规避、路径等变化原因，不逐帧刷日志 |
 
-- 原生攻击检查允许时，缩短等待状态中的决策延迟；保持原生攻击状态和武器执行。
-- Gunfighter、Tanker 在非攻击/连击状态下，距离目标过近时短暂后退。
-  Gunfighter、Tanker 的 `ATTACK` 负责射击；Infighter、Stoker 的同名状态负责近战，
-  由各自的原始 Init 选择武器，增强层不根据状态名字猜测动作。
-- 有移动目标却持续没有位置进展时，先左移，再右移，最后调用原生随机目的地选择，
-  各次尝试之间有冷却。该回退不保证能找到绕过大型建筑的路径。
-- 每帧仍执行一次原生 AI；恢复窗口内只短暂重申自己的移动目标，
-  原生进入攻击、死亡、受击、复活或配置禁用时及时交回控制。
-- 新增状态按对象 ID 和 `InitNPCAI` 产生的代次分开，避免新一局或复活继承旧计时。
-- 只包装当前 30 个原生 `VSAI_*_Update`，同时检查本机模拟标志、AI 启用标志和 NPC ID 范围。
-  远端副本、真人控制和任务 Boss 脚本不会运行这层增强。
-- 不写坐标、生命值、弹药、速度、碰撞开关或网络包；不直接开火、不额外填充推进槽。
-  原生脚本自己的参数和动作仍保留。
+`Enabled=0` 在两秒内交还原生控制并取消增强层的移动/射击意图；
+或在全局 `sdgo.ini` 的 `[mods]` 下写 `battle_ai=0` 后重启客户端。
+观察/数据读取或策略失败会回退原生；代码符号签名不符时由框架拒绝加载。
 
-把 `LogDecisions=1` 可在 `sdgo/logs/sdgo.log` 查看攻击条件、距离调整及脱困原因。
-脚本错误会回退原生更新，累计三次暂停增强，修正并重新加载脚本后恢复。
-配置或脚本的语法错误不会替换上一份可用策略。
+## 自动验证
 
-## 自动测试
-
-测试 VM 只用于开发，运行在独立可执行文件中；不连接游戏服务。使用官方 Lua 5.0.3：
+测试在独立目录和可执行文件中进行，不连接任何游戏后端。
 
 ```text
-https://www.lua.org/ftp/lua-5.0.3.tar.gz
+测试用官方 Lua 5.0.3: https://www.lua.org/ftp/lua-5.0.3.tar.gz
 SHA256 1193a61b0e08acaa6eee0eecf29709179ee49c71baebc59b682a25c3b5a45671
 ```
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DSDGO_LUA50_SOURCE=D:/deps/lua-5.0.3
 cmake --build build --config Release --parallel 2
-./tests/battle_ai_test.ps1 -NativeScriptDir D:/extracted-client/scp
+./tests/battle_ai_test.ps1 -NativeScriptDir D:/extracted-client/scp -GameExe D:/Games/SDGO/GOnline.exe
 ./tests/battle_ai_install_test.ps1 -GameExe D:/Games/SDGO/GOnline.exe
 python tools/verify_symbols.py D:/Games/SDGO/GOnline.exe
 ```
 
-`NativeScriptDir` 使用自行持有的原始客户端脚本，不随 Mod 分发。回放直接执行
-1379–1382、1409–1434 的原始 Lua 5.0 字节码，模拟游戏的场景、武器、计时和移动 API。
-原生接入测试加载真实 `core.dll`、`battle_ai.dll`，检查 Hook、Lua 堆栈、远程标志、
-复活代次、配置重载、晚加载函数、错误脚本回退及签名不符拒绝。
+覆盖通用目标/武器决策、形态切换、升空横移请求、充能保持、真实 core/DLL 接入夹具、
+原始 Lua 字节码兼容回放、Boost/弹药库布局、逐目标纯视线、弹道数学、安装升级保留配置。
+原生夹具验证调用约定、opaque 参数/AL 返回、射线起点、运行时弹速学习、曲线排除、原生路径分配器及禁用清理。
+另行读取支持版本的实际 EXE，核对虚表的字节偏移、函数清栈和返回值约定，避免夹具重复了错误接口假设。
+这些是接口与受控场景验证，不是实际游戏引擎或真实地图已经验收。
 
-本轮结果：31 项策略场景、30 个原始脚本回放、4 类 native 接入场景及增量安装保留测试通过。
-回放中的 Gunfighter 原地等待场景约 3024 ms 才进入攻击，增强后约 320 ms；
-这是模拟条件下的脚本结果，不是实机战斗性能数据。
+独立弹道基准把目标按固定速度移动、弹体按固定速度积分，在 225 个三维场景中全部进入半径 8 的目标范围，
+最大离散误差约 4.134 世界单位。该结果检验预判公式与单位一致性，不能解释为实战命中率 100% 或已达 90%。
+变向、加速、掩体、曲线弹道、原生引导与网络状态仍需实际游戏调校。
 
-## 独立环境与手动验收
+## 隔离环境与手动验收
 
-`tools/prepare_battle_ai_sandbox.ps1 -ClientDir D:/Games/SDGO` 只会在当前工作树的
-`build/battle_ai_sandbox/client` 复制游戏资产并安装当前构建，不启动客户端，
-不复制启动器/账号/聊天记录，也不连接任何现有后端。测试目录没有使用 FRP 的端口、
-隧道、数据库或运行目录。该客户端尚需另行指定独立测试后端才能做实际登录/对战。
+`tools/prepare_battle_ai_sandbox.ps1 -ClientDir D:/Games/SDGO` 只在当前工作树
+`build/battle_ai_sandbox/client` 复制资产、清除保存的登录数据并安装当前构建；
+不启动客户端，不复制启动器或聊天记录，不连接 FRP 或任何现有后端。
+手动登录/对战须另行指定独立测试后端。
 
-自动场景不代表真实地图碰撞或多人同步已验收。仍需手测墙角、狭道、高低差、
-可破坏障碍、复活及多人房间；观察卡住时长、无障碍时的攻击响应和远程机选位。
-原生脚本仍有脚本级共享变量，本 Mod 只保证新增的恢复/决策状态按 NPC 分开，
-尚未消除所有原生共享状态。第一版也未引入全局导航、跳跃连接或飞行寻路。
+本轮不触碰原客户端、FRP 工作树、服务、数据库、端口和隧道。
+仍需手测：不同机体/变形、对射横摆及推进消耗、充能/持续光束、同脚本多台机器人、
+拐角/狭道/高低差/可破坏障碍、多人端同步、受击/死亡/复活，以及有真实分母的实战命中率。
+原生导航数据缺失或路径不可达时保守处理，不承诺所有地图都能完成三维飞行寻路。
 
 ## English summary
 
-This optional client add-on decorates 30 stock VSAI callbacks on the authoritative
-client. It retains one native update per frame, requests native attack states,
-adds ranged spacing and bounded local recovery, and preserves user configuration.
-Synthetic VM/adapter tests pass; actual terrain and human multiplayer acceptance
-remain open. No server, account, tunnel or database changes are required by the mod.
+The optional client add-on selects tactics from live form/weapon data, focuses comparable
+in-range low-HP enemies, drives native attack intent and ranged-duel air strafing, follows
+native routes and corrects native shot rays with validated/measured projectile lead.
+Ammo, cooldowns, physics, homing and damage remain native. Automated adapter/VM/geometry
+fixtures do not prove real-map or multiplayer acceptance, nor a live 90% hit rate.
