@@ -76,6 +76,7 @@ namespace
 
     using SetupHumansFn = int(__thiscall*)(void* proc, uint8_t* room, uint32_t* a, uint32_t* b, uint8_t c);
     using RoomTickFn = int(__thiscall*)(uint8_t* room, uint32_t now);
+    using BattleEndFn = void(__thiscall*)(uint8_t* room, uint16_t a, uint16_t b, int now);
     using RespawnPilotFn = int(__thiscall*)(uint8_t* room, uint32_t now, uint8_t* pilot, uint32_t id, uint32_t extra);
     using RespawnRefreshFn = void(__thiscall*)(uint8_t* room, int a, uint8_t* pilot, int b, int c);
     using PilotStateRespawnFn = int(__thiscall*)(uint8_t* part);
@@ -96,6 +97,7 @@ namespace
     SdgoMod* g_mod = nullptr;
     SetupHumansFn g_setupHumans = nullptr;
     RoomTickFn g_roomTick = nullptr;
+    BattleEndFn g_battleEnd = nullptr;
     RespawnPilotFn g_respawnPilot = nullptr;
     RespawnRefreshFn g_respawnRefresh = nullptr;
     PilotStateRespawnFn g_pilotStateRespawn = nullptr;
@@ -773,6 +775,55 @@ namespace
         return result;
     }
 
+    // ---- 4. battle end: the AI pilots leave the room -------------------------------------
+    //
+    // The battle end (battle.end, 0x0047E4A0) sends the results (the mode's result routine),
+    // sets the room back to waiting (0x004848D0) and releases every pilot's battle state
+    // (0x0047DF90). The AI pilots of a PvP room joined for that battle only (the next start
+    // adds them again from the title); left in the slots, the clients took them for room
+    // members in the waiting room and loaded a 3D model for a pilot without unit data
+    // (0x00729C50 read through NULL). Right after the battle end each AI pilot's slot record
+    // and pilot record are cleared, as the room delete (0x004849E0) clears a pilot's.
+
+    void RemoveAiPilots(uint8_t* room)
+    {
+        if (!IsPvpMode(room[kRoomMode]))
+            return;
+        int removed = 0;
+        for (int slot = 0; slot < kSlots; ++slot) {
+            uint32_t id = SlotPilotId(room, slot);
+            if (!(id & kAiPilotBit))
+                continue;
+            memset(room + kSlotInfo + slot * kSlotInfoStride, 0, kSlotInfoStride);
+            memset(room + kPilots + slot * kPilotStride, 0, kPilotStride);
+            if (DeadAi* dead = FindDead(room, id, false, 0))
+                dead->room = nullptr;
+            ++removed;
+        }
+        for (RoomWatch& w : g_watch)
+            if (w.room == room)
+                w.room = nullptr;
+        if (removed)
+            g_api->Log(g_mod, SDGO_LOG_INFO, "battle end: %d AI pilot(s) left the room", removed);
+    }
+
+    bool GuardedRemove(uint8_t* room)
+    {
+        __try {
+            RemoveAiPilots(room);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void __fastcall BattleEnd(uint8_t* room, void* /*edx*/, uint16_t a, uint16_t b, int now)
+    {
+        g_battleEnd(room, a, b, now);
+        if (room && !GuardedRemove(room))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
+    }
+
     template <typename Fn>
     bool Bind(Fn& out, const char* symbol)
     {
@@ -864,6 +915,9 @@ SDGO_MOD_ENTRY
         return 0;
     if (!api->HookCode(mod, "battle.start_team_checks", reinterpret_cast<void*>(&TeamChecksDetour),
                        &g_teamChecksResume))
+        return 0;
+    if (!api->HookCode(mod, "battle.end", reinterpret_cast<void*>(&BattleEnd),
+                       reinterpret_cast<void**>(&g_battleEnd)))
         return 0;
     if (!api->HookCode(mod, "battle.room_tick", reinterpret_cast<void*>(&RoomTick),
                        reinterpret_cast<void**>(&g_roomTick)))
