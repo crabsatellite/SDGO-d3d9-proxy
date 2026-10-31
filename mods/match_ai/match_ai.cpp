@@ -23,6 +23,10 @@
 //   unit+0x3238 = npc data id; UM->AddObject(unit, 0, 0) (0x0049BA20: object id, world);
 //   on the room master: +0x31ED = 0, +0x2B64 = 1, +0x3074 = 1, +0x2B65 = 0, +0x3070 = 2.
 //
+// A unit's AI runs only once it is switched on (CNPC::EnableAI, unit+0x326C). The game does
+// that for every AI unit at game ready, but only in the script modes; for a PvP battle with
+// AI players this mod does it at the same moment (GameReady, 0x004B2390).
+//
 // The AI runs on the room master, found the way CMissionMode::Init finds it: the local
 // player's record (record+0 == room+0x68) has record+0x1C set. The start point index of an
 // AI player follows the humans of its team, as the PvP Init counts them per team. As in
@@ -36,6 +40,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "sdgo/sdgo_api.h"
 
@@ -79,6 +84,11 @@ namespace
     using AddAiUnitFn = void(__thiscall*)(void* um, uint8_t* unit);
     using AddObjectFn = void(__thiscall*)(void* um, uint8_t* unit, uint32_t id, int flag);
     using CalculateTeamFn = void(__thiscall*)(void* um);
+    using GameReadyFn = void(__thiscall*)(uint8_t* service);
+    using EnableAiFn = void(__thiscall*)(uint8_t* unit);
+    using ErrorNameFn = const char*(__cdecl*)(int code);
+
+    constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
@@ -96,8 +106,16 @@ namespace
         AddAiUnitFn addAiUnit;
         AddObjectFn addObject;
         CalculateTeamFn calculateTeam;
+        EnableAiFn enableAi;
     };
     GameCalls g_game = {};
+    GameReadyFn g_originalGameReady = nullptr;
+    ErrorNameFn g_originalErrorName = nullptr;
+
+    // The AI players spawned for the current battle and its game mode; their AI is switched
+    // on at game ready.
+    std::vector<uint8_t*> g_bots;
+    uint8_t* g_botMode = nullptr;
 
     struct ModeClass
     {
@@ -137,6 +155,8 @@ namespace
 
     void SpawnAiPlayers(uint8_t* mode, const char* className)
     {
+        g_bots.clear();
+        g_botMode = mode;
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
@@ -211,6 +231,7 @@ namespace
             }
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
+            g_bots.push_back(unit);
             ++spawned;
             g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d)",
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
@@ -242,6 +263,57 @@ namespace
     using DetourFn = void(__fastcall*)(uint8_t*, void*);
     const DetourFn g_detours[] = {&ModeInit<0>, &ModeInit<1>, &ModeInit<2>, &ModeInit<3>, &ModeInit<4>};
 
+    // ---- game ready: switch the AI on --------------------------------------------------
+    //
+    // GameReady (0x004B2390) switches on the AI of the unit manager's AI units only for the
+    // script modes (game mode kind 9 or 10, 0x004B2716). For a PvP mode with AI players the
+    // same step runs here, right after it: CNPC::EnableAI on each of them.
+
+    void EnableBots(uint8_t* service)
+    {
+        uint8_t* mode = *reinterpret_cast<uint8_t**>(service + kServiceMode);
+        if (!mode || mode != g_botMode || g_bots.empty())
+            return;
+        for (uint8_t* unit : g_bots)
+            g_game.enableAi(unit);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "game ready: AI switched on for %u AI player(s)",
+                   static_cast<unsigned>(g_bots.size()));
+        g_bots.clear();
+    }
+
+    bool GuardedEnable(uint8_t* service)
+    {
+        __try {
+            EnableBots(service);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void __fastcall GameReady(uint8_t* service, void* /*edx*/)
+    {
+        g_originalGameReady(service);
+        if (service && !GuardedEnable(service))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+    }
+
+    // ---- diagnostics: every error the client names ------------------------------------
+    //
+    // The server error popup (0x006FD480) and the client error popups name the error code
+    // through ErrorName (0x006DFC60); logging the code with the callers shows where an error
+    // comes from.
+
+    const char* __cdecl ErrorName(int code)
+    {
+        const char* name = g_originalErrorName(code);
+        void* frames[4] = {};
+        USHORT n = RtlCaptureStackBackTrace(1, 4, frames, nullptr);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "error %d (%s), called from %p %p %p %p", code, name ? name : "?", n > 0 ? frames[0] : nullptr,
+                   n > 1 ? frames[1] : nullptr, n > 2 ? frames[2] : nullptr, n > 3 ? frames[3] : nullptr);
+        return name;
+    }
+
     template <typename Fn>
     bool Bind(Fn& out, const char* symbol)
     {
@@ -259,9 +331,16 @@ SDGO_MOD_ENTRY
                  Bind(g_game.baseCreateNpc, "mode.base_create_npc") && Bind(g_game.setPlayerInfo, "um.set_player_info") &&
                  Bind(g_game.playerSlot, "um.player_slot") && Bind(g_game.assign, "wstring.assign") &&
                  Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
-                 Bind(g_game.calculateTeam, "um.calculate_team");
+                 Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai");
     if (!bound)
         return 0;
+    if (!api->HookCode(mod, "game.service_game_ready", reinterpret_cast<void*>(&GameReady),
+                       reinterpret_cast<void**>(&g_originalGameReady)))
+        return 0;
+    if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
+        !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
+                       reinterpret_cast<void**>(&g_originalErrorName)))
+        api->Log(mod, SDGO_LOG_WARN, "error logging not available");
     int hooked = 0;
     for (int i = 0; i < 5; ++i) {
         if (api->HookSlot(mod, g_classes[i].slot, reinterpret_cast<void*>(g_detours[i]),
