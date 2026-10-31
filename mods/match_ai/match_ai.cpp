@@ -113,6 +113,7 @@ namespace
     using ObjectIdFromPilotFn = uint32_t(__thiscall*)(void* um, uint32_t pilotId);
     using SetSlotColourFn = void(__thiscall*)(void* um, int index, int colour);
     using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
+    using GameNewFn = void*(__cdecl*)(size_t size);
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
     using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
@@ -180,6 +181,7 @@ namespace
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
+    GameNewFn g_gameNew = nullptr;
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
@@ -963,6 +965,70 @@ namespace
         }
     }
 
+    // ---- dead view: AI players can be watched -------------------------------------------
+    //
+    // In death match, tag match and grid match a down local player's click points the camera
+    // at the next unit of its team in a copy of UM's player list (0x00AD7A40), which holds
+    // only CPlayer units. The AI players' units join that copy, at its end, with nodes from
+    // the game's own operator new: the game frees the list itself.
+    struct ListNode
+    {
+        ListNode* next;
+        ListNode* prev;
+        uint8_t* unit;
+    };
+
+    struct UnitList
+    {
+        ListNode* head;
+        uint32_t size;
+    };
+
+    int g_deadViewLogs = 0;
+
+    void AddAiToDeadView(UnitList* list)
+    {
+        __try {
+            if (!list || !list->head || !g_botMode || CurrentPvpMode() != g_botMode)
+                return;
+            void* um = *g_game.unitManager;
+            if (!um)
+                return;
+            int added = 0;
+            for (const Bot& bot : g_botTable) {
+                auto unit = static_cast<uint8_t*>(g_findObject(um, bot.objectId));
+                if (!unit)
+                    continue;
+                bool listed = false;
+                for (ListNode* node = list->head->next; node != list->head && !listed; node = node->next)
+                    listed = node->unit == unit;
+                if (listed)
+                    continue;
+                auto node = static_cast<ListNode*>(g_gameNew(sizeof(ListNode)));
+                if (!node)
+                    break;
+                node->unit = unit;
+                node->next = list->head;
+                node->prev = list->head->prev;
+                list->head->prev->next = node;
+                list->head->prev = node;
+                ++list->size;
+                ++added;
+            }
+            if (g_deadViewLogs < 3) {
+                ++g_deadViewLogs;
+                g_api->Log(g_mod, SDGO_LOG_INFO, "dead view: %d AI player(s) added to %lu player(s)", added,
+                           static_cast<unsigned long>(list->size - added));
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (g_deadViewLogs < 3) {
+                ++g_deadViewLogs;
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX adding the AI players to the dead view",
+                           GetExceptionCode());
+            }
+        }
+    }
+
     int g_deckFaults = 0;
 
     void GuardedSwitchDecks()
@@ -1287,6 +1353,26 @@ static int __stdcall KeepDeadOutOfPool(uint8_t* node)
 static void* g_deckCheckResume = nullptr;
 static void* g_deckSkip = nullptr;
 
+// The dead view, right after it copied UM's player list into its list at ebp-0x20.
+static void* g_deadViewResume = nullptr;
+
+static void __stdcall AddAiToDeadViewThunk(void* list)
+{
+    AddAiToDeadView(static_cast<UnitList*>(list));
+}
+
+static __declspec(naked) void DeadViewDetour()
+{
+    __asm {
+        pushad
+        lea eax, [ebp - 0x20]
+        push eax
+        call AddAiToDeadViewThunk
+        popad
+        jmp dword ptr [g_deadViewResume]
+    }
+}
+
 static int __stdcall KeepOwnUnitThunk(uint8_t* unit)
 {
     return KeepOwnUnit(unit);
@@ -1418,6 +1504,9 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "unit.switch_deck_skill_check", reinterpret_cast<void*>(&SwitchSkillDetour),
                        &g_switchSkillResume))
         return 0;
+    if (!Bind(g_gameNew, "crt.operator_new") ||
+        !api->HookCode(mod, "mode.dead_view_players", reinterpret_cast<void*>(&DeadViewDetour), &g_deadViewResume))
+        api->Log(mod, SDGO_LOG_WARN, "dead view not hooked; a down player cannot watch AI players");
     // Without these a dead AI player is pooled, and its respawn corrupts the heap.
     if (!api->HookCode(mod, "um.update_dead_npc_list", reinterpret_cast<void*>(&DeadNpcListDetour),
                        &g_deadListResume) ||
