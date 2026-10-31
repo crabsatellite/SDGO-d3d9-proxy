@@ -1,5 +1,7 @@
 # Battle rank regression repair
 
+[简体中文](rank-progression-fix.zh-CN.md)
+
 The native `sp_SetBattleExp_V4` and `sp_SetGridBattleExp_V2` procedures can replace
 a pilot's stored rank with a lower major rank when the EXP-derived rank has a
 higher sublevel. This is especially visible on servers that grant a higher
