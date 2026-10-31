@@ -484,20 +484,27 @@ namespace
 
     // Adds up to `wanted` AI pilots of `team` in the free slots of that team's half
     // (team 1: slots 0-5, team 2: slots 6-11, as the AI battle modes place theirs).
-    // ---- mode 7: a deck of units per AI pilot ------------------------------------------
+    // ---- modes 6 and 7: a deck of units per AI pilot ------------------------------------
     //
-    // In mode 7 a pilot plays a deck of up to 4 units, each one life: the player setup
-    // (0x004D6F40) builds a unit record per deck unit and adds up their points (unit data
-    // +0xB, the DB's Star: C 2, B 3, A 4, S 5; a deck holds up to 10) in pilot +0x1CA0 and their
-    // number in +0x1CA1. A kill takes the dead unit's points off its team's gauge and one unit
-    // off the pilot (0x0047C240); the respawn (0x00487030, case 7) takes the next unit still
-    // alive. The battle start (0x004B61E0) sends every slot's 4 unit records (first 0x32
+    // In grid match (6) and tag match (7) a pilot plays a deck of up to 4 units: the player
+    // setup (0x004D6F40) builds a unit record per deck unit and adds up their points (unit
+    // data +0xB, the DB's Star: C 2, B 3, A 4, S 5; a deck holds up to 10) in pilot +0x1CA0 and
+    // their number in +0x1CA1. RespawnPilot (0x00487030) refuses a pilot of either mode without
+    // units. In tag match each unit is one life: a kill takes the dead unit's points off its
+    // team's gauge and one unit off the pilot (0x0047C240) and the respawn (case 7) takes the
+    // next unit still alive. In grid match a kill takes none and the respawn (case 6) moves to
+    // the next unit of the deck, round and round (+0x33C). The battle start (0x004B61E0) sends every slot's 4 unit records (first 0x32
     // bytes: NPC data id, HP, cost, points, grade for an AI unit) and the deck totals.
     // An AI pilot gets more units of its level pool (all different) the way its first one was
     // built (AI pilot build 0x00485720, then the AI pilot setup 0x004D7A10 on that unit), as
     // many as fit in 10 points, the closest to 10 first.
     constexpr size_t kUnitPoints = 0x0A;       // u8, unit record: points (unit data +0xB)
     constexpr int kDeckPoints = 10;
+
+    bool PlaysDeck(uint8_t mode)
+    {
+        return mode == 6 || mode == 7;
+    }
     constexpr int kDeckUnits = 4;
 
     // Builds the unit of AI NPC `npc` in a scratch pilot and copies it to `unitOut` (when set);
@@ -600,7 +607,7 @@ namespace
                 pick = pool[NextRandom() % pool.size()];
             }
             if (AddAiPilot(room, slot, pick, team, colour)) {
-                if (room[kRoomMode] == 7)
+                if (PlaysDeck(room[kRoomMode]))
                     BuildDeck(room, slot, pick, pool, poolPoints);
                 ++added;
             }
@@ -723,7 +730,7 @@ namespace
         }
 
         std::vector<uint8_t> poolPoints;
-        if (room[kRoomMode] == 7)
+        if (PlaysDeck(room[kRoomMode]))
             poolPoints = PoolPoints(room, pool);
         int addedAllies = allies > 0 ? AddTeam(room, allyTeam, allies, pool, poolPoints) : 0;
         int addedEnemies = enemies > 0 ? AddTeam(room, enemyTeam, enemies, pool, poolPoints) : 0;

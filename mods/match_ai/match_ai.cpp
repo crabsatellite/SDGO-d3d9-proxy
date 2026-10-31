@@ -114,7 +114,7 @@ namespace
     using SetSlotColourFn = void(__thiscall*)(void* um, int index, int colour);
     using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
     using GameNewFn = void*(__cdecl*)(size_t size);
-    using CameraOffsetsFn = void(__thiscall*)(uint8_t* camera);
+    using CameraUpdateFn = void(__thiscall*)(uint8_t* camera);
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
     using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
@@ -178,8 +178,7 @@ namespace
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
     GameNewFn g_gameNew = nullptr;
-    CameraOffsetsFn g_originalCameraOffsets = nullptr;
-    CameraOffsetsFn g_originalTrackingUpdate = nullptr; // same shape: thiscall, no arguments
+    CameraUpdateFn g_originalTrackingUpdate = nullptr;
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
@@ -204,7 +203,7 @@ namespace
         uint32_t objectId;
         int slot;
         uint8_t* unit;
-        // mode 7 deck: NPC data (id and data*) per deck entry, the entry in play, a pending switch
+        // deck (modes 6, 7): NPC data (id and data*) per deck entry, the entry in play, a pending switch
         int units = 1;
         uint32_t deckNpc[4] = {};
         const uint8_t* deckNpcData[4] = {};
@@ -214,7 +213,6 @@ namespace
     std::vector<Bot> g_botTable;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
-    int g_cameraLogs = 0;      // camera offset lines logged this game
     bool g_logDiagnostics = false;
 
     struct ModeClass
@@ -279,9 +277,10 @@ namespace
         }
     }
 
-    // ---- mode 7: the AI player's deck ---------------------------------------------------
+    // ---- modes 6 and 7: the AI player's deck ---------------------------------------------
     //
-    // The battle server gives an AI pilot of mode 7 a deck of NPC units (one life each). Its
+    // The battle server gives an AI pilot of grid match (6) and tag match (7) a deck of NPC
+    // units (tag match: one life each; grid match: the next one on each respawn). Its
     // battle start packet (PT_NTF_BATTLE_START 0x6C3, built by 0x004B61E0) has a 0x10F-byte
     // entry per slot from +0x20: pilot id (+0), deck points (+0xB, pilot +0x1CA0) and units
     // (+0xC), and the first 0x32 bytes of the 4 unit records (+0xE + i * 0x32), whose first
@@ -398,7 +397,7 @@ namespace
         return deck ? deck->points : 0;
     }
 
-    // Adds the other units of the AI player's deck (battle start packet) to its unit (mode 7).
+    // Adds the other units of the AI player's deck (battle start packet) to its unit (modes 6, 7).
     void BuildAiDeck(Bot& bot, uint32_t firstNpc)
     {
         bot.deckNpc[0] = firstNpc;
@@ -517,7 +516,8 @@ namespace
         *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
         Bot bot{serverId, objectId, slot, unit};
         uint8_t* room = *reinterpret_cast<uint8_t**>(c.mode + kModeRoom);
-        if (*reinterpret_cast<uint16_t*>(room + kModeRoomMode) == 7) {
+        uint16_t roomMode = *reinterpret_cast<uint16_t*>(room + kModeRoomMode);
+        if (roomMode == 6 || roomMode == 7) {
             g_creatingAiUnit = true;
             BuildAiDeck(bot, npcData);
             g_creatingAiUnit = false;
@@ -551,7 +551,6 @@ namespace
         g_aiEnabled = false;
         g_logPackets = false;
         g_viewStateLogs = 0;
-        g_cameraLogs = 0;
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
@@ -1099,67 +1098,6 @@ namespace
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX adding the AI players to the dead view",
                            GetExceptionCode());
             }
-        }
-    }
-
-    // ---- the camera keeps a player's distance from an AI unit ----------------------------
-    //
-    // When the camera gets a target (0x00495490, from SetTarget 0x00497620 and the camera
-    // resets), it takes its distance and height from the target's unit data (unit +0x9C4,
-    // floats +0xFB5, +0xFB9, +0xFBD; player units 260, -260, 135). An AI player's unit has the
-    // AI battle NPC's unit data, whose offsets are 100, -100, 100: the dead view glided up close
-    // to it. For an AI player's unit the camera reads the player unit data of the same unit
-    // (NPC data +0x69, grid data type 2, as CUnit::InitUnitData 0x0067F376 finds it) instead.
-    constexpr uint32_t kGridUnitData = 2;
-
-    const uint8_t* AiPlayerUnitData(uint8_t* unit)
-    {
-        if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
-            return nullptr;
-        for (const Bot& bot : g_botTable) {
-            if (bot.unit != unit)
-                continue;
-            const uint8_t* npc = *reinterpret_cast<uint8_t* const*>(unit + kUnitNpcData);
-            if (!npc)
-                return nullptr;
-            const uint8_t* data = nullptr;
-            if (!g_gridFind(g_gridData(), &data, *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId), kGridUnitData, 0))
-                return nullptr;
-            return data;
-        }
-        return nullptr;
-    }
-
-    const uint8_t* GuardedAiPlayerUnitData(uint8_t* unit)
-    {
-        __try {
-            return AiPlayerUnitData(unit);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return nullptr;
-        }
-    }
-
-    void __fastcall CameraOffsets(uint8_t* camera, void* /*edx*/)
-    {
-        uint8_t* target = camera ? *reinterpret_cast<uint8_t**>(camera + kCameraTarget) : nullptr;
-        const uint8_t* playerData = GuardedAiPlayerUnitData(target);
-        if (!playerData) {
-            g_originalCameraOffsets(camera);
-            return;
-        }
-        auto dataSlot = reinterpret_cast<const uint8_t**>(target + kUnitData);
-        const uint8_t* own = *dataSlot;
-        *dataSlot = playerData;
-        __try {
-            g_originalCameraOffsets(camera);
-        } __finally {
-            *dataSlot = own;
-        }
-        if (g_cameraLogs < 3) {
-            ++g_cameraLogs;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "camera on AI object %lu: player unit offsets (%.1f, %.1f, %.1f)",
-                       static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(target + kUnitObjectId)),
-                       FloatAt(playerData, 0xFB5), FloatAt(playerData, 0xFB9), FloatAt(playerData, 0xFBD));
         }
     }
 
@@ -1721,7 +1659,7 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
                        reinterpret_cast<void**>(&g_originalFindPlayer)))
         return 0;
-    // Without this an AI player keeps its first unit for every life in mode 7.
+    // Without this an AI player keeps its first unit for every life in modes 6 and 7.
     if (!api->HookCode(mod, "game.playback_unit", reinterpret_cast<void*>(&PlaybackUnit),
                        reinterpret_cast<void**>(&g_originalPlaybackUnit)))
         return 0;
@@ -1730,7 +1668,7 @@ SDGO_MOD_ENTRY
     if (!g_deckSkip ||
         !api->HookCode(mod, "unit.init_deck_check", reinterpret_cast<void*>(&DeckCheckDetour), &g_deckCheckResume))
         return 0;
-    // Without this the first deck switch of an AI player (mode 7) crashes the game.
+    // Without this the first deck switch of an AI player (modes 6, 7) crashes the game.
     g_switchSkillSkip = api->Symbol(mod, "unit.switch_deck_skill_skip");
     if (!g_switchSkillSkip ||
         !api->HookCode(mod, "unit.switch_deck_skill_check", reinterpret_cast<void*>(&SwitchSkillDetour),
@@ -1738,9 +1676,6 @@ SDGO_MOD_ENTRY
         return 0;
     if (!api->HookCode(mod, "game.dead_unit_life_cost", reinterpret_cast<void*>(&DeathCostDetour), &g_deathCostResume))
         api->Log(mod, SDGO_LOG_WARN, "death match life cost not hooked; the HUD bar counts an AI player's NPC cost");
-    if (!api->HookCode(mod, "camera.set_target_offsets", reinterpret_cast<void*>(&CameraOffsets),
-                       reinterpret_cast<void**>(&g_originalCameraOffsets)))
-        api->Log(mod, SDGO_LOG_WARN, "camera offsets not hooked; the dead view comes up close to an AI player");
     if (!api->HookCode(mod, "camera.tracking_update", reinterpret_cast<void*>(&TrackingUpdate),
                        reinterpret_cast<void**>(&g_originalTrackingUpdate)))
         api->Log(mod, SDGO_LOG_WARN, "tracking camera not hooked; the dead view takes an AI player's aim");
@@ -1775,7 +1710,8 @@ SDGO_MOD_ENTRY
                            reinterpret_cast<void**>(&g_originalPacketDispatch)))
             api->Log(mod, SDGO_LOG_WARN, "packet logging not available");
     }
-    // Without this an AI player of mode 7 has one unit and its team gauge counts only that.
+    // Without this an AI player of modes 6 and 7 has one unit, and in mode 7 its team gauge
+    // counts only that.
     if (!api->HookCode(mod, "service.dispatch_packet", reinterpret_cast<void*>(&ServicePacket),
                        reinterpret_cast<void**>(&g_originalServicePacket)))
         return 0;
