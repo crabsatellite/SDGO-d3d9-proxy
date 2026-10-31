@@ -21,6 +21,10 @@ Recommended defaults for startup, input method and compatibility problems.
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 <!-- /mod-category:fixes -->
 
+Server maintenance from a source checkout: the [battle rank regression repair](docs/rank-progression-fix.md)
+audits and repairs two native database procedures that can turn a stored 15-1 rank into 5-2.
+This server-side repair requires no client update.
+
 <details>
 <summary>Input method example</summary>
 

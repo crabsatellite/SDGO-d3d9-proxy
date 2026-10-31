@@ -1,0 +1,28 @@
+name: Rank progression repair
+
+on:
+  pull_request:
+    paths:
+      - 'tools/rank_progression_fix.py'
+      - 'tests/test_rank_progression_fix.py'
+      - 'tests/rank_progression_sql_test.py'
+      - '.github/workflows/rank-progression-tests.yml'
+  push:
+    paths:
+      - 'tools/rank_progression_fix.py'
+      - 'tests/test_rank_progression_fix.py'
+      - 'tests/rank_progression_sql_test.py'
+      - '.github/workflows/rank-progression-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -B -m unittest discover -s tests -p test_rank_progression_fix.py -v

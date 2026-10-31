@@ -20,6 +20,9 @@
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
+源码中的服务端维护工具：[军衔回退修复](docs/rank-progression-fix.zh-CN.md)。检查并修复两个原生数据库过程
+把已保存的 `15-1` 军衔误改成 `5-2` 的问题，无需更新玩家客户端。
+
 <details>
 <summary>查看输入法修复效果</summary>
 
