@@ -93,6 +93,8 @@ namespace
     using LuaOnErrorFn = int(__cdecl*)(lua_State* L);
     using LuaToStringFn = const char*(__cdecl*)(lua_State* L, int index);
     using PacketDispatchFn = int(__thiscall*)(void* self, int a, int b, int c, int opcode, void* packet);
+    using RegisterLuaBindingsFn = void(__cdecl*)();
+    using GameLogFn = void(__cdecl*)(void* logger, int level, const wchar_t* format, ...);
 
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
     constexpr size_t kWaitRoomSlots = 0xA00;    // CServiceWaitRoomMgr: pilot id per slot
@@ -125,6 +127,8 @@ namespace
     LuaOnErrorFn g_originalLuaOnError = nullptr;
     LuaToStringFn g_luaToString = nullptr;
     PacketDispatchFn g_originalPacketDispatch = nullptr;
+    RegisterLuaBindingsFn g_registerLuaBindings = nullptr;
+    GameLogFn g_originalGameLog = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -275,9 +279,31 @@ namespace
         }
     }
 
+    // The units' AI scripts call methods on their npc argument (CNPC); the game registers
+    // those Lua bindings at the start of every script mode's Init (0x0050FAB0), never in a
+    // PvP mode. A PvP battle with AI players does the same before its Init.
+    bool RoomHasAiPlayers(uint8_t* mode)
+    {
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        return room && RecordCount(room, kRoomAiBegin, kRoomAiEnd) > 0;
+    }
+
+    bool GuardedHasAi(uint8_t* mode)
+    {
+        __try {
+            return RoomHasAiPlayers(mode);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     template <int I>
     void __fastcall ModeInit(uint8_t* mode, void* /*edx*/)
     {
+        if (GuardedHasAi(mode)) {
+            g_registerLuaBindings();
+            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: Lua bindings registered for the AI players", g_classes[I].name);
+        }
         g_classes[I].original(mode);
         DWORD code = 0;
         if (!GuardedSpawn(mode, g_classes[I].name, &code))
@@ -399,6 +425,34 @@ namespace
     int g_opcodeRepeat = 0;
     int g_packetLines = 0;
 
+    // The game's own log (disabled in this client), copied into sdgo.log from the spawn of
+    // AI players on: network and battle state messages.
+    int g_gameLogLines = 0;
+
+    void __cdecl GameLog(void* logger, int level, const wchar_t* format, ...)
+    {
+        // the game's logger writes only while enabled (+4) and level <= its level (+8)
+        auto fields = reinterpret_cast<const int*>(logger);
+        bool enabled = fields && fields[1] != 0 && level <= fields[2];
+        bool copy = g_logPackets && g_gameLogLines < 6000;
+        if (!format || (!enabled && !copy))
+            return;
+        wchar_t text[1024];
+        va_list args;
+        va_start(args, format);
+        _vsnwprintf_s(text, _TRUNCATE, format, args);
+        va_end(args);
+        if (copy) {
+            char utf8[2048];
+            if (WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8, sizeof(utf8), nullptr, nullptr) > 0) {
+                ++g_gameLogLines;
+                g_api->Log(g_mod, SDGO_LOG_INFO, "game[%d]: %s", level, utf8);
+            }
+        }
+        if (enabled)
+            g_originalGameLog(logger, level, L"%s", text);
+    }
+
     int __fastcall PacketDispatch(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
         int op = opcode & 0xFFFF;
@@ -452,7 +506,8 @@ SDGO_MOD_ENTRY
                  Bind(g_game.baseCreateNpc, "mode.base_create_npc") && Bind(g_game.setPlayerInfo, "um.set_player_info") &&
                  Bind(g_game.playerSlot, "um.player_slot") && Bind(g_game.assign, "wstring.assign") &&
                  Bind(g_game.addAiUnit, "um.add_ai_unit") && Bind(g_game.addObject, "um.add_object") &&
-                 Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai");
+                 Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
+                 Bind(g_registerLuaBindings, "lua.register_bindings");
     if (!bound)
         return 0;
     if (!api->HookCode(mod, "game.service_game_ready", reinterpret_cast<void*>(&GameReady),
@@ -466,6 +521,8 @@ SDGO_MOD_ENTRY
         api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
     if (api->SettingInt(mod, "LogDiagnostics", 1) != 0) {
         Bind(g_luaToString, "lua.tostring");
+        if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
+            api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
         if (!api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
                            reinterpret_cast<void**>(&g_originalLuaOnError)))
             api->Log(mod, SDGO_LOG_WARN, "Lua error logging not available");

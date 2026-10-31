@@ -50,7 +50,7 @@ namespace
     constexpr size_t kSlotInfoPilotId = 0x429;  // = room + 0x95C + slot * 0x48E
     constexpr size_t kSlotInfoState = 0x48;     // room + 0x57B + slot * 0x48E (set to 0x1E)
     constexpr size_t kSlotInfoTeamA = 0x42D;    // the team the team checks count (1 or 2)
-    constexpr size_t kSlotInfoTeamB = 0x434;
+    constexpr size_t kSlotInfoColour = 0x434;   // respawn colour (1, 2); start points go by it
     constexpr size_t kPilots = 0x3CE4;          // BattlePilot records, stride 0x1F54
     constexpr size_t kPilotStride = 0x1F54;
     constexpr size_t kPilotForm = 0x33C;        // u8, selects the unit record
@@ -338,7 +338,7 @@ namespace
     // ---- 2. AI pilots after the human setup -------------------------------------------
 
     // Same steps as the AI battle mode (0x004B79D0) for an AI slot, with the given team.
-    bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team)
+    bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team, uint8_t colour)
     {
         uint8_t* pilot = room + kPilots + slot * kPilotStride;
         uint8_t* info = room + kSlotInfo + slot * kSlotInfoStride;
@@ -357,10 +357,10 @@ namespace
         *reinterpret_cast<uint32_t*>(pilot + 0x09) = 1;
         pilot[0x0D] = 0;
         pilot[0x04] = team;
-        pilot[0x39] = team;
+        pilot[0x39] = colour;
         *reinterpret_cast<uint32_t*>(pilot + 0x05) = 30000;
         info[kSlotInfoTeamA] = team;
-        info[kSlotInfoTeamB] = team;
+        info[kSlotInfoColour] = colour;
         *reinterpret_cast<uint16_t*>(pilot + 0x1E) = 1000;
         pilot[0x1CA0] = 0;
         pilot[0x1CA1] = 0;
@@ -384,8 +384,8 @@ namespace
             memset(pilot, 0, kPilotStride);
             return false;
         }
-        g_api->Log(g_mod, SDGO_LOG_INFO, "slot %d: AI pilot %08lX (NPC %lu) joined on team %u", slot,
-                   static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u", slot,
+                   static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team, colour);
         return true;
     }
 
@@ -395,11 +395,32 @@ namespace
         return *reinterpret_cast<uint32_t*>(pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride);
     }
 
+    // The respawn colour of a team (slot info +0x434, copied to pilot +0x39 by the human setup):
+    // the colour of a human on that team, else the other colour than the humans of the other
+    // team. The clients pick start points by colour, not by team.
+    uint8_t TeamColour(uint8_t* room, uint8_t team)
+    {
+        uint8_t other = 0;
+        for (int slot = 0; slot < kSlots; ++slot) {
+            uint32_t id = SlotPilotId(room, slot);
+            if (id == 0 || (id & kAiPilotBit))
+                continue;
+            uint8_t colour = room[kSlotInfo + slot * kSlotInfoStride + kSlotInfoColour];
+            if (colour != 1 && colour != 2)
+                continue;
+            if ((SlotTeam(room, slot) == 1 ? 1 : 2) == team)
+                return colour;
+            other = colour;
+        }
+        return other ? static_cast<uint8_t>(3 - other) : team;
+    }
+
     // Adds up to `wanted` AI pilots of `team` in the free slots of that team's half
     // (team 1: slots 0-5, team 2: slots 6-11, as the AI battle modes place theirs).
     int AddTeam(uint8_t* room, uint8_t team, int wanted, const std::vector<uint32_t>& pool)
     {
         int added = 0;
+        uint8_t colour = TeamColour(room, team);
         int first = team == 1 ? 0 : kSlotsPerTeam;
         for (int slot = first; slot < first + kSlotsPerTeam && added < wanted; ++slot) {
             if (SlotPilotId(room, slot) != 0)
@@ -413,7 +434,7 @@ namespace
                     break;
                 pick = pool[NextRandom() % pool.size()];
             }
-            if (AddAiPilot(room, slot, pick, team))
+            if (AddAiPilot(room, slot, pick, team, colour))
                 ++added;
         }
         return added;
