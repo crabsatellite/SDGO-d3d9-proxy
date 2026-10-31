@@ -40,6 +40,10 @@ A feature that lists the battle server works only when the battle servers have t
 part and the players have matching client parts. Every participant in a PvP AI room
 should use a matching build.
 
+Server maintenance from a source checkout: the [battle rank regression repair](docs/rank-progression-fix.md)
+audits and repairs two native database procedures that can turn a stored 15-1 rank into 5-2.
+This server-side repair requires no client update.
+
 ### In game
 
 Co-op mission wingmen: a mission room with `!ai` in its title. AI wingmen fly with the
