@@ -14,7 +14,10 @@
     unchanged (see README, "Other game builds").
   * An existing d3d9.dll that is not this framework's (a graphics wrapper, for example) is
     renamed to d3d9_chain.dll and chained in sdgo\sdgo.ini, so it keeps working.
-  * Existing sdgo\sdgo.ini and mod.ini files are kept unless -OverwriteConfig is given.
+  * An existing sdgo\sdgo.ini is kept. An existing mod.ini is replaced by the package's (its
+    [mod] section is the mod's manifest: version, requires, ...), and the player's own
+    [mod] enabled and [settings] values are written back into it. -OverwriteConfig installs
+    both as they are in the package.
   * -Uninstall removes d3d9.dll and sdgo\ (to the Recycle Bin) and puts a chained d3d9.dll back.
 
 .EXAMPLE
@@ -85,6 +88,46 @@ function Get-IniValue([string]$file, [string]$section, [string]$key) {
     $value.ToString()
 }
 
+# key -> value of one ini section, as Windows reads it: comment lines skipped, names
+# case-insensitive.
+function Get-IniSection([string]$file, [string]$section) {
+    $values = [ordered]@{}
+    $current = ""
+    foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $text = $line.Trim()
+        if ($text.StartsWith("[") -and $text.EndsWith("]")) {
+            $current = $text.Substring(1, $text.Length - 2).Trim()
+            continue
+        }
+        $at = $text.IndexOf("=")
+        if ($current -eq $section -and $at -gt 0 -and -not $text.StartsWith(";")) {
+            $values[$text.Substring(0, $at).Trim()] = $text.Substring($at + 1).Trim()
+        }
+    }
+    $values
+}
+
+# Installs the package's mod.ini over the player's and writes the player's [mod] enabled and
+# [settings] values back where they differ. Returns the values written back.
+function Update-ModIni([string]$source, [string]$destination) {
+    $player = @{ mod = Get-IniSection $destination "mod"; settings = Get-IniSection $destination "settings" }
+    $package = @{ mod = Get-IniSection $source "mod"; settings = Get-IniSection $source "settings" }
+    $keys = @()
+    if ($player.mod.Contains("enabled")) { $keys += , @("mod", "enabled") }
+    foreach ($key in $player.settings.Keys) { $keys += , @("settings", $key) }
+    Copy-Item -LiteralPath $source -Destination $destination -Force
+    $kept = @()
+    foreach ($entry in $keys) {
+        $section, $key = $entry
+        $value = $player[$section][$key]
+        if ($package[$section][$key] -cne $value) {
+            [void][SdgoInstall.Ini]::WritePrivateProfileString($section, $key, $value, $destination)
+            $kept += "$key=$value"
+        }
+    }
+    $kept
+}
+
 $game = (Resolve-Path -LiteralPath $GameDir).Path
 $exe = Join-Path $game "GOnline.exe"
 if (-not (Test-Path -LiteralPath $exe)) { throw "$game does not contain GOnline.exe" }
@@ -144,14 +187,21 @@ if (Test-Path -LiteralPath $loaderPath) {
     }
 }
 
-$userEditable = @("sdgo\sdgo.ini")
-Get-ChildItem -LiteralPath (Join-Path $Source "sdgo\mods") -Directory | ForEach-Object { $userEditable += "sdgo\mods\$($_.Name)\mod.ini" }
+$modInis = @()
+Get-ChildItem -LiteralPath (Join-Path $Source "sdgo\mods") -Directory | ForEach-Object { $modInis += "sdgo\mods\$($_.Name)\mod.ini" }
 Get-ChildItem -LiteralPath $Source -Recurse -File | ForEach-Object {
     $relative = $_.FullName.Substring($Source.Length).TrimStart('\')
     $destination = Join-Path $game $relative
-    if (($userEditable -contains $relative) -and (Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
-        Write-Host "kept     $relative"
-        return
+    if ((Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
+        if ($relative -eq "sdgo\sdgo.ini") {
+            Write-Host "kept     $relative"
+            return
+        }
+        if ($modInis -contains $relative) {
+            $kept = @(Update-ModIni $_.FullName $destination)
+            if ($kept.Count) { Write-Host "updated  $relative, kept your $($kept -join ', ')" } else { Write-Host "updated  $relative" }
+            return
+        }
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath $_.FullName -Destination $destination -Force

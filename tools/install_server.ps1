@@ -16,7 +16,10 @@
     Start them again afterwards.
   * An existing winmm.dll that is not this framework's is renamed to winmm_chain.dll and
     chained in sdgo\sdgo.ini.
-  * Existing sdgo\sdgo.ini and mod.ini files are kept unless -OverwriteConfig is given.
+  * An existing sdgo\sdgo.ini is kept. An existing mod.ini is replaced by the package's (its
+    [mod] section is the mod's manifest: version, requires, ...), and the server's own
+    [mod] enabled and [settings] values are written back into it. -OverwriteConfig installs
+    both as they are in the package.
   * -Only limits the install to the named subfolders; -Uninstall removes the framework.
 
 .EXAMPLE
@@ -85,6 +88,46 @@ function Get-IniValue([string]$file, [string]$section, [string]$key) {
     $value.ToString()
 }
 
+# key -> value of one ini section, as Windows reads it: comment lines skipped, names
+# case-insensitive.
+function Get-IniSection([string]$file, [string]$section) {
+    $values = [ordered]@{}
+    $current = ""
+    foreach ($line in [IO.File]::ReadAllLines($file)) {
+        $text = $line.Trim()
+        if ($text.StartsWith("[") -and $text.EndsWith("]")) {
+            $current = $text.Substring(1, $text.Length - 2).Trim()
+            continue
+        }
+        $at = $text.IndexOf("=")
+        if ($current -eq $section -and $at -gt 0 -and -not $text.StartsWith(";")) {
+            $values[$text.Substring(0, $at).Trim()] = $text.Substring($at + 1).Trim()
+        }
+    }
+    $values
+}
+
+# Installs the package's mod.ini over the server's and writes the server's [mod] enabled and
+# [settings] values back where they differ. Returns the values written back.
+function Update-ModIni([string]$source, [string]$destination) {
+    $server = @{ mod = Get-IniSection $destination "mod"; settings = Get-IniSection $destination "settings" }
+    $package = @{ mod = Get-IniSection $source "mod"; settings = Get-IniSection $source "settings" }
+    $keys = @()
+    if ($server.mod.Contains("enabled")) { $keys += , @("mod", "enabled") }
+    foreach ($key in $server.settings.Keys) { $keys += , @("settings", $key) }
+    Copy-Item -LiteralPath $source -Destination $destination -Force
+    $kept = @()
+    foreach ($entry in $keys) {
+        $section, $key = $entry
+        $value = $server[$section][$key]
+        if ($package[$section][$key] -cne $value) {
+            [void][SdgoInstall.Ini]::WritePrivateProfileString($section, $key, $value, $destination)
+            $kept += "$key=$value"
+        }
+    }
+    $kept
+}
+
 $root = (Resolve-Path -LiteralPath $ServerRoot).Path
 if (Test-Path -LiteralPath (Join-Path $root "BattleServer.exe")) {
     $targets = @(Get-Item -LiteralPath $root)
@@ -106,8 +149,8 @@ if (-not $Uninstall) {
     }
     $Source = (Resolve-Path -LiteralPath $Source).Path
     if (-not (Test-Path -LiteralPath (Join-Path $Source $Loader))) { throw "$Source has no $Loader; pass -Source <package>\server" }
-    $userEditable = @("sdgo\sdgo.ini")
-    Get-ChildItem -LiteralPath (Join-Path $Source "sdgo\mods") -Directory | ForEach-Object { $userEditable += "sdgo\mods\$($_.Name)\mod.ini" }
+    $modInis = @()
+    Get-ChildItem -LiteralPath (Join-Path $Source "sdgo\mods") -Directory | ForEach-Object { $modInis += "sdgo\mods\$($_.Name)\mod.ini" }
 }
 
 foreach ($target in $targets) {
@@ -143,20 +186,32 @@ foreach ($target in $targets) {
         Write-Host "$name : kept the existing $Loader as $Chain (chained)"
     }
     $copied = 0
-    $kept = 0
+    $updated = 0
+    $iniKept = $false
     Get-ChildItem -LiteralPath $Source -Recurse -File | ForEach-Object {
         $relative = $_.FullName.Substring($Source.Length).TrimStart('\')
         $destination = Join-Path $dir $relative
-        if (($userEditable -contains $relative) -and (Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
-            $kept++
-            return
+        if ((Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
+            if ($relative -eq "sdgo\sdgo.ini") {
+                $iniKept = $true
+                return
+            }
+            if ($modInis -contains $relative) {
+                $kept = @(Update-ModIni $_.FullName $destination)
+                if ($kept.Count) { Write-Host "$name : updated $relative, kept its $($kept -join ', ')" }
+                $updated++
+                return
+            }
         }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
         Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
         $copied++
     }
     if ($chainName) { [void][SdgoInstall.Ini]::WritePrivateProfileString("loader", $ChainKey, $chainName, $iniPath) }
-    Write-Host "$name : installed ($copied files copied, $kept settings files kept)"
+    $summary = @("$copied files copied")
+    if ($updated) { $summary += "$updated mod.ini updated with their settings kept" }
+    if ($iniKept) { $summary += "sdgo.ini kept" }
+    Write-Host "$name : installed ($($summary -join ', '))"
 }
 if (-not $Uninstall) {
     Write-Host "Start the battle servers again. Features with a server part also need the client install (install_client.ps1) on the players' machines."

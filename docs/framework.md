@@ -248,9 +248,13 @@ only its own files plus the two READMEs.
    (client) and `coop_ai` (server).
    * `mod.ini`: a header comment saying what the mod does and which feature it belongs to,
      `hosts`, `requires`, and every setting with a comment above it.
-   * An update keeps the player's existing `mod.ini` (only `-OverwriteConfig` replaces it).
-     Give every setting the same default in code (`SettingInt(mod, key, default)`) as in
-     `mod.ini`, so a key added later works with an old file.
+   * An update installs the new `mod.ini` and writes back the player's `[mod] enabled` and
+     every `[settings]` value that differs from it (`-OverwriteConfig` installs it as it is).
+     The manifest, the comments and new keys reach every install; a value in the player's
+     file stays, even an untouched old default, so a changed default reaches only new
+     installs. Use a new key when existing installs must get the new value.
+   * Give every setting the same default in code (`SettingInt(mod, key, default)`) as in
+     `mod.ini`, so a missing key behaves the same.
    * A feature not meant for everyone starts with `enabled=0`.
 3. **Build.** Register each mod in `CMakeLists.txt` with `sdgo_add_mod` (`SERVER` for the
    battle server, `FILES` for files the mod reads). It is staged into
@@ -262,7 +266,8 @@ only its own files plus the two READMEs.
    when the feature is meant for players.
 6. **Catalog.** Add a row to the Features table in `README.md` and `README.zh-CN.md`: name,
    what it does and how to trigger it in one or two sentences, mods, where to install
-   (`clients`, or `battle server + clients`), guide link.
+   (`clients`, or `battle server + clients`), guide link. Add its mods to the package listing
+   ("What is in the package") of both READMEs.
 7. **Version.** Bump `VERSION` and each changed mod's `version=` before packaging.
 
 Guide outline (the existing guides follow it; [coop-wingmen.md](coop-wingmen.md) is the
@@ -305,6 +310,10 @@ cmake --build build --config Release
 * `build/stage/Release/client/` and `.../server/` mirror the install targets.
 * `tests/loader_test.ps1`: runs the client loader in a test exe and checks forwarding
   (plain, chained, self-chain refused) and that it starts the core.
+* `tests/findwindow_fix_test.ps1`: runs the real core and `findwindow_fix` against a simulated
+  SDPlus hook, and checks `HookSystemExport` and its rollback.
+* `tests/install_test.ps1`: updates a throw-away install with both installers and checks that
+  the new `mod.ini` arrives with the player's settings written back (no build needed).
 * `mods/mission_ai/test/sim_mission.lua`: drives `mission_ai.lua` against a mock of the game's
   script API under real Lua 5.0 (`tools/lua50_host.c`, built against Lua 5.0.3 sources).
 * `tools/verify_symbols.py <exe>`: offline check of a symbol file.
