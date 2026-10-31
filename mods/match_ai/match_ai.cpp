@@ -194,8 +194,8 @@ namespace
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
-    std::vector<uint8_t*> g_bots;
     uint8_t* g_botMode = nullptr;
+    bool g_aiEnabled = false; // the AI players' AI was switched on at game ready
     // The game mode of a battle with AI players whose only human is this client.
     uint8_t* g_soloAiMode = nullptr;
 
@@ -452,10 +452,102 @@ namespace
         return false;
     }
 
+    constexpr int kPlayerSlots = 12; // UM player slots (UM +0x94, 0x70 each)
+
+    struct SpawnContext
+    {
+        uint8_t* mode;
+        const char* className;
+        void* um;
+        bool master;
+        int humans = 0;
+        int nextIndex[3] = {}; // next start point per colour (1, 2), after the humans'
+        int spawned = 0;
+    };
+
+    void SpawnAiPlayer(SpawnContext& c, uint8_t* record, int k)
+    {
+        uint32_t serverId = *reinterpret_cast<uint32_t*>(record + kRecordServerId);
+        int team = record[kRecordTeam];
+        int colour = record[kRecordColour];
+        uint32_t npcData = *reinterpret_cast<uint32_t*>(record + kRecordNpcData);
+        int index = (colour == 1 || colour == 2) ? c.nextIndex[colour]++ : k;
+        uint8_t* start = g_game.findStartPoint(c.um, colour, index);
+        if (!start)
+            start = g_game.findStartPoint(c.um, colour, 0);
+        if (!start) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: the map has no colour %d start point",
+                       static_cast<unsigned long>(serverId), colour);
+            return;
+        }
+        auto pos = reinterpret_cast<float*>(start + kStartPointPos);
+        g_creatingAiUnit = true;
+        uint8_t* unit = g_game.baseCreateNpc(c.mode, npcData, pos[0], pos[1], pos[2], team, 0.0f, 0.0f, 1.0f);
+        g_creatingAiUnit = false;
+        if (!unit) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: creating NPC %lu failed",
+                       static_cast<unsigned long>(serverId), static_cast<unsigned long>(npcData));
+            return;
+        }
+        // what CScriptControlMode::CreateNpc and the mission NPC registration (0x00ACED20)
+        // add for a network game: the room master runs the AI, the other clients get a
+        // remote copy
+        *reinterpret_cast<uint32_t*>(unit + kUnitNpcDataId) = npcData;
+        g_game.addObject(c.um, unit, 0, 0);
+        unit[kUnitNpcFlag] = 0;
+        if (c.master) {
+            unit[kUnitLocalControl] = 1;
+            unit[kUnitMasterNpc] = 1;
+            unit[kUnitRemote] = 0;
+        } else {
+            unit[kUnitRemote] = 1;
+        }
+        *reinterpret_cast<uint32_t*>(unit + kUnitNpcState) = 2;
+        int slot = c.humans + c.spawned;
+        uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
+        g_game.setPlayerInfo(c.um, slot, 0, objectId, *reinterpret_cast<uint32_t*>(record + kRecordConnection), record);
+        const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
+        if (npc) {
+            auto name = reinterpret_cast<const wchar_t*>(npc + 5);
+            g_game.assign(g_game.playerSlot(c.um, slot) + kSlotName, name, wcslen(name));
+        }
+        InitAiSlot(ModeClassIndex(c.mode), g_game.playerSlot(c.um, slot), unit);
+        g_game.addAiUnit(c.um, unit);
+        *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
+        Bot bot{serverId, objectId, slot, unit};
+        uint8_t* room = *reinterpret_cast<uint8_t**>(c.mode + kModeRoom);
+        if (*reinterpret_cast<uint16_t*>(room + kModeRoomMode) == 7) {
+            g_creatingAiUnit = true;
+            BuildAiDeck(bot, npcData);
+            g_creatingAiUnit = false;
+        }
+        g_botTable.push_back(bot);
+        g_logPackets = true;
+        ++c.spawned;
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, colour %d, start point %d, slot %d, %s)",
+                   c.className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
+                   static_cast<unsigned long>(npcData), team, colour, index, slot,
+                   c.master ? "AI runs here" : "copy of the room master's");
+    }
+
+    // One guard per AI player: a fault leaves the others and the player count right.
+    bool GuardedSpawnAiPlayer(SpawnContext& c, uint8_t* record, int k, DWORD* code)
+    {
+        __try {
+            SpawnAiPlayer(c, record, k);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_creatingAiUnit = false;
+            *code = GetExceptionCode();
+            return false;
+        }
+    }
+
     void SpawnAiPlayers(uint8_t* mode, const char* className)
     {
-        g_bots.clear();
         g_botTable.clear();
+        g_aiEnabled = false;
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
@@ -481,94 +573,31 @@ namespace
             return;
         }
 
-        int humans = RecordCount(room, kRoomHumansBegin, kRoomHumansEnd);
+        SpawnContext c{mode, className, um, master};
+        c.humans = RecordCount(room, kRoomHumansBegin, kRoomHumansEnd);
         uint8_t* humanRecords = *reinterpret_cast<uint8_t**>(room + kRoomHumansBegin);
-        int nextIndex[3] = {};
-        for (int k = 0; k < humans; ++k) {
-            uint8_t* human = humanRecords + k * kRecordSize;
-            int colour = human[kRecordColour];
-            uint8_t* start = g_game.findStartPoint(um, colour, nextIndex[colour == 1 || colour == 2 ? colour : 0]);
-            auto hp = start ? reinterpret_cast<float*>(start + kStartPointPos) : nullptr;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "human %08lX: team +0x19 %u, colour +0x1A %u, start point (%.0f, %.0f, %.0f)",
-                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(human)), human[0x19], human[0x1A],
-                       hp ? hp[0] : 0.0f, hp ? hp[1] : 0.0f, hp ? hp[2] : 0.0f);
+        for (int k = 0; k < c.humans; ++k) {
+            int colour = humanRecords[k * kRecordSize + kRecordColour];
             if (colour == 1 || colour == 2)
-                ++nextIndex[colour];
+                ++c.nextIndex[colour];
         }
 
         uint8_t* records = *reinterpret_cast<uint8_t**>(room + kRoomAiBegin);
-        int spawned = 0;
         for (int k = 0; k < count; ++k) {
-            uint8_t* record = records + k * kRecordSize;
-            uint32_t serverId = *reinterpret_cast<uint32_t*>(record + kRecordServerId);
-            int team = record[kRecordTeam];
-            int colour = record[kRecordColour];
-            uint32_t npcData = *reinterpret_cast<uint32_t*>(record + kRecordNpcData);
-            int index = (colour == 1 || colour == 2) ? nextIndex[colour]++ : k;
-            uint8_t* start = g_game.findStartPoint(um, colour, index);
-            if (!start)
-                start = g_game.findStartPoint(um, colour, 0);
-            if (!start) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: the map has no colour %d start point",
-                           static_cast<unsigned long>(serverId), colour);
-                continue;
+            if (c.humans + c.spawned >= kPlayerSlots) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "%d AI player(s) left out: the unit manager has %d player slots",
+                           count - k, kPlayerSlots);
+                break;
             }
-            auto pos = reinterpret_cast<float*>(start + kStartPointPos);
-            g_api->Log(g_mod, SDGO_LOG_INFO, "AI %08lX: team +0x19 %u, colour +0x1A %u, start point %d (%.0f, %.0f, %.0f)",
-                       static_cast<unsigned long>(serverId), record[0x19], record[0x1A], index, pos[0], pos[1], pos[2]);
-            g_creatingAiUnit = true;
-            uint8_t* unit = g_game.baseCreateNpc(mode, npcData, pos[0], pos[1], pos[2], team, 0.0f, 0.0f, 1.0f);
-            g_creatingAiUnit = false;
-            if (!unit) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: creating NPC %lu failed",
-                           static_cast<unsigned long>(serverId), static_cast<unsigned long>(npcData));
-                continue;
-            }
-            // what CScriptControlMode::CreateNpc and the mission NPC registration (0x00ACED20)
-            // add for a network game: the room master runs the AI, the other clients get a
-            // remote copy
-            *reinterpret_cast<uint32_t*>(unit + kUnitNpcDataId) = npcData;
-            g_game.addObject(um, unit, 0, 0);
-            unit[kUnitNpcFlag] = 0;
-            if (master) {
-                unit[kUnitLocalControl] = 1;
-                unit[kUnitMasterNpc] = 1;
-                unit[kUnitRemote] = 0;
-            } else {
-                unit[kUnitRemote] = 1;
-            }
-            *reinterpret_cast<uint32_t*>(unit + kUnitNpcState) = 2;
-            int slot = humans + spawned;
-            uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
-            g_game.setPlayerInfo(um, slot, 0, objectId, *reinterpret_cast<uint32_t*>(record + kRecordConnection), record);
-            const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
-            if (npc) {
-                auto name = reinterpret_cast<const wchar_t*>(npc + 5);
-                g_game.assign(g_game.playerSlot(um, slot) + kSlotName, name, wcslen(name));
-            }
-            InitAiSlot(ModeClassIndex(mode), g_game.playerSlot(um, slot), unit);
-            g_game.addAiUnit(um, unit);
-            *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
-            g_bots.push_back(unit);
-            Bot bot{serverId, objectId, slot, unit};
-            if (*reinterpret_cast<uint16_t*>(room + kModeRoomMode) == 7) {
-                g_creatingAiUnit = true;
-                BuildAiDeck(bot, npcData);
-                g_creatingAiUnit = false;
-            }
-            g_botTable.push_back(bot);
-            g_logPackets = true;
-            ++spawned;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, colour %d, slot %d, %s)",
-                       className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
-                       static_cast<unsigned long>(npcData), team, colour, slot,
-                       master ? "AI runs here" : "copy of the room master's");
+            DWORD code = 0;
+            if (!GuardedSpawnAiPlayer(c, records + k * kRecordSize, k, &code))
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while spawning AI player %d", code, k);
         }
-        if (spawned > 0) {
+        if (c.spawned > 0) {
             // the AI battle mode's player count: humans and AI players (0x0040417C)
-            g_setPlayerCount(um, humans + spawned);
-            g_api->Log(g_mod, SDGO_LOG_INFO, "player count %d (%d humans, %d AI players)", humans + spawned, humans,
-                       spawned);
+            g_setPlayerCount(um, c.humans + c.spawned);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "player count %d (%d humans, %d AI players)", c.humans + c.spawned, c.humans,
+                       c.spawned);
         }
         g_game.calculateTeam(um);
     }
@@ -628,13 +657,13 @@ namespace
     void EnableBots(uint8_t* service)
     {
         uint8_t* mode = *reinterpret_cast<uint8_t**>(service + kServiceMode);
-        if (!mode || mode != g_botMode || g_bots.empty())
+        if (!mode || mode != g_botMode || g_aiEnabled || g_botTable.empty())
             return;
-        for (uint8_t* unit : g_bots)
-            g_game.enableAi(unit);
+        for (const Bot& bot : g_botTable)
+            g_game.enableAi(bot.unit);
+        g_aiEnabled = true;
         g_api->Log(g_mod, SDGO_LOG_INFO, "game ready: AI switched on for %u AI player(s)",
-                   static_cast<unsigned>(g_bots.size()));
-        g_bots.clear();
+                   static_cast<unsigned>(g_botTable.size()));
     }
 
     bool GuardedEnable(uint8_t* service)
@@ -723,23 +752,27 @@ namespace
 
     bool IsPvpMode(uint8_t* mode)
     {
-        if (!mode)
-            return false;
-        void** vtable = *reinterpret_cast<void***>(mode);
-        for (void** known : g_vtables)
-            if (known && vtable == known)
-                return true;
-        return false;
+        return mode && ModeClassIndex(mode) >= 0;
     }
 
-    // The current game mode when it is one of the PvP modes, else NULL (the way the Lua
-    // functions find it: GameApp +0x4A4 -> service +0x0C).
-    uint8_t* CurrentPvpMode()
+    // The current game mode of any class, or NULL (the way the Lua functions find it:
+    // GameApp +0x4A4 -> service +0x0C).
+    uint8_t* CurrentMode()
     {
         __try {
             uint8_t* app = g_gameApp();
             uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
-            uint8_t* mode = service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
+            return service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
+    }
+
+    // The current game mode when it is one of the PvP modes, else NULL.
+    uint8_t* CurrentPvpMode()
+    {
+        uint8_t* mode = CurrentMode();
+        __try {
             return IsPvpMode(mode) ? mode : nullptr;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return nullptr;
@@ -871,18 +904,6 @@ namespace
             if (bot.objectId == objectId && SlotHolds(um, bot))
                 return &bot;
         return nullptr;
-    }
-
-    // The current game mode of any class, or NULL.
-    uint8_t* CurrentMode()
-    {
-        __try {
-            uint8_t* app = g_gameApp();
-            uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
-            return service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return nullptr;
-        }
     }
 
     // No game mode, or one of the PvP modes: slot indexes >= 1000 are not mapped by the game.
@@ -1057,26 +1078,22 @@ namespace
 
     int AiDeathCost(uint8_t* unit, int cost)
     {
-        __try {
-            if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
-                return cost;
-            for (const Bot& bot : g_botTable) {
-                if (bot.unit != unit)
-                    continue;
-                const StartDeck* deck = FindStartDeck(bot.pilotId);
-                int form = bot.form >= 0 && bot.form < 4 ? bot.form : 0;
-                int serverCost = deck ? deck->lifeCost[form] : 0;
-                if (g_deathCostLogs < 10) {
-                    ++g_deathCostLogs;
-                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX is down: life cost %d (unit data %d)",
-                               static_cast<unsigned long>(bot.pilotId), serverCost > 0 ? serverCost : cost, cost);
-                }
-                return serverCost > 0 ? serverCost : cost;
+        if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
+            return cost;
+        for (const Bot& bot : g_botTable) {
+            if (bot.unit != unit)
+                continue;
+            const StartDeck* deck = FindStartDeck(bot.pilotId);
+            int form = bot.form >= 0 && bot.form < 4 ? bot.form : 0;
+            int serverCost = deck ? deck->lifeCost[form] : 0;
+            if (g_deathCostLogs < 10) {
+                ++g_deathCostLogs;
+                g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX is down: life cost %d (unit data %d)",
+                           static_cast<unsigned long>(bot.pilotId), serverCost > 0 ? serverCost : cost, cost);
             }
-            return cost;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return cost;
+            return serverCost > 0 ? serverCost : cost;
         }
+        return cost;
     }
 
     int g_deckFaults = 0;
@@ -1328,16 +1345,12 @@ namespace
     {
         if (g_creatingAiUnit)
             return 1;
-        __try {
-            if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
-                return 0;
-            for (const Bot& bot : g_botTable)
-                if (bot.unit == unit)
-                    return 1;
+        if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
             return 0;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return 0;
-        }
+        for (const Bot& bot : g_botTable)
+            if (bot.unit == unit)
+                return 1;
+        return 0;
     }
 
     // ---- dead AI players stay for their respawn ------------------------------------------

@@ -32,14 +32,14 @@ void sdgo::log::Open(const std::wstring& dir, int minLevel)
     }
     g_minLevel = minLevel;
     CreateDirectoryW(dir.c_str(), nullptr);
-    const std::wstring current = dir + L"\\sdgo.log";
-    const std::wstring previous = dir + L"\\sdgo.prev.log";
-    MoveFileExW(current.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
-    g_file = _wfsopen(current.c_str(), L"w", _SH_DENYWR);
-    if (!g_file) {
-        // another instance of the game holds sdgo.log
-        const std::wstring own = dir + L"\\sdgo." + std::to_wstring(GetCurrentProcessId()) + L".log";
-        g_file = _wfsopen(own.c_str(), L"w", _SH_DENYWR);
+    // sdgo.log; while another instance of the game holds it, sdgo.2.log .. sdgo.4.log, each
+    // with its own .prev (the rename fails on a file another instance holds)
+    for (int n = 1; n <= 4 && !g_file; ++n) {
+        const std::wstring name = dir + (n == 1 ? std::wstring(L"\\sdgo") : L"\\sdgo." + std::to_wstring(n));
+        const std::wstring current = name + L".log";
+        const std::wstring previous = name + L".prev.log";
+        MoveFileExW(current.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
+        g_file = _wfsopen(current.c_str(), L"w", _SH_DENYWR);
     }
 }
 
