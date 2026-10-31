@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
 project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
 set(SDGO_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
@@ -114,6 +115,31 @@ sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" 
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
 
+# Optional catalog provider, same mod id in the two processes. Owner-generated
+# catalog.bin is never staged or bundled by a framework build.
+foreach(role client server)
+    set(target ai_catalog_${role})
+    add_library(${target} SHARED mods/ai_catalog/${role}.cpp)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME ai_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>")
+    target_link_libraries(${target} PRIVATE sdgo_api)
+    sdgo_strict(${target})
+    sdgo_version_resource(${target} ai_catalog.dll "SDGO mod: AI roster (${role})")
+    sdgo_stage(${target} "${role}/sdgo/mods/ai_catalog")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
+            "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini")
+endforeach()
+add_custom_target(ai_catalog_data ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/server/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/client.ini"
+        "${SDGO_STAGE}/client/sdgo/mods/ai_catalog/mod.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/server.ini"
+        "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -149,6 +175,20 @@ endforeach()
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
+    target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
+    sdgo_strict(catalog_conflict_mod)
+    add_executable(ai_catalog_test tests/ai_catalog_test.cpp)
+    target_link_libraries(ai_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(ai_catalog_test)
+    # Keep native fixture calls as hookable calls in optimized builds as well.
+    target_compile_options(ai_catalog_test PRIVATE /Ob0)
+    add_executable(ai_catalog_native_test tests/ai_catalog_native_test.cpp)
+    target_link_libraries(ai_catalog_native_test PRIVATE sdgo_api minhook)
+    sdgo_strict(ai_catalog_native_test)
+    add_executable(ai_catalog_client_data_test tests/ai_catalog_client_data_test.cpp)
+    target_link_libraries(ai_catalog_client_data_test PRIVATE sdgo_api)
+    sdgo_strict(ai_catalog_client_data_test)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -159,6 +199,10 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME ai_catalog_integration COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
         foreach(check loader findwindow_fix)
             add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
                 -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"

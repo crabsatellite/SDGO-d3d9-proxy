@@ -16,13 +16,14 @@ English: [README.md](README.md)
 
 ## 功能
 
-AI 全机体池的[只读检查与 LV 分级规划工具](backend/README.zh-CN.md)随包放在 `backend/`；
-服主使用自己的目录数据。当前输出是扩充规划，尚不提供写库或全机体 AI 运行支持，见[调查结果](docs/ai-catalog-investigation.zh-CN.md)。
+独立的 [AI 机体目录 Mod](docs/ai-catalog.zh-CN.md) 读取服主生成的配套目录，扩充 LV1–LV5 机体池，
+不写数据库或游戏原包。默认关闭，带独立安装器和玩家增量导出；原生 AI 脚本的实际游戏表现仍需手动验收。
 
 每项功能由一个或多个 mod 组成，各有一份说明（使用、设置、日志、实现原理）。
 
 | 功能 | 作用 | mod | 安装在 | 说明 |
 |---|---|---|---|---|
+| 服主 AI 机体目录 | 为现有 AI 功能提供配套 NPC 目录和大等级池；关闭后恢复原等级池。 | `ai_catalog` | 对战服务器 + 所有参战客户端 | [中文](docs/ai-catalog.zh-CN.md) · [English](docs/ai-catalog.md) |
 | 任务模式 AI 僚机 | 任务模式里 AI 驾驶员加入你的队伍，使用游戏原生的 AI 对战机器人 AI，击破正常计算，也会被击落。在房间标题写 `!ai`。 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [中文](docs/coop-wingmen.zh-CN.md) · [English](docs/coop-wingmen.md) |
 | 对战模式 AI 玩家（源码新增） | 在 PvP 房名里用 `!ai` 加入对手和队友，接入原有计分、复活、卡组与死亡后观战。 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [中文](docs/pvp-ai.zh-CN.md) · [English](docs/pvp-ai.md) |
 | 输入法修复 | 修复一处把输入法（中/日/韩）提交的字节数当成字符数的问题。 | `ime_fix` | 客户端 | [中文](docs/ime-fix.zh-CN.md) · [English](docs/ime-fix.md) |

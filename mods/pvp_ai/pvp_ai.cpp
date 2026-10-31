@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/ai_catalog_provider.h"
 #include "sdgo/ai_scoring.h"
 
 namespace
@@ -725,10 +726,16 @@ namespace
 
         std::vector<uint32_t> available = AiNpcIds();
         std::vector<uint32_t> pool;
-        for (uint32_t id : g_settings.levels[plan.level])
-            if (Contains(available, id))
-                pool.push_back(id);
+        const bool catalog = sdgo::AiCatalogPool(g_api, g_mod, plan.level, pool);
+        if (!catalog)
+            for (uint32_t id : g_settings.levels[plan.level])
+                if (Contains(available, id))
+                    pool.push_back(id);
         if (pool.empty()) {
+            if (catalog) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
+                return;
+            }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
             return;

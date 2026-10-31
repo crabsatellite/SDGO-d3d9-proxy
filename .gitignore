@@ -22,3 +22,11 @@ desktop.ini
 
 # Release packages (tools/package.ps1)
 dist/
+
+# Local Python tooling caches
+__pycache__/
+*.pyc
+
+# Owner-generated game data; generic distributions contain tools and code only.
+catalog.bin
+catalog.json

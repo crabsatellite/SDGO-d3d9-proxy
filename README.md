@@ -17,14 +17,15 @@ to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
 
 ## Features
 
-The package also includes an owner-side [AI roster audit and LV planning tool](backend/README.zh-CN.md).
-It reads the owner's catalogs without database writes. Expanded client/server AI support is not yet implemented;
-see the [investigation](docs/ai-catalog-investigation.zh-CN.md).
+The optional [AI catalog addon](docs/ai-catalog.md) uses owner-generated client/server
+data to expand LV1–LV5 rosters without database or game-archive writes. It is disabled by
+default and has a separate installer/player export. Native script gameplay acceptance remains manual.
 
 Each feature is one or more mods with its own guide (use, settings, logs, how it works).
 
 | feature | what it does | mods | install on | guide |
 |---|---|---|---|---|
+| Owner-provided AI catalog | Adds paired process-local NPC records and larger LV pools to the existing AI features; original pools return when disabled. | `ai_catalog` | battle server + every participating client | [English](docs/ai-catalog.md) · [中文](docs/ai-catalog.zh-CN.md) |
 | Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
 | PvP AI players (source build) | Use `!ai` in a PvP room title for opponents and teammates, with native scoring, respawn, decks and dead-view support. | `pvp_ai`, `match_ai` | battle server + every participating client | [English](docs/pvp-ai.md) · [中文](docs/pvp-ai.zh-CN.md) |
 | IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [English](docs/ime-fix.md) · [中文](docs/ime-fix.zh-CN.md) |
