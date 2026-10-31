@@ -281,16 +281,17 @@ namespace
     // battle start packet (PT_NTF_BATTLE_START 0x6C3, built by 0x004B61E0) has a 0x10F-byte
     // entry per slot from +0x20: pilot id (+0), deck points (+0xB, pilot +0x1CA0) and units
     // (+0xC), and the first 0x32 bytes of the 4 unit records (+0xE + i * 0x32), whose first
-    // dword is an AI unit's NPC data id. The wait room's handler (0x00A3E590) keeps the packet
-    // at CServiceWaitRoomMgr +0x4258 and then calls the battle start UDP setup (0x00A0FE80),
-    // where the AI pilots' decks are read. The records the game modes get carry neither.
-    // A player's deck is built from its record by 0x00665CC0, which skips NPC units, and its
+    // dword is an AI unit's NPC data id. Each wait room keeps its own copy (CServiceWaitRoomMgr
+    // 0x00A3E590 at +0x4258; the 3D wait room's main state 0x00752E10 in a new 0xCD4-byte
+    // buffer, 0x0074C9B0), so the decks are read where every server packet passes, the packet
+    // dispatch (0x004DC3D0), before the current service gets it. The records the game modes
+    // get carry neither. A player's deck is built from its record by 0x00665CC0, which skips NPC units, and its
     // message 7 handler switches the deck on a respawn; the NPC handler does neither. Here the
     // AI unit gets the other deck units with the same AddDeckUnit (unit data id = NPC data
     // +0x69; NPC data is grid data type 0x29, GridData::Find 0x0059D2B0), and on a respawn
     // its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the AI
     // script from it) and the deck switched after it, as CPlayer does.
-    constexpr size_t kWaitRoomStartPacket = 0x4258;
+    constexpr int kPacketBattleStart = 0x6C3;
     constexpr size_t kStartPacketSlots = 0x20;
     constexpr size_t kStartSlotStride = 0x10F;
     constexpr size_t kStartSlotPoints = 0x0B;
@@ -307,13 +308,12 @@ namespace
     };
     StartDeck g_startDecks[12] = {};
 
-    void ReadStartDecks(uint8_t* waitRoom)
+    void ReadStartDecks(const uint8_t* packet)
     {
         memset(g_startDecks, 0, sizeof(g_startDecks));
-        uint8_t* packet = waitRoom + kWaitRoomStartPacket;
         for (int slot = 0; slot < 12; ++slot) {
-            uint8_t* entry = packet + kStartPacketSlots + slot * kStartSlotStride;
-            uint32_t pilotId = *reinterpret_cast<uint32_t*>(entry);
+            const uint8_t* entry = packet + kStartPacketSlots + slot * kStartSlotStride;
+            uint32_t pilotId = *reinterpret_cast<const uint32_t*>(entry);
             if (!(pilotId & kAiPilotBit))
                 continue;
             StartDeck& deck = g_startDecks[slot];
@@ -321,7 +321,11 @@ namespace
             deck.points = entry[kStartSlotPoints];
             deck.units = entry[kStartSlotUnits];
             for (int i = 0; i < 4; ++i)
-                deck.npc[i] = *reinterpret_cast<uint32_t*>(entry + kStartSlotUnitBlocks + i * kStartUnitBlock);
+                deck.npc[i] = *reinterpret_cast<const uint32_t*>(entry + kStartSlotUnitBlocks + i * kStartUnitBlock);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: AI pilot %08lX (slot %d) deck %d points, %d unit(s): %lu %lu %lu %lu",
+                       static_cast<unsigned long>(pilotId), slot, deck.points, deck.units,
+                       static_cast<unsigned long>(deck.npc[0]), static_cast<unsigned long>(deck.npc[1]),
+                       static_cast<unsigned long>(deck.npc[2]), static_cast<unsigned long>(deck.npc[3]));
         }
     }
 
@@ -625,21 +629,8 @@ namespace
     // pilot of every other slot and counts the requests against the links that come back.
     // An AI pilot has no client to answer, so for that call its slot reads as empty.
 
-    bool GuardedReadStartDecks(uint8_t* waitRoom)
-    {
-        __try {
-            ReadStartDecks(waitRoom);
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            memset(g_startDecks, 0, sizeof(g_startDecks));
-            return false;
-        }
-    }
-
     void __fastcall UdpSetup(uint8_t* waitRoom, void* /*edx*/)
     {
-        if (waitRoom && !GuardedReadStartDecks(waitRoom))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
         uint32_t hidden[12] = {};
         int count = 0;
         if (waitRoom) {
@@ -1100,9 +1091,22 @@ namespace
             g_originalGameLog(logger, level, L"%s", text);
     }
 
+    bool GuardedReadStartDecks(const uint8_t* packet)
+    {
+        __try {
+            ReadStartDecks(packet);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            memset(g_startDecks, 0, sizeof(g_startDecks));
+            return false;
+        }
+    }
+
     int __fastcall PacketDispatch(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
         int op = opcode & 0xFFFF;
+        if (op == kPacketBattleStart && packet && !GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
+            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
         if (g_logPackets && g_packetLines < 3000) {
             if (op == g_lastOpcode) {
                 ++g_opcodeRepeat;
@@ -1404,10 +1408,11 @@ SDGO_MOD_ENTRY
         if (!api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
                            reinterpret_cast<void**>(&g_originalLuaOnError)))
             api->Log(mod, SDGO_LOG_WARN, "Lua error logging not available");
-        if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
-                           reinterpret_cast<void**>(&g_originalPacketDispatch)))
-            api->Log(mod, SDGO_LOG_WARN, "packet logging not available");
     }
+    // Without this an AI player of mode 7 has one unit and its team gauge counts only that.
+    if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
+                       reinterpret_cast<void**>(&g_originalPacketDispatch)))
+        return 0;
     if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
         !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
                        reinterpret_cast<void**>(&g_originalErrorName)))
