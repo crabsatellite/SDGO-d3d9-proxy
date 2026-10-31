@@ -8,7 +8,8 @@
 // CMissionMode instead). Right after each one's Init (vftable slot 4) this spawns the AI
 // records with the steps of CAINormalGameMode::Init's AI loop (0x004049B3..0x00404DA5):
 //   start point = UM->FindStartPoint(record team, index)           (0x00499930)
-//   unit        = mode->CreateNpc(npc data, x, y, z, team, 0, 0, 1)  vt slot 13; for this
+//   unit        = mode->CreateNpc(npc data, x, y, z, team, 0, 0, 1)  vt slot 13 (team = record
+//                 +0x19, as the PvP Inits give their units; colour +0x1A only picks the start point); for this
 //                 family the CBaseGameMode version (0x00ACA0B0): a CNPC that runs the Lua
 //                 AI named by its NPC data (InitNPCAI, 0x0065A3A0), the AI battle bots' VSAI_*
 //   UM->SetPlayerInfo(slot, 0, unit+4, record+4, record)            (0x0049DFE0)
@@ -60,7 +61,8 @@ namespace
     constexpr size_t kRecordServerId = 0x00;
     constexpr size_t kRecordConnection = 0x04;
     constexpr size_t kRecordMaster = 0x1C;      // u8, set on the room master's record
-    constexpr size_t kRecordTeam = 0x1A;        // u8, team (1, 2) used for start points
+    constexpr size_t kRecordTeam = 0x19;        // u8, team (1, 2): the unit's team (unit +0x20)
+    constexpr size_t kRecordColour = 0x1A;      // u8, respawn colour (1, 2): start points go by it
     constexpr size_t kRecordNpcData = 0x44;
     constexpr size_t kStartPointPos = 0x24;     // x, y, z floats
     constexpr size_t kUnitObjectId = 0x04;
@@ -306,14 +308,14 @@ namespace
         int nextIndex[3] = {};
         for (int k = 0; k < humans; ++k) {
             uint8_t* human = humanRecords + k * kRecordSize;
-            int team = human[kRecordTeam];
-            uint8_t* start = g_game.findStartPoint(um, team, nextIndex[team == 1 || team == 2 ? team : 0]);
+            int colour = human[kRecordColour];
+            uint8_t* start = g_game.findStartPoint(um, colour, nextIndex[colour == 1 || colour == 2 ? colour : 0]);
             auto hp = start ? reinterpret_cast<float*>(start + kStartPointPos) : nullptr;
             g_api->Log(g_mod, SDGO_LOG_INFO, "human %08lX: team +0x19 %u, colour +0x1A %u, start point (%.0f, %.0f, %.0f)",
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(human)), human[0x19], human[0x1A],
                        hp ? hp[0] : 0.0f, hp ? hp[1] : 0.0f, hp ? hp[2] : 0.0f);
-            if (team == 1 || team == 2)
-                ++nextIndex[team];
+            if (colour == 1 || colour == 2)
+                ++nextIndex[colour];
         }
 
         uint8_t* records = *reinterpret_cast<uint8_t**>(room + kRoomAiBegin);
@@ -322,14 +324,15 @@ namespace
             uint8_t* record = records + k * kRecordSize;
             uint32_t serverId = *reinterpret_cast<uint32_t*>(record + kRecordServerId);
             int team = record[kRecordTeam];
+            int colour = record[kRecordColour];
             uint32_t npcData = *reinterpret_cast<uint32_t*>(record + kRecordNpcData);
-            int index = (team == 1 || team == 2) ? nextIndex[team]++ : k;
-            uint8_t* start = g_game.findStartPoint(um, team, index);
+            int index = (colour == 1 || colour == 2) ? nextIndex[colour]++ : k;
+            uint8_t* start = g_game.findStartPoint(um, colour, index);
             if (!start)
-                start = g_game.findStartPoint(um, team, 0);
+                start = g_game.findStartPoint(um, colour, 0);
             if (!start) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: the map has no team %d start point",
-                           static_cast<unsigned long>(serverId), team);
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: the map has no colour %d start point",
+                           static_cast<unsigned long>(serverId), colour);
                 continue;
             }
             auto pos = reinterpret_cast<float*>(start + kStartPointPos);
@@ -370,9 +373,9 @@ namespace
             g_botTable.push_back({serverId, objectId, slot, unit});
             g_logPackets = true;
             ++spawned;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
+            g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, colour %d, slot %d, %s)",
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
-                       static_cast<unsigned long>(npcData), team, slot,
+                       static_cast<unsigned long>(npcData), team, colour, slot,
                        master ? "AI runs here" : "copy of the room master's");
         }
         if (spawned > 0) {
