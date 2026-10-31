@@ -76,7 +76,9 @@ mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
 
 ## 安装
 
-需要 Windows 自带的 Windows PowerShell 5.1，不需要 VC++ 运行库。解压发布包，在解压目录打开 PowerShell。
+需要 Windows 自带的 Windows PowerShell 5.1，不需要 VC++ 运行库。从
+[最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest)下载 `SDGO-ModFramework-<版本>.zip`，
+解压后在解压目录打开 PowerShell。
 
 ### 客户端（每个玩家）
 
