@@ -110,7 +110,7 @@ def render(profile: dict) -> tuple[str, str, list[dict]]:
 def configurations(profile: dict) -> tuple[str, str, list[dict]]:
     """Compile allowlisted settings; never copy the owner's source JSON."""
     client, agent, inventory = render(profile)
-    return ("; Player connection settings. Start with your existing launcher.\n[settings]" +
+    return ("; Player connection settings (Beta). Start with your existing launcher.\n[settings]" +
             client.split("[settings]", 1)[1],
             "; Owner-only Agent UDP pool settings.\n[settings]" + agent.split("[settings]", 1)[1], inventory)
 
@@ -129,7 +129,8 @@ def export_profile(profile: dict, destination: Path) -> Path:
     archive = destination / "player-profile.zip"
     with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as output:
         output.writestr("sdgo/mods/net_route/config.ini", client)
-        output.writestr("README.txt", "Install the universal FRP mod once, then put this sdgo folder in your game folder.\n"
+        output.writestr("README.txt", "SDGO FRP networking (Beta).\n\n"
+                        "Install the universal FRP mod once, then put this sdgo folder in your game folder.\n"
                         "Use your existing launcher. Restart the game after changing connection settings.\n"
                         "No Sakura account or special launch script is required on players' computers.\n")
     return archive
