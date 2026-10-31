@@ -112,7 +112,7 @@ $manifestPath=Join-Path $sourceRoot 'SHA256.json'
 if(-not(Test-Path -LiteralPath $manifestPath)){throw 'Incomplete kit: SHA256.json missing; no files changed'}
 $inventory=ConvertFrom-Json ([IO.File]::ReadAllText($manifestPath))
 $loaderName=if($Role -eq 'Client'){'d3d9.dll'}else{'winmm.dll'}
-$requiredFiles=@('install_frp.ps1','install_client.ps1','install_server.ps1','framework/VERSION',
+$requiredFiles=@('install_frp.ps1','install_client.ps1','install_server.ps1','install_common.ps1','framework/VERSION',
     "framework/$side/$loaderName","framework/$side/sdgo/core.dll","framework/$side/sdgo/sdgo.ini",
     "payload/$side/symbols/$hostKey.ini")
 foreach($id in $mods){$requiredFiles+=@("payload/$side/mods/$id/$id.dll","payload/$side/mods/$id/mod.ini")}

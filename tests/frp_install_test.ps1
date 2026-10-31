@@ -45,6 +45,7 @@ foreach($side in @('Client','Agent')){
     $exeName=if($side -eq 'Client'){'GOnline'}else{'AgentServer'}
     $ids=if($side -eq 'Client'){@('net_route')}else{@('agent_relay_log_fix','agent_udp_pool')}
     $source=Join-Path $work "kit $lower";$target=Join-Path $work "existing $lower"
+    Write-Text (Join-Path $source 'install_common.ps1') ([IO.File]::ReadAllText((Join-Path $repo 'tools\install_common.ps1')))
     Fake-Exe (Join-Path $target "$exeName.exe")
     $hostKey="$exeName-12345678-00001000"
     $hostText="[host]`r`nimage=$exeName.exe`r`ntimestamp=0x12345678`r`nsize_of_image=0x00001000`r`n"
