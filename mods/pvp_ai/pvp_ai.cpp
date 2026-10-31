@@ -440,6 +440,84 @@ namespace
         return added;
     }
 
+    // Battle values that count the pilots. Before the pilots are set up, the battle start
+    // (0x004B7540) derives them from the room's player count (+0x71, humans only): the team
+    // sizes (+0x32114, +0x32115: count / 2; leader election 0x004A0FB0 skips a team of size
+    // 0) and, in death match (3, 14), each team's power (+0x2EEEC team 1, +0x2EEF0 team 2:
+    // count / 2 * 1000). The human setup (0x004B6EB0) sets the grid match (6) gauges
+    // (+0x2EEF4 team 1, +0x2EEF8 team 2) from count / 2, and in tag match (7) adds each
+    // pilot's unit costs (pilot +0x1CA0, units at +0x1CA1, 0x004D6F40) to its team's gauge
+    // and unit count (+0x32116, +0x32117). Once AI pilots have joined these are set again
+    // counting them: per team where the teams are 1 and 2 (the AI battle mode sets the team
+    // sizes that way, 0x004B79D0), from the pilot count in a free-for-all room (team 0).
+    constexpr size_t kRoomTeamSize1 = 0x32114;   // u8
+    constexpr size_t kRoomTeamSize2 = 0x32115;   // u8
+    constexpr size_t kRoomPower1 = 0x2EEEC;      // death match
+    constexpr size_t kRoomPower2 = 0x2EEF0;
+    constexpr size_t kRoomGauge1 = 0x2EEF4;      // grid and tag match
+    constexpr size_t kRoomGauge2 = 0x2EEF8;
+    constexpr size_t kRoomTagUnits1 = 0x32116;   // u8
+    constexpr size_t kRoomTagUnits2 = 0x32117;   // u8
+    constexpr size_t kPilotTagCost = 0x1CA0;     // u8, sum of the pilot's unit costs
+    constexpr size_t kPilotTagUnits = 0x1CA1;    // u8
+    constexpr size_t kUnitCost = 0x0A;           // u8, unit record: cost (kill points)
+
+    int GridGauge(int perTeam)
+    {
+        switch (perTeam) {
+        case 1: case 2: case 4: return 0x50;
+        case 3: return 0x3C;
+        case 5: return 0x78;
+        case 6: return 0xA0;
+        default: return -1;
+        }
+    }
+
+    void RecountBattle(uint8_t* room)
+    {
+        int count[3] = {};
+        for (int slot = 0; slot < kSlots; ++slot) {
+            if (SlotPilotId(room, slot) == 0)
+                continue;
+            uint8_t team = SlotTeam(room, slot);
+            ++count[team == 1 || team == 2 ? team : 0];
+        }
+        int total = count[0] + count[1] + count[2];
+        bool teams = count[0] == 0;
+        int size1 = teams ? count[1] : total / 2;
+        int size2 = teams ? count[2] : total / 2;
+        room[kRoomTeamSize1] = static_cast<uint8_t>(size1);
+        room[kRoomTeamSize2] = static_cast<uint8_t>(size2);
+        uint8_t mode = room[kRoomMode];
+        auto field = [room](size_t offset) -> int32_t& { return *reinterpret_cast<int32_t*>(room + offset); };
+        if (mode == 3 || mode == 14) {
+            field(kRoomPower1) = size1 * 1000;
+            field(kRoomPower2) = size2 * 1000;
+        } else if (mode == 6) {
+            if (GridGauge(size1) > 0)
+                field(kRoomGauge1) = GridGauge(size1);
+            if (GridGauge(size2) > 0)
+                field(kRoomGauge2) = GridGauge(size2);
+        } else if (mode == 7) {
+            for (int slot = 0; slot < kSlots; ++slot) {
+                if (!(SlotPilotId(room, slot) & kAiPilotBit))
+                    continue;
+                uint8_t* pilot = room + kPilots + slot * kPilotStride;
+                uint8_t cost = pilot[kPilotUnits + pilot[kPilotForm] * kUnitStride + kUnitCost];
+                pilot[kPilotTagCost] = cost;
+                pilot[kPilotTagUnits] = 1;
+                bool team1 = SlotTeam(room, slot) == 1;
+                field(team1 ? kRoomGauge1 : kRoomGauge2) += cost;
+                ++room[team1 ? kRoomTagUnits1 : kRoomTagUnits2];
+            }
+        }
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "battle values with the AI pilots: team sizes %d/%d, power %ld/%ld, gauges %ld/%ld, tag units %u/%u",
+                   size1, size2, static_cast<long>(field(kRoomPower1)), static_cast<long>(field(kRoomPower2)),
+                   static_cast<long>(field(kRoomGauge1)), static_cast<long>(field(kRoomGauge2)), room[kRoomTagUnits1],
+                   room[kRoomTagUnits2]);
+    }
+
     void AddPvpAi(uint8_t* room)
     {
         if (!IsPvpMode(room[kRoomMode]))
@@ -486,6 +564,8 @@ namespace
         int addedEnemies = enemies > 0 ? AddTeam(room, enemyTeam, enemies, pool) : 0;
         g_api->Log(g_mod, SDGO_LOG_INFO, "%d allies (team %u) and %d enemies (team %u) added, level %d",
                    addedAllies, allyTeam, addedEnemies, enemyTeam, plan.level);
+        if (addedAllies + addedEnemies > 0)
+            RecountBattle(room);
     }
 
     bool GuardedAddPvpAi(uint8_t* room, DWORD* code)

@@ -200,6 +200,37 @@ namespace
     };
     void** g_vtables[5] = {}; // vftable of each class, from its Init slot
 
+    int ModeClassIndex(uint8_t* mode)
+    {
+        void** vtable = *reinterpret_cast<void***>(mode);
+        for (int i = 0; i < 5; ++i)
+            if (g_vtables[i] && vtable == g_vtables[i])
+                return i;
+        return -1;
+    }
+
+    // What each PvP Init sets in a player's slot (+0x48, the score the HUD sums per team)
+    // right after SetPlayerInfo: death match (0x00AD98B0) 1000, the player's share of the
+    // team power; tag match (0x00ADB390: the death match Init, then record +0x30 * 100, at
+    // most 1000); grid match (0x00ADB790) 1; normal and leader match nothing.
+    constexpr size_t kSlotScore = 0x48;
+    constexpr size_t kRecordTagCost = 0x30;
+
+    void InitAiSlot(int classIndex, uint8_t* playerSlot, uint8_t* record)
+    {
+        auto score = reinterpret_cast<int32_t*>(playerSlot + kSlotScore);
+        if (classIndex == 1) {
+            *score = 1000;
+        } else if (classIndex == 2) {
+            *score = 1;
+        } else if (classIndex == 4) {
+            int32_t cost = *reinterpret_cast<int32_t*>(record + kRecordTagCost);
+            *score = cost * 100 < 1001 ? cost * 100 : 1000;
+            g_api->Log(g_mod, SDGO_LOG_INFO, "tag match: AI player %08lX record +0x30 = %ld",
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)), static_cast<long>(cost));
+        }
+    }
+
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
         auto first = *reinterpret_cast<uint8_t**>(room + begin);
@@ -312,6 +343,7 @@ namespace
                 auto name = reinterpret_cast<const wchar_t*>(npc + 5);
                 g_game.assign(g_game.playerSlot(um, slot) + kSlotName, name, wcslen(name));
             }
+            InitAiSlot(ModeClassIndex(mode), g_game.playerSlot(um, slot), record);
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
