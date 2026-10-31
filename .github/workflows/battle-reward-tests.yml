@@ -1,0 +1,38 @@
+name: Battle reward design and preview
+
+on:
+  push:
+    paths:
+      - 'owner/rewards/**'
+      - 'tools/assistant_modules/rewards/**'
+      - 'tools/reward_preview.py'
+      - 'tests/test_battle_reward_model.py'
+      - 'docs/battle-reward-design*'
+      - '.github/workflows/battle-reward-tests.yml'
+  pull_request:
+    paths:
+      - 'owner/rewards/**'
+      - 'tools/assistant_modules/rewards/**'
+      - 'tools/reward_preview.py'
+      - 'tests/test_battle_reward_model.py'
+      - 'docs/battle-reward-design*'
+      - '.github/workflows/battle-reward-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Exact calculations, policy storage and same-port HTTP module
+        run: python -B -m unittest discover -s tests -p "test_battle_reward_model.py" -v
+      - name: Offline MVP example
+        run: python -B tools/reward_preview.py --scenario owner/rewards/examples/pvp-mvp.json
