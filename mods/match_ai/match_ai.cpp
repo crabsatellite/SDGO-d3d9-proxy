@@ -304,12 +304,15 @@ namespace
     constexpr size_t kStartSlotUnitBlocks = 0x0E;
     constexpr size_t kStartUnitBlock = 0x32;
 
+    constexpr size_t kStartUnitLifeCost = 0x08; // u16, unit record +8: the life cost the server counts
+
     struct StartDeck
     {
         uint32_t pilotId;
         int points;
         int units;
         uint32_t npc[4];
+        int lifeCost[4];
     };
     StartDeck g_startDecks[12] = {};
 
@@ -325,12 +328,16 @@ namespace
             deck.pilotId = pilotId;
             deck.points = entry[kStartSlotPoints];
             deck.units = entry[kStartSlotUnits];
-            for (int i = 0; i < 4; ++i)
-                deck.npc[i] = *reinterpret_cast<const uint32_t*>(entry + kStartSlotUnitBlocks + i * kStartUnitBlock);
-            g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: AI pilot %08lX (slot %d) deck %d points, %d unit(s): %lu %lu %lu %lu",
+            for (int i = 0; i < 4; ++i) {
+                const uint8_t* block = entry + kStartSlotUnitBlocks + i * kStartUnitBlock;
+                deck.npc[i] = *reinterpret_cast<const uint32_t*>(block);
+                deck.lifeCost[i] = *reinterpret_cast<const uint16_t*>(block + kStartUnitLifeCost);
+            }
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "battle start: AI pilot %08lX (slot %d) deck %d points, %d unit(s): %lu %lu %lu %lu, life cost %d",
                        static_cast<unsigned long>(pilotId), slot, deck.points, deck.units,
                        static_cast<unsigned long>(deck.npc[0]), static_cast<unsigned long>(deck.npc[1]),
-                       static_cast<unsigned long>(deck.npc[2]), static_cast<unsigned long>(deck.npc[3]));
+                       static_cast<unsigned long>(deck.npc[2]), static_cast<unsigned long>(deck.npc[3]), deck.lifeCost[0]);
         }
     }
 
@@ -1029,6 +1036,40 @@ namespace
         }
     }
 
+    // ---- death match: an AI player's life costs what the server counts ---------------------
+    //
+    // On a death in death match (mode IsA(2) or IsA(14), not tag match) PT_NTF_DEAD_UNIT
+    // takes the unit's life cost from its unit data (unit +0x9C4, word +0x137) off the dead
+    // player's slot +0x48 (0x004D929C, through the mode's vt +0x24). For an AI player that is
+    // the NPC unit's own cost, while the server counts the player cost of its grade (pvp_ai
+    // LifeCostGrade), so the HUD's team bar ran out while the AI player still had a life. Its
+    // unit record in the battle start packet carries the server's cost (+8); that one is used.
+    int g_deathCostLogs = 0;
+
+    int AiDeathCost(uint8_t* unit, int cost)
+    {
+        __try {
+            if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
+                return cost;
+            for (const Bot& bot : g_botTable) {
+                if (bot.unit != unit)
+                    continue;
+                const StartDeck* deck = FindStartDeck(bot.pilotId);
+                int form = bot.form >= 0 && bot.form < 4 ? bot.form : 0;
+                int serverCost = deck ? deck->lifeCost[form] : 0;
+                if (g_deathCostLogs < 10) {
+                    ++g_deathCostLogs;
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX is down: life cost %d (unit data %d)",
+                               static_cast<unsigned long>(bot.pilotId), serverCost > 0 ? serverCost : cost, cost);
+                }
+                return serverCost > 0 ? serverCost : cost;
+            }
+            return cost;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return cost;
+        }
+    }
+
     int g_deckFaults = 0;
 
     void GuardedSwitchDecks()
@@ -1353,6 +1394,28 @@ static int __stdcall KeepDeadOutOfPool(uint8_t* node)
 static void* g_deckCheckResume = nullptr;
 static void* g_deckSkip = nullptr;
 
+// PT_NTF_DEAD_UNIT's death match branch, after it loaded the life cost into ecx (esi = the
+// dead unit): an AI player's cost is replaced in the saved ecx (pushad frame +0x18).
+static void* g_deathCostResume = nullptr;
+
+static int __stdcall AiDeathCostThunk(uint8_t* unit, int cost)
+{
+    return AiDeathCost(unit, cost);
+}
+
+static __declspec(naked) void DeathCostDetour()
+{
+    __asm {
+        pushad
+        push ecx
+        push esi
+        call AiDeathCostThunk
+        mov [esp + 0x18], eax
+        popad
+        jmp dword ptr [g_deathCostResume]
+    }
+}
+
 // The dead view, right after it copied UM's player list into its list at ebp-0x20.
 static void* g_deadViewResume = nullptr;
 
@@ -1504,6 +1567,8 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "unit.switch_deck_skill_check", reinterpret_cast<void*>(&SwitchSkillDetour),
                        &g_switchSkillResume))
         return 0;
+    if (!api->HookCode(mod, "game.dead_unit_life_cost", reinterpret_cast<void*>(&DeathCostDetour), &g_deathCostResume))
+        api->Log(mod, SDGO_LOG_WARN, "death match life cost not hooked; the HUD bar counts an AI player's NPC cost");
     if (!Bind(g_gameNew, "crt.operator_new") ||
         !api->HookCode(mod, "mode.dead_view_players", reinterpret_cast<void*>(&DeadViewDetour), &g_deadViewResume))
         api->Log(mod, SDGO_LOG_WARN, "dead view not hooked; a down player cannot watch AI players");
