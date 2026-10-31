@@ -42,6 +42,7 @@
 #include <windows.h>
 #include <intrin.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -178,6 +179,7 @@ namespace
     FindObjectFn g_findObject = nullptr;
     GameNewFn g_gameNew = nullptr;
     CameraOffsetsFn g_originalCameraOffsets = nullptr;
+    CameraOffsetsFn g_originalTrackingUpdate = nullptr; // same shape: thiscall, no arguments
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
@@ -1161,6 +1163,116 @@ namespace
         }
     }
 
+    // ---- the camera looks where an AI player fights ---------------------------------------
+    //
+    // Each frame the tracking camera (CTrackingCamera vt slot 7, 0x00493F30) takes its yaw and
+    // pitch from the target's aim (unit +0xD94, +0xD9C), a player's view. An AI unit's are not
+    // where it fights (often up in the sky), so while the camera follows an AI player's unit
+    // it gets, for that update, the direction from the unit to its lock target (unit +0x3130,
+    // object id, set by message 0x42 in 0x00667DFB; none: its own yaw, level), eased in. The
+    // camera turns its offset by D3DXMatrixRotationX(pitch) * RotationY(yaw), so yaw is
+    // atan2(dx, dz) and a positive pitch looks down; the unit's position is its scene node's
+    // (unit +8, +0x88..+0x90).
+    constexpr size_t kUnitAimYaw = 0xD94;
+    constexpr size_t kUnitAimPitch = 0xD9C;
+    constexpr size_t kUnitLockTarget = 0x3130;
+    constexpr size_t kUnitNode = 0x08;
+    constexpr size_t kNodePosition = 0x88;
+    constexpr float kPi = 3.14159265f;
+
+    struct CameraAim
+    {
+        const uint8_t* unit;
+        float yaw;
+        float pitch;
+    } g_cameraAim = {};
+
+    float AngleDelta(float to, float from)
+    {
+        float d = to - from;
+        while (d > kPi)
+            d -= 2.0f * kPi;
+        while (d < -kPi)
+            d += 2.0f * kPi;
+        return d;
+    }
+
+    const float* NodePosition(const uint8_t* object)
+    {
+        const uint8_t* node = *reinterpret_cast<uint8_t* const*>(object + kUnitNode);
+        return node ? reinterpret_cast<const float*>(node + kNodePosition) : nullptr;
+    }
+
+    bool AiCameraAim(uint8_t* unit, float* yaw, float* pitch)
+    {
+        if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
+            return false;
+        bool bot = false;
+        for (const Bot& b : g_botTable)
+            bot = bot || b.unit == unit;
+        if (!bot)
+            return false;
+        float wantYaw = FloatAt(unit, kUnitAimYaw);
+        float wantPitch = 0.0f;
+        uint32_t lockId = *reinterpret_cast<const uint32_t*>(unit + kUnitLockTarget);
+        void* um = *g_game.unitManager;
+        const uint8_t* other = lockId && um ? static_cast<const uint8_t*>(g_findObject(um, lockId)) : nullptr;
+        const float* from = NodePosition(unit);
+        const float* to = other ? NodePosition(other) : nullptr;
+        if (from && to) {
+            float dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
+            float flat = sqrtf(dx * dx + dz * dz);
+            if (flat > 1.0f) {
+                wantYaw = atan2f(dx, dz);
+                wantPitch = atan2f(-dy, flat);
+            }
+        }
+        if (wantPitch < -0.87f)
+            wantPitch = -0.87f;
+        if (wantPitch > 1.04f)
+            wantPitch = 1.04f;
+        if (g_cameraAim.unit != unit) {
+            g_cameraAim = {unit, wantYaw, wantPitch};
+        } else {
+            g_cameraAim.yaw += AngleDelta(wantYaw, g_cameraAim.yaw) * 0.15f;
+            g_cameraAim.pitch += (wantPitch - g_cameraAim.pitch) * 0.15f;
+        }
+        *yaw = g_cameraAim.yaw;
+        *pitch = g_cameraAim.pitch;
+        return true;
+    }
+
+    bool GuardedAiCameraAim(uint8_t* unit, float* yaw, float* pitch)
+    {
+        __try {
+            return AiCameraAim(unit, yaw, pitch);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void __fastcall TrackingUpdate(uint8_t* camera, void* /*edx*/)
+    {
+        uint8_t* target = camera ? *reinterpret_cast<uint8_t**>(camera + kCameraTarget) : nullptr;
+        float yaw = 0.0f, pitch = 0.0f;
+        if (!GuardedAiCameraAim(target, &yaw, &pitch)) {
+            g_cameraAim.unit = nullptr;
+            g_originalTrackingUpdate(camera);
+            return;
+        }
+        auto aimYaw = reinterpret_cast<float*>(target + kUnitAimYaw);
+        auto aimPitch = reinterpret_cast<float*>(target + kUnitAimPitch);
+        float ownYaw = *aimYaw, ownPitch = *aimPitch;
+        *aimYaw = yaw;
+        *aimPitch = pitch;
+        __try {
+            g_originalTrackingUpdate(camera);
+        } __finally {
+            *aimYaw = ownYaw;
+            *aimPitch = ownPitch;
+        }
+    }
+
     // ---- death match: an AI player's life costs what the server counts ---------------------
     //
     // On a death in death match (mode IsA(2) or IsA(14), not tag match) PT_NTF_DEAD_UNIT
@@ -1629,6 +1741,9 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "camera.set_target_offsets", reinterpret_cast<void*>(&CameraOffsets),
                        reinterpret_cast<void**>(&g_originalCameraOffsets)))
         api->Log(mod, SDGO_LOG_WARN, "camera offsets not hooked; the dead view comes up close to an AI player");
+    if (!api->HookCode(mod, "camera.tracking_update", reinterpret_cast<void*>(&TrackingUpdate),
+                       reinterpret_cast<void**>(&g_originalTrackingUpdate)))
+        api->Log(mod, SDGO_LOG_WARN, "tracking camera not hooked; the dead view takes an AI player's aim");
     if (!Bind(g_gameNew, "crt.operator_new") ||
         !api->HookCode(mod, "mode.dead_view_players", reinterpret_cast<void*>(&DeadViewDetour), &g_deadViewResume))
         api->Log(mod, SDGO_LOG_WARN, "dead view not hooked; a down player cannot watch AI players");
