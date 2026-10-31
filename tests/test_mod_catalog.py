@@ -40,6 +40,12 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
 
+    def test_catalog_and_package_contents_follow_category_order(self):
+        c = catalog.read_catalog(self.root)
+        order = {key: i for i, key in enumerate(c["categories"])}
+        groups = [order[feature["category"]] for feature in c["features"].values()]
+        self.assertEqual(groups, sorted(groups))
+
     def test_selected_feature_brings_both_halves_and_fixes(self):
         c = catalog.select_catalog(catalog.read_catalog(self.root), features=["pvp-ai"])
         self.assertTrue({"match_ai", "pvp_ai"}.issubset({m["id"] for m in c["mods"]}))

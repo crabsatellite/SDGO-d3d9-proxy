@@ -95,6 +95,8 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
                      "guide": f"docs/{feature}.md"})
     if not mods:
         raise ValueError("No bundled mod manifests found")
+    category_order = {key: i for i, key in enumerate(CATEGORIES)}
+    mods.sort(key=lambda item: (category_order[item["category"]], item["feature"], item["id"]))
     if check_build:
         cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
         built = set(re.findall(r"\bsdgo_add_mod\(([a-z][a-z0-9_]*)\b", cmake))
