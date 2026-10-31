@@ -23,7 +23,7 @@
 //      when their respawn time has passed, and dead AI pilots only in modes 11 and 12.
 //      After it, the dead AI pilots of a PvP room get the same respawn steps a human gets.
 //
-// Like coop_ai, the title is read from the lobby room through a human pilot id.
+// The title is read from the room itself (+0x79 length, +0x7A text).
 
 #include <windows.h>
 
@@ -78,15 +78,12 @@ namespace
     using PilotStateRoomFn = void(__thiscall*)(uint8_t* part, uint8_t* room);
     using PilotStateModeFn = void(__thiscall*)(uint8_t* part, uint8_t a, uint8_t b);
     using SetupAiPilotFn = int(__thiscall*)(void* proc, uint8_t* info, uint8_t* pilot, uint8_t a, uint8_t b);
-    using MapFindFn = int(__thiscall*)(void* map, const uint32_t* key, int* value);
-    using LobbyRoomFn = uint8_t*(__thiscall*)(void* proc, int index, int tag);
-    using LobbyReleaseFn = void(__thiscall*)(void* proc, int index);
 
-    // ---- lobby room layout (WaitRoom), as the create-room handler writes it ----------
-    constexpr size_t kLobbyMapLock = 0x38;      // CRITICAL_SECTION in the lobby proc
-    constexpr size_t kLobbyMap = 0x14;          // user id -> room index
-    constexpr size_t kLobbyTitleLength = 0x53;  // u8
-    constexpr size_t kLobbyTitle = 0x54;        // up to 20 bytes, CP949
+    // The title of a PvP room is in the room itself (unlike a co-op mission room, whose
+    // title is in the lobby room coop_ai reads): written by the room-settings (0x004BEC60)
+    // and title-change (0x004DCA40) handlers, sent to the clients by 0x004DD120.
+    constexpr size_t kRoomTitleLength = 0x79;   // u8
+    constexpr size_t kRoomTitle = 0x7A;         // up to 20 bytes, CP949
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
@@ -103,10 +100,6 @@ namespace
     PilotStateRoomFn g_pilotStateRoom = nullptr;
     PilotStateModeFn g_pilotStateMode = nullptr;
     SetupAiPilotFn g_setupAiPilot = nullptr;
-    uint8_t* g_lobbyProc = nullptr;
-    MapFindFn g_lobbyMapFind = nullptr;
-    LobbyRoomFn g_lobbyRoom = nullptr;
-    LobbyReleaseFn g_lobbyRelease = nullptr;
 
     struct Settings
     {
@@ -276,29 +269,6 @@ namespace
         return false;
     }
 
-    // Title of the lobby room of a user; false when the user is in none.
-    bool LobbyTitle(uint32_t userId, char* title, int* index)
-    {
-        *index = 0;
-        auto lock = reinterpret_cast<CRITICAL_SECTION*>(g_lobbyProc + kLobbyMapLock);
-        EnterCriticalSection(lock);
-        g_lobbyMapFind(g_lobbyProc + kLobbyMap, &userId, index);
-        LeaveCriticalSection(lock);
-        if (*index == 0)
-            return false;
-        uint8_t* lobby = g_lobbyRoom(g_lobbyProc, *index, 0);
-        if (!lobby)
-            return false;
-        size_t length = lobby[kLobbyTitleLength];
-        if (length > kRoomTitleMax)
-            length = kRoomTitleMax;
-        memcpy(title, lobby + kLobbyTitle, length);
-        title[length] = '\0';
-        title[strnlen(title, length)] = '\0';
-        g_lobbyRelease(g_lobbyProc, *index);
-        return true;
-    }
-
     // Humans and AI pilots per team (index 1, 2) and the room's title.
     struct RoomView
     {
@@ -306,14 +276,19 @@ namespace
         int ai[3] = {};
         char title[kRoomTitleMax + 1] = {};
         bool titled = false;
-        uint32_t titleOwner = 0;
-        int lobbyIndex = 0;
         uint8_t hostTeam = 0;
     };
 
     RoomView ViewRoom(uint8_t* room)
     {
         RoomView view;
+        size_t length = room[kRoomTitleLength];
+        if (length > kRoomTitleMax)
+            length = kRoomTitleMax;
+        memcpy(view.title, room + kRoomTitle, length);
+        view.title[length] = '\0';
+        view.title[strnlen(view.title, length)] = '\0';
+        view.titled = view.title[0] != '\0';
         uint32_t host = *reinterpret_cast<uint32_t*>(room + kRoomHost);
         for (int slot = 0; slot < kSlots; ++slot) {
             uint32_t id = SlotPilotId(room, slot);
@@ -327,10 +302,6 @@ namespace
             ++view.humans[team];
             if (id == host)
                 view.hostTeam = static_cast<uint8_t>(team);
-            if (!view.titled && LobbyTitle(id, view.title, &view.lobbyIndex)) {
-                view.titled = true;
-                view.titleOwner = id;
-            }
         }
         if (view.hostTeam == 0)
             view.hostTeam = view.humans[1] >= view.humans[2] ? 1 : 2;
@@ -680,9 +651,7 @@ SDGO_MOD_ENTRY
                  Bind(g_waitRoomProc, "battle.waitroom_proc") && Bind(g_buildAiPilot, "battle.build_ai_pilot") &&
                  Bind(g_pilotReset, "battle.pilot_reset") && Bind(g_pilotStateId, "battle.pilot_state_id") &&
                  Bind(g_pilotStateRoom, "battle.pilot_state_room") && Bind(g_pilotStateMode, "battle.pilot_state_mode") &&
-                 Bind(g_setupAiPilot, "battle.setup_ai_pilot") && Bind(g_lobbyProc, "battle.lobby_proc") &&
-                 Bind(g_lobbyMapFind, "battle.lobby_map_find") && Bind(g_lobbyRoom, "battle.lobby_room") &&
-                 Bind(g_lobbyRelease, "battle.lobby_release") && Bind(g_respawnPilot, "battle.respawn_pilot") &&
+                 Bind(g_setupAiPilot, "battle.setup_ai_pilot") && Bind(g_respawnPilot, "battle.respawn_pilot") &&
                  Bind(g_respawnRefresh, "battle.respawn_refresh") &&
                  Bind(g_pilotStateRespawn, "battle.pilot_state_respawn");
     if (!bound)
