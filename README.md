@@ -83,7 +83,9 @@ unaffected. See [Other game builds](#other-game-builds).
 ## Install
 
 Requirements: Windows with Windows PowerShell 5.1 (built in). No VC++ redistributable is
-needed. Download and extract the release zip, then open PowerShell in the extracted folder.
+needed. Download `SDGO-ModFramework-<version>.zip` from the
+[latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest), extract it,
+then open PowerShell in the extracted folder.
 
 ### Client (every player)
 
