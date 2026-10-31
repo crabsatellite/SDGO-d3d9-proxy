@@ -59,6 +59,8 @@ namespace
         sockaddr_in address = IPv4(dottedAddress, requestedPort);
         if (bind(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR ||
             !BoundPort(socket, actualPort)) {
+            std::printf("fixture reservation busy: type %d %s:%u (Winsock %d)\n",
+                        type, dottedAddress, requestedPort, WSAGetLastError());
             closesocket(socket);
             return INVALID_SOCKET;
         }
@@ -77,19 +79,43 @@ namespace
 
     // A UDP ephemeral port can already be occupied in TCP by an unrelated
     // application. Reserve both protocols together instead of assuming it is free.
-    void ReserveProtocolPair(SOCKET* udp, SOCKET* tcp, unsigned short* port)
+    void ReserveProtocolPair(SOCKET* udp, SOCKET* tcp, unsigned short* port, SOCKET* udpAlias = nullptr)
     {
         *udp = *tcp = INVALID_SOCKET;
+        if (udpAlias) *udpAlias = INVALID_SOCKET;
         for (unsigned attempt = 0; attempt < 32; ++attempt) {
             unsigned short selected = 0, udpPort = 0;
             SOCKET tcpGuard = BindLoopback(SOCK_STREAM, &selected);
             if (tcpGuard == INVALID_SOCKET) continue;
             SOCKET udpGuard = BindLoopbackAt(SOCK_DGRAM, selected, &udpPort);
-            if (udpGuard != INVALID_SOCKET) {
+            SOCKET alias = udpAlias && udpGuard != INVALID_SOCKET
+                ? BindIPv4At(SOCK_DGRAM, "127.0.0.2", selected, &udpPort) : INVALID_SOCKET;
+            if (udpGuard != INVALID_SOCKET && (!udpAlias || alias != INVALID_SOCKET)) {
                 *udp = udpGuard; *tcp = tcpGuard; *port = selected;
+                if (udpAlias) *udpAlias = alias;
                 return;
             }
+            if (udpGuard != INVALID_SOCKET) closesocket(udpGuard);
             closesocket(tcpGuard);
+        }
+    }
+
+    void ReserveTcpAliases(SOCKET* primary, SOCKET* alias, SOCKET* service, unsigned short* port)
+    {
+        *primary = *alias = *service = INVALID_SOCKET;
+        for (unsigned attempt = 0; attempt < 32; ++attempt) {
+            unsigned short selected = 0, actual = 0;
+            SOCKET first = BindLoopback(SOCK_STREAM, &selected);
+            if (first == INVALID_SOCKET) continue;
+            SOCKET second = BindIPv4At(SOCK_STREAM, "127.0.0.2", selected, &actual);
+            SOCKET third = second == INVALID_SOCKET ? INVALID_SOCKET :
+                BindIPv4At(SOCK_STREAM, "127.0.0.3", selected, &actual);
+            if (second != INVALID_SOCKET && third != INVALID_SOCKET) {
+                *primary = first; *alias = second; *service = third; *port = selected;
+                return;
+            }
+            if (second != INVALID_SOCKET) closesocket(second);
+            closesocket(first);
         }
     }
 
@@ -378,20 +404,19 @@ int wmain(int argc, wchar_t** argv)
     unsigned short externalUdpPort = 0;
     unsigned short logicalUdpPort = 0;
     SOCKET externalTcp = BindLoopback(SOCK_STREAM, &externalTcpPort);
-    SOCKET logicalTcpGuard = BindLoopback(SOCK_STREAM, &logicalTcpPort);
+    SOCKET logicalTcpGuard = INVALID_SOCKET, logicalTcpAliasGuard = INVALID_SOCKET, logicalTcpServiceGuard = INVALID_SOCKET;
+    ReserveTcpAliases(&logicalTcpGuard, &logicalTcpAliasGuard, &logicalTcpServiceGuard, &logicalTcpPort);
     unsigned short logicalTcpAliasPort = 0;
-    SOCKET logicalTcpAliasGuard = logicalTcpGuard == INVALID_SOCKET ? INVALID_SOCKET :
-        BindIPv4At(SOCK_STREAM, "127.0.0.2", logicalTcpPort, &logicalTcpAliasPort);
+    BoundPort(logicalTcpAliasGuard, &logicalTcpAliasPort);
     unsigned short logicalTcpServicePort = 0;
-    SOCKET logicalTcpServiceGuard = logicalTcpGuard == INVALID_SOCKET ? INVALID_SOCKET :
-        BindIPv4At(SOCK_STREAM, "127.0.0.3", logicalTcpPort, &logicalTcpServicePort);
+    BoundPort(logicalTcpServiceGuard, &logicalTcpServicePort);
     SOCKET externalUdp = INVALID_SOCKET, udpExternalTcp = INVALID_SOCKET;
     SOCKET logicalUdpGuard = INVALID_SOCKET, udpLogicalTcpGuard = INVALID_SOCKET;
     ReserveProtocolPair(&externalUdp, &udpExternalTcp, &externalUdpPort);
-    ReserveProtocolPair(&logicalUdpGuard, &udpLogicalTcpGuard, &logicalUdpPort);
+    SOCKET logicalUdpAliasGuard = INVALID_SOCKET;
+    ReserveProtocolPair(&logicalUdpGuard, &udpLogicalTcpGuard, &logicalUdpPort, &logicalUdpAliasGuard);
     unsigned short logicalUdpAliasPort = 0;
-    SOCKET logicalUdpAliasGuard = logicalUdpGuard == INVALID_SOCKET ? INVALID_SOCKET :
-        BindIPv4At(SOCK_DGRAM, "127.0.0.2", logicalUdpPort, &logicalUdpAliasPort);
+    BoundPort(logicalUdpAliasGuard, &logicalUdpAliasPort);
     unsigned short unmappedUdpPort = 0;
     SOCKET unmappedUdp = BindLoopback(SOCK_DGRAM, &unmappedUdpPort);
     const unsigned short udpExternalTcpPort = externalUdpPort;

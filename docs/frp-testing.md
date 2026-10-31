@@ -8,9 +8,7 @@ required for the automated suites.
 cmake -S . -B build -A Win32
 cmake --build build --config Release --parallel
 python -m unittest discover -s tests -p "test_frp*.py" -v
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/loader_test.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/findwindow_fix_test.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/install_test.ps1
+ctest --test-dir build -C Release --output-on-failure
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/net_route_test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/net_login_test.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/agent_udp_pool_test.ps1
@@ -20,6 +18,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/package.ps1
 
 The workflow in `.github/workflows/frp-tests.yml` runs the same suites. A workflow
 definition is not evidence that a remote run passed; check its result on the PR.
+CTest includes the existing native AI contracts, framework regressions and staged
+metadata repair checks. The optional Lua simulation uses the source configured by
+`SDGO_LUA50_SOURCE`; without it the eight native/framework CTest checks still run.
 
 The route tests cover TCP aliases, independent services, UDP reverse translation,
 peek/empty/truncated packets, disabled mode, invalid rules and hook rollback.
