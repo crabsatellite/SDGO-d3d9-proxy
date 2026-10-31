@@ -116,7 +116,8 @@ namespace
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
     using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
-    using GridFindFn = void*(__thiscall*)(void* map, uint8_t** out, uint32_t* key);
+    using GridDataFn = void*(__cdecl*)();
+    using GridFindFn = int(__thiscall*)(void* grid, const uint8_t** record, uint32_t id, int type, char log);
     using AddDeckUnitFn = void(__thiscall*)(uint8_t* unit, uint32_t unitDataId);
     using SwitchDeckFn = void(__thiscall*)(uint8_t* unit, int index, char flag);
     using PlaybackUnitFn = int(__thiscall*)(void* self, uint8_t* packet);
@@ -182,7 +183,7 @@ namespace
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
     FindPlayerFn g_originalFindPlayer = nullptr;
-    void** g_gridManager = nullptr;
+    GridDataFn g_gridData = nullptr;
     GridFindFn g_gridFind = nullptr;
     AddDeckUnitFn g_addDeckUnit = nullptr;
     SwitchDeckFn g_switchDeck = nullptr;
@@ -275,7 +276,8 @@ namespace
     // each record entry (+0x44 + i * 0xB4) is that unit's NPC data id. A player's deck is
     // built from its record by 0x00665CC0, which skips NPC units, and its message 7 handler
     // switches the deck on a respawn; the NPC handler does neither. Here the AI unit gets the
-    // other deck units with the same AddDeckUnit (unit data id = NPC data +0x69), and on a
+    // other deck units with the same AddDeckUnit (unit data id = NPC data +0x69; NPC data is
+    // grid data type 0x29, GridData::Find 0x0059D2B0), and on a
     // respawn its NPC data is set to the new entry's before message 7 (CNPC::Add re-inits the
     // AI script from it) and the deck switched after it, as CPlayer does.
     constexpr size_t kRecordUnits = 0x44;       // 4 unit entries, stride 0xB4
@@ -290,18 +292,10 @@ namespace
 
     const uint8_t* FindNpcData(uint32_t npcId)
     {
-        void* map = *g_gridManager;
-        if (!map)
+        const uint8_t* npc = nullptr;
+        if (!g_gridFind(g_gridData(), &npc, npcId, kGridNpcData, 0))
             return nullptr;
-        uint8_t* node = nullptr;
-        uint32_t key = npcId;
-        g_gridFind(map, &node, &key);
-        if (!node || node == *reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(map) + 4))
-            return nullptr;
-        auto entry = *reinterpret_cast<uint32_t**>(node + 0x10);
-        if (!entry || entry[0] != kGridNpcData)
-            return nullptr;
-        return reinterpret_cast<const uint8_t*>(entry[1]);
+        return npc;
     }
 
     int DeckSize(uint8_t* unit)
@@ -1267,7 +1261,7 @@ SDGO_MOD_ENTRY
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
                  Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count") &&
-                 Bind(g_gridManager, "grid.manager") && Bind(g_gridFind, "grid.find") &&
+                 Bind(g_gridData, "grid.data") && Bind(g_gridFind, "grid.find") &&
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
         return 0;
