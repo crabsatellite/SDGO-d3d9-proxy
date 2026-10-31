@@ -113,6 +113,7 @@ namespace
     using SetSlotColourFn = void(__thiscall*)(void* um, int index, int colour);
     using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
     using GameNewFn = void*(__cdecl*)(size_t size);
+    using CameraOffsetsFn = void(__thiscall*)(uint8_t* camera);
     using IsPlayerObjectFn = bool(__thiscall*)(void* um, uint32_t objectId);
     using SetPlayerCountFn = void(__thiscall*)(void* um, int count);
     using FindPlayerFn = void*(__thiscall*)(void* um, uint32_t objectId);
@@ -176,6 +177,7 @@ namespace
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
     GameNewFn g_gameNew = nullptr;
+    CameraOffsetsFn g_originalCameraOffsets = nullptr;
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
     PlayerSlotFn g_originalPlayerSlot = nullptr;
     SetPlayerCountFn g_setPlayerCount = nullptr;
@@ -209,6 +211,9 @@ namespace
     };
     std::vector<Bot> g_botTable;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
+    int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
+    int g_cameraLogs = 0;      // camera offset lines logged this game
+    bool g_logDiagnostics = false;
 
     struct ModeClass
     {
@@ -543,6 +548,8 @@ namespace
         g_botTable.clear();
         g_aiEnabled = false;
         g_logPackets = false;
+        g_viewStateLogs = 0;
+        g_cameraLogs = 0;
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
@@ -993,11 +1000,6 @@ namespace
     // at the next unit of its team in a copy of UM's player list (0x00AD7A40), which holds
     // only CPlayer units. The AI players' units join that copy, at its end, with nodes from
     // the game's own operator new: the game frees the list itself.
-    // The tracking camera (0x00493F30, offsets set by 0x00495490) scales its distance from the
-    // target by unit +0x2EEC, which CUnit's init (vt slot 20, 0x0067A520) sets to 1.0 (to 1.7
-    // or 1.2 for a leader) and CNPC never sets: on an AI unit the camera sat at its centre (seen
-    // through the unit, shaking with its turns). A watched AI unit without one gets 1.0.
-    constexpr size_t kUnitCameraScale = 0x2EEC;
 
     struct ListNode
     {
@@ -1014,6 +1016,43 @@ namespace
 
     int g_deadViewLogs = 0;
 
+    // Diagnostic (LogDiagnostics), the first clicks of a game: the camera (UM +0x82C8: target
+    // +0x344, position +0x348..+0x350, offsets +0x354..+0x35C) and, for each unit of the list,
+    // its unit data's camera offsets (+0xFB5..+0xFBD) and its aim (+0xD94, +0xD9C).
+    constexpr size_t kUmCamera = 0x82C8;
+    constexpr size_t kCameraTarget = 0x344;
+    constexpr size_t kUnitData = 0x9C4;
+
+    float FloatAt(const uint8_t* p, size_t offset)
+    {
+        return *reinterpret_cast<const float*>(p + offset);
+    }
+
+    void LogViewUnit(const char* who, const uint8_t* unit)
+    {
+        const uint8_t* data = *reinterpret_cast<uint8_t* const*>(unit + kUnitData);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "dead view %s: object %lu, camera offsets (%.1f, %.1f, %.1f), aim (%.3f, %.3f)",
+                   who, static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(unit + kUnitObjectId)),
+                   data ? FloatAt(data, 0xFB5) : 0.0f, data ? FloatAt(data, 0xFB9) : 0.0f, data ? FloatAt(data, 0xFBD) : 0.0f,
+                   FloatAt(unit, 0xD94), FloatAt(unit, 0xD9C));
+    }
+
+    void LogViewState(void* um, UnitList* list)
+    {
+        const uint8_t* camera = *reinterpret_cast<uint8_t* const*>(static_cast<uint8_t*>(um) + kUmCamera);
+        if (camera)
+            g_api->Log(g_mod, SDGO_LOG_INFO, "dead view camera: target %p, at (%.1f, %.1f, %.1f), offsets (%.1f, %.1f, %.1f)",
+                       *reinterpret_cast<void* const*>(camera + kCameraTarget), FloatAt(camera, 0x348),
+                       FloatAt(camera, 0x34C), FloatAt(camera, 0x350), FloatAt(camera, 0x354), FloatAt(camera, 0x358),
+                       FloatAt(camera, 0x35C));
+        for (ListNode* node = list->head->next; node != list->head; node = node->next)
+            if (node->unit)
+                LogViewUnit("player", node->unit);
+        for (const Bot& bot : g_botTable)
+            if (auto unit = static_cast<uint8_t*>(g_findObject(um, bot.objectId)))
+                LogViewUnit("AI", unit);
+    }
+
     void AddAiToDeadView(UnitList* list)
     {
         __try {
@@ -1022,14 +1061,15 @@ namespace
             void* um = *g_game.unitManager;
             if (!um)
                 return;
+            if (g_logDiagnostics && g_viewStateLogs < 4) {
+                ++g_viewStateLogs;
+                LogViewState(um, list);
+            }
             int added = 0;
             for (const Bot& bot : g_botTable) {
                 auto unit = static_cast<uint8_t*>(g_findObject(um, bot.objectId));
                 if (!unit)
                     continue;
-                auto& cameraScale = *reinterpret_cast<float*>(unit + kUnitCameraScale);
-                if (!(cameraScale > 0.0f))
-                    cameraScale = 1.0f;
                 bool listed = false;
                 for (ListNode* node = list->head->next; node != list->head && !listed; node = node->next)
                     listed = node->unit == unit;
@@ -1057,6 +1097,67 @@ namespace
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX adding the AI players to the dead view",
                            GetExceptionCode());
             }
+        }
+    }
+
+    // ---- the camera keeps a player's distance from an AI unit ----------------------------
+    //
+    // When the camera gets a target (0x00495490, from SetTarget 0x00497620 and the camera
+    // resets), it takes its distance and height from the target's unit data (unit +0x9C4,
+    // floats +0xFB5, +0xFB9, +0xFBD; player units 260, -260, 135). An AI player's unit has the
+    // AI battle NPC's unit data, whose offsets are 100, -100, 100: the dead view glided up close
+    // to it. For an AI player's unit the camera reads the player unit data of the same unit
+    // (NPC data +0x69, grid data type 2, as CUnit::InitUnitData 0x0067F376 finds it) instead.
+    constexpr uint32_t kGridUnitData = 2;
+
+    const uint8_t* AiPlayerUnitData(uint8_t* unit)
+    {
+        if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
+            return nullptr;
+        for (const Bot& bot : g_botTable) {
+            if (bot.unit != unit)
+                continue;
+            const uint8_t* npc = *reinterpret_cast<uint8_t* const*>(unit + kUnitNpcData);
+            if (!npc)
+                return nullptr;
+            const uint8_t* data = nullptr;
+            if (!g_gridFind(g_gridData(), &data, *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId), kGridUnitData, 0))
+                return nullptr;
+            return data;
+        }
+        return nullptr;
+    }
+
+    const uint8_t* GuardedAiPlayerUnitData(uint8_t* unit)
+    {
+        __try {
+            return AiPlayerUnitData(unit);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
+    }
+
+    void __fastcall CameraOffsets(uint8_t* camera, void* /*edx*/)
+    {
+        uint8_t* target = camera ? *reinterpret_cast<uint8_t**>(camera + kCameraTarget) : nullptr;
+        const uint8_t* playerData = GuardedAiPlayerUnitData(target);
+        if (!playerData) {
+            g_originalCameraOffsets(camera);
+            return;
+        }
+        auto dataSlot = reinterpret_cast<const uint8_t**>(target + kUnitData);
+        const uint8_t* own = *dataSlot;
+        *dataSlot = playerData;
+        __try {
+            g_originalCameraOffsets(camera);
+        } __finally {
+            *dataSlot = own;
+        }
+        if (g_cameraLogs < 3) {
+            ++g_cameraLogs;
+            g_api->Log(g_mod, SDGO_LOG_INFO, "camera on AI object %lu: player unit offsets (%.1f, %.1f, %.1f)",
+                       static_cast<unsigned long>(*reinterpret_cast<const uint32_t*>(target + kUnitObjectId)),
+                       FloatAt(playerData, 0xFB5), FloatAt(playerData, 0xFB9), FloatAt(playerData, 0xFBD));
         }
     }
 
@@ -1525,6 +1626,9 @@ SDGO_MOD_ENTRY
         return 0;
     if (!api->HookCode(mod, "game.dead_unit_life_cost", reinterpret_cast<void*>(&DeathCostDetour), &g_deathCostResume))
         api->Log(mod, SDGO_LOG_WARN, "death match life cost not hooked; the HUD bar counts an AI player's NPC cost");
+    if (!api->HookCode(mod, "camera.set_target_offsets", reinterpret_cast<void*>(&CameraOffsets),
+                       reinterpret_cast<void**>(&g_originalCameraOffsets)))
+        api->Log(mod, SDGO_LOG_WARN, "camera offsets not hooked; the dead view comes up close to an AI player");
     if (!Bind(g_gameNew, "crt.operator_new") ||
         !api->HookCode(mod, "mode.dead_view_players", reinterpret_cast<void*>(&DeadViewDetour), &g_deadViewResume))
         api->Log(mod, SDGO_LOG_WARN, "dead view not hooked; a down player cannot watch AI players");
@@ -1543,7 +1647,8 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "waitroom.battle_udp_setup", reinterpret_cast<void*>(&UdpSetup),
                        reinterpret_cast<void**>(&g_originalUdpSetup)))
         return 0;
-    if (api->SettingInt(mod, "LogDiagnostics", 0) != 0) {
+    g_logDiagnostics = api->SettingInt(mod, "LogDiagnostics", 0) != 0;
+    if (g_logDiagnostics) {
         InstallFaultLogger();
         Bind(g_luaToString, "lua.tostring");
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
