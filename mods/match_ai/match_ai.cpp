@@ -611,8 +611,14 @@ namespace
     // 120, 12 players 160, odd counts nothing. With one human and AI players nothing was set,
     // so the HUD's grid bar stayed empty while the server scored. With AI players the gauge
     // is set the way the server sets each team's (pvp_ai GridGauge, from 0x004B6EB0): by the
-    // players per team, humans and AI, the larger team where they differ.
+    // players per team, humans and AI, the larger team where they differ. The HUD has its
+    // own copy: the Init's last step, the mode's CreateInterface (vt slot 18, 0x00AD7650),
+    // creates it (mode +0x0C) and passes it the gauge through its vt slot 23 (0x004F7EC0),
+    // before the AI players spawn; it gets the new gauge the same way.
     constexpr size_t kModeGridGauge = 0x30;
+    constexpr size_t kModeInterface = 0x0C;
+    constexpr int kInterfaceSetGaugeSlot = 23;
+    using SetGaugeFn = void(__thiscall*)(uint8_t* hud, int gauge);
 
     int GridGauge(int perTeam)
     {
@@ -642,8 +648,14 @@ namespace
         auto& field = *reinterpret_cast<int32_t*>(mode + kModeGridGauge);
         g_api->Log(g_mod, SDGO_LOG_INFO, "grid match: gauge %ld -> %d (teams %d/%d with the AI players)",
                    static_cast<long>(field), gauge, team[1], team[2]);
-        if (gauge > 0)
-            field = gauge;
+        if (gauge <= 0)
+            return;
+        field = gauge;
+        uint8_t* hud = *reinterpret_cast<uint8_t**>(mode + kModeInterface);
+        if (hud) {
+            auto setGauge = reinterpret_cast<SetGaugeFn>((*reinterpret_cast<void***>(hud))[kInterfaceSetGaugeSlot]);
+            setGauge(hud, gauge);
+        }
     }
 
     bool GuardedSpawn(uint8_t* mode, const char* className, DWORD* code)
