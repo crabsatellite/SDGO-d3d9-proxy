@@ -1,7 +1,7 @@
-# 输入法兼容（FindWindowW 修复）
+# 通用输入法修复（FindWindowW）
 
-修复讯飞等输入法让游戏卡死或崩溃的问题。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找，
-本修复为游戏本体以外的代码恢复正常查找。English: [findwindow-fix.md](findwindow-fix.md)
+修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的
+窗口查找，本修复为游戏本体以外的所有代码恢复正常查找。English: [findwindow-fix.md](findwindow-fix.md)
 
 | mod | 运行在 | 负责 |
 |---|---|---|
@@ -50,8 +50,12 @@ findwindow_fix: window lookup for an external caller: 000105DC
 * 类名为 NULL 或 atom 时按字符串读取，游戏直接崩溃。
 
 `GOnline.exe` 只调用一次 `FindWindowW`（`0x004914F6`），参数正是这组类名和标题：单开检查。SDPlus 的
-返回值让游戏可以多开。进程里其它查找窗口的代码则拿到假句柄或者崩溃。讯飞的输入法服务会查找自己的
-服务端窗口（`iFlyPlatform.exe`），把初始化请求发给假句柄，然后在游戏的界面线程上无限等待回复。
+返回值让游戏可以多开。进程里其它查找窗口的代码则拿到假句柄或者崩溃。输入法运行在游戏进程里，所以任何需要
+查找窗口的输入法（例如查找自己后台进程的窗口）一开启就会让游戏卡死或崩溃。实际发现并在游戏里验证的是讯飞：
+它的输入法服务查找服务端窗口（`iFlyPlatform.exe`），把初始化请求发给假句柄，然后在游戏的界面线程上无限
+等待回复。从不查找窗口的输入法（例如微软拼音）不受影响。
+
+本修复不判断调用者是哪个输入法（或其它 DLL），游戏本体和 SDPlus 以外的所有调用都恢复正常查找。
 
 `findwindow_fix` 通过核心的 `HookSystemExport`（MinHook）hook 同一个导出函数，trampoline 把 SDPlus 的
 改动保留为上一层 hook。加载时记录 `GOnline.exe` 和 `SDPlus.dll` 的地址范围，按每次调用的返回地址区分：

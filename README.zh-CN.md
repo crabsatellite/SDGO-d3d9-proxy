@@ -22,7 +22,7 @@ English: [README.md](README.md)
 |---|---|---|---|---|
 | 任务模式 AI 僚机 | 任务模式里 AI 驾驶员加入你的队伍，使用游戏原生的 AI 对战机器人 AI，击破正常计算，也会被击落。在房间标题写 `!ai`。 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [中文](docs/coop-wingmen.zh-CN.md) · [English](docs/coop-wingmen.md) |
 | 输入法修复 | 修复一处把输入法（中/日/韩）提交的字节数当成字符数的问题。 | `ime_fix` | 客户端 | [docs/ime-fix.md](docs/ime-fix.md) |
-| 输入法兼容 | 修复讯飞等输入法让游戏卡死或崩溃：整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），本修复为游戏本体以外的代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
+| 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
 | 发包日志 | 开发 mod 用的发包记录，默认关闭。 | `net_probe` | 客户端 | [docs/net-probe.md](docs/net-probe.md) |
 
 "安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装客户端部分才生效。没装客户端部分的玩家
@@ -34,9 +34,10 @@ English: [README.md](README.md)
 
 ![任务模式里 AI 僚机与玩家并肩作战](docs/coop-wingmen-demo.webp)
 
-输入法兼容：游戏大厅里开启讯飞输入法（红框为讯飞工具栏）。没有 `findwindow_fix` 时，切换到讯飞会让游戏卡死。
+通用输入法修复：游戏大厅里开启输入法（红框为输入法工具栏，截图中是讯飞）。没有 `findwindow_fix` 时，任何需要查找窗口的
+输入法一开启就会让游戏卡死或崩溃。
 
-![开启讯飞输入法的游戏大厅](docs/findwindow-fix-ifly.png)
+![开启输入法的游戏大厅](docs/findwindow-fix-ime.png)
 
 ## 包内容
 

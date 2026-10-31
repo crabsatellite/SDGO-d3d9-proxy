@@ -1,8 +1,8 @@
-# Input method compatibility (FindWindowW fix)
+# General input method fix (FindWindowW)
 
-Stops input methods such as iFlytek (讯飞) from freezing or crashing the game. The repack's
-`SDPlus.dll` breaks window lookup for every DLL in the game process; this fix restores it
-for everything except the game itself. 中文：[findwindow-fix.zh-CN.md](findwindow-fix.zh-CN.md)
+Stops input methods from freezing or crashing the game, whichever input method it is. The
+repack's `SDPlus.dll` breaks window lookup for every DLL in the game process; this fix
+restores it for everything except the game itself. 中文：[findwindow-fix.zh-CN.md](findwindow-fix.zh-CN.md)
 
 | mod | host | part |
 |---|---|---|
@@ -54,9 +54,16 @@ different cause.
 
 `GOnline.exe` calls `FindWindowW` once (`0x004914F6`), with exactly that class and title: its
 single-instance check. SDPlus's answer lets several clients run at once. Any other code in
-the process that looks up a window gets a bogus handle or crashes. iFlytek's text service
-looks up its server window (`iFlyPlatform.exe`), sends its start-up request to the bogus
-handle and then waits forever for the reply, on the game's UI thread.
+the process that looks up a window gets a bogus handle or crashes. Input methods run inside
+the game process, so any input method that looks up a window (for example the window of its
+own background process) hangs or crashes the game as soon as it is switched on. The case
+found and tested in game was iFlytek: its text service looks up its server window
+(`iFlyPlatform.exe`), sends its start-up request to the bogus handle and then waits forever
+for the reply, on the game's UI thread. Input methods that never look up a window, such as
+Microsoft Pinyin, were not affected.
+
+The fix does not check which input method (or other DLL) is calling; it restores the normal
+lookup for every caller outside the game and SDPlus.
 
 `findwindow_fix` detours the same export through the core's `HookSystemExport` (MinHook; the
 trampoline keeps SDPlus's patch as the previous hook). It records the address ranges of

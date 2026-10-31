@@ -23,7 +23,7 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 |---|---|---|---|---|
 | Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
 | IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [docs/ime-fix.md](docs/ime-fix.md) |
-| Input method compatibility | Stops input methods such as iFlytek from freezing or crashing the game: the repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game, and this restores it for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
+| General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
 
 A feature that lists the battle server works only when the battle servers have the server
@@ -37,10 +37,11 @@ player and fight the mission's enemies.
 
 ![Co-op mission with AI wingmen fighting alongside the player](docs/coop-wingmen-demo.webp)
 
-Input method compatibility: the game lobby with the iFlytek input method switched on (its
-toolbar is boxed in red). Without `findwindow_fix`, switching to iFlytek freezes the game.
+General input method fix: the game lobby with an input method switched on (its toolbar is
+boxed in red; iFlytek in this screenshot). Without `findwindow_fix`, any input method that
+looks up a window freezes or crashes the game as soon as it is switched on.
 
-![Game lobby with the iFlytek input method active](docs/findwindow-fix-ifly.png)
+![Game lobby with an input method switched on](docs/findwindow-fix-ime.png)
 
 ## What is in the package
 
