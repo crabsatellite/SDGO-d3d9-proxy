@@ -36,6 +36,9 @@ startup_crash_fix: loading set <set id> picked: its unit <unit id> is missing, n
 | `loading set ... picked: its unit ... is missing` | this start would have crashed; the screen shows no unit |
 | `required symbol gate.show_set_unit ...` | this client build differs there; the mod stays off |
 
+On the client this was found on: 9 loading sets, 2 with a missing unit (set 27106: unit 25452,
+set 27107: unit 25454).
+
 ## How it works
 
 While the game starts (`CGameApp::SetState`, `SERVICE_LOGO`), the gate loading screen
@@ -47,4 +50,6 @@ unit record's name at `+0x264` without checking that the unit was found. The gam
 log (`zoa_log\Exp_*.txt`) has this crash since 2024, before any mod.
 
 `startup_crash_fix` hooks `gate.show_set_unit`: when the set's unit is not in the unit data, it
-returns the way the function does for a set without a unit.
+returns the way the function does for a set without a unit. Before that early return the
+function only looks up the screen's `unit_pos` node and keeps it at `+0x2084`, which only the
+same function reads, so returning before it changes nothing else.

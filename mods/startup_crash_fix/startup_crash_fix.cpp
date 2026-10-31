@@ -10,7 +10,9 @@
 // 0x008FE610, read of address 0x264), whenever the random pick lands on it.
 //
 // A set whose unit is missing is treated like a set without a unit: the screen shows no
-// unit. The first time, the loading sets whose unit is missing are logged.
+// unit. Before that early return the function only looks up the screen's "unit_pos" node and
+// keeps it at +0x2084, which only the same function reads, so returning before it changes
+// nothing else. The first time, the loading sets whose unit is missing are logged.
 
 #include <windows.h>
 

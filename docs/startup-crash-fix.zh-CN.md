@@ -33,6 +33,8 @@ startup_crash_fix: loading set <组编号> picked: its unit <机体编号> is mi
 | `loading set ... picked: its unit ... is missing` | 这次启动原本会闪退；读取界面不显示机体 |
 | `required symbol gate.show_set_unit ...` | 客户端版本在这里不同，本 mod 不启用 |
 
+发现问题的客户端上：共 9 组读取界面，其中 2 组的机体缺失（第 27106 组：机体 25452；第 27107 组：机体 25454）。
+
 ## 原理
 
 游戏启动时（`CGameApp::SetState`，`SERVICE_LOGO`），读取界面（`0x0090C320`）用
@@ -43,3 +45,5 @@ startup_crash_fix: loading set <组编号> picked: its unit <机体编号> is mi
 闪退，早于任何 mod。
 
 `startup_crash_fix` 挂钩 `gate.show_set_unit`：这一组的机体不在机体数据里时，按"没有机体"的方式直接返回。
+原函数在这个提前返回之前只做一件事：查找界面的 `unit_pos` 节点并存到 `+0x2084`，而这个值只有该函数自己会读，
+所以直接返回不会改变其它任何东西。
