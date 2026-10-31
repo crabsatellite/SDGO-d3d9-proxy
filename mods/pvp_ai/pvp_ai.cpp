@@ -56,6 +56,13 @@ namespace
     constexpr size_t kPilotForm = 0x33C;        // u8, selects the unit record
     constexpr size_t kPilotUnits = 0x340;       // unit records, stride 0x658
     constexpr size_t kUnitStride = 0x658;
+    // Death match lives (RespawnPilot 0x00487030, modes 3/14): the pilot's power (pilot +0x1E,
+    // u16, 1000 at the start) pays each life the unit record's cost (+0x08, u16, unit data +9);
+    // the life being played costs pilot +0x20 (u16), taken from the team power when it dies.
+    constexpr size_t kPilotPower = 0x1E;
+    constexpr size_t kPilotLifeCost = 0x20;
+    constexpr size_t kUnitLifeCost = 0x08;
+    constexpr size_t kUnitMaxHp = 0x04;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
 
     // The dispatcher keeps a copy of the room in its frame (ebp - 0x328AC); its team checks
@@ -384,8 +391,13 @@ namespace
             memset(pilot, 0, kPilotStride);
             return false;
         }
-        g_api->Log(g_mod, SDGO_LOG_INFO, "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u", slot,
-                   static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team, colour);
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u; unit life cost %u, max HP %lu, power %u, "
+                   "life cost %u",
+                   slot, static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team, colour,
+                   *reinterpret_cast<uint16_t*>(unit + kUnitLifeCost),
+                   static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitMaxHp)),
+                   *reinterpret_cast<uint16_t*>(pilot + kPilotPower), *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost));
         return true;
     }
 
@@ -607,6 +619,22 @@ namespace
         return pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
     }
 
+    // Diagnostic text: the pilot's death match power and life cost, its unit's HP and life
+    // cost, and the team powers.
+    std::string LivesText(uint8_t* room, uint8_t* pilot)
+    {
+        uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
+        char text[200];
+        sprintf_s(text, "power %u, life cost %u, unit HP %lu/%lu, unit life cost %u, team powers %ld/%ld",
+                  *reinterpret_cast<uint16_t*>(pilot + kPilotPower), *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost),
+                  static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitHp)),
+                  static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitMaxHp)),
+                  *reinterpret_cast<uint16_t*>(unit + kUnitLifeCost),
+                  static_cast<long>(*reinterpret_cast<int32_t*>(room + kRoomPower1)),
+                  static_cast<long>(*reinterpret_cast<int32_t*>(room + kRoomPower2)));
+        return text;
+    }
+
     struct DeadAi
     {
         uint8_t* room;
@@ -641,10 +669,10 @@ namespace
             if (*reinterpret_cast<uint32_t*>(SlotUnit(room, slot) + kUnitHp) != 0)
                 continue;
             DeadAi* dead = FindDead(room, id, true, now);
-            if (dead && dead->since == now)
-                g_api->Log(g_mod, SDGO_LOG_INFO, "AI pilot %08lX (slot %d) down at tick %lu",
-                           static_cast<unsigned long>(id), slot, static_cast<unsigned long>(now));
             uint8_t* pilot = room + kPilots + slot * kPilotStride;
+            if (dead && dead->since == now)
+                g_api->Log(g_mod, SDGO_LOG_INFO, "AI pilot %08lX (slot %d) down at tick %lu; %s", static_cast<unsigned long>(id),
+                           slot, static_cast<unsigned long>(now), LivesText(room, pilot).c_str());
             uint8_t* info = room + kSlotInfo + slot * kSlotInfoStride;
             if (!g_respawnPilot(room, now, pilot, id, *reinterpret_cast<uint32_t*>(info + kSlotInfoRespawnArg)))
                 continue;
@@ -652,9 +680,9 @@ namespace
                 continue;
             g_respawnRefresh(room, 0, pilot, 0, 0);
             g_pilotStateRespawn(pilot + 0x1D90);
-            g_api->Log(g_mod, SDGO_LOG_INFO, "AI pilot %08lX (slot %d) respawned at tick %lu (down for %lu)",
+            g_api->Log(g_mod, SDGO_LOG_INFO, "AI pilot %08lX (slot %d) respawned at tick %lu (down for %lu); %s",
                        static_cast<unsigned long>(id), slot, static_cast<unsigned long>(now),
-                       static_cast<unsigned long>(dead ? now - dead->since : 0));
+                       static_cast<unsigned long>(dead ? now - dead->since : 0), LivesText(room, pilot).c_str());
             if (dead)
                 dead->room = nullptr;
         }
@@ -718,8 +746,9 @@ namespace
             bool down = *reinterpret_cast<uint32_t*>(SlotUnit(room, slot) + kUnitHp) == 0;
             bool wasDown = (watch->humansDown >> slot) & 1;
             if (down != wasDown) {
-                g_api->Log(g_mod, SDGO_LOG_INFO, "human pilot %08lX (slot %d, team %u) %s",
-                           static_cast<unsigned long>(id), slot, SlotTeam(room, slot), down ? "down" : "back");
+                g_api->Log(g_mod, SDGO_LOG_INFO, "human pilot %08lX (slot %d, team %u) %s; %s", static_cast<unsigned long>(id),
+                           slot, SlotTeam(room, slot), down ? "down" : "back",
+                           LivesText(room, room + kPilots + slot * kPilotStride).c_str());
                 watch->humansDown = static_cast<uint16_t>(watch->humansDown ^ (1u << slot));
             }
         }

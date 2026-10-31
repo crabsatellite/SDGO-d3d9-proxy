@@ -39,6 +39,7 @@
 // object id -> player slot steps answer for them the way that mode's PlayerSlot remap does.
 
 #include <windows.h>
+#include <intrin.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -162,6 +163,11 @@ namespace
     LuaTeamSearchFn g_originalTeamSearch = nullptr;
     NatCheckFn g_originalNatCheck = nullptr;
     bool g_natCheckSkipped = false;
+    bool g_heapChecks = false;       // diagnostics: heap validation during battles with AI players
+    bool g_heapBroken = false;
+    DWORD g_lastHeapCheck = 0;
+    int g_lastCheckedOpcode = -1;
+    int g_lastOpcode = -1;           // diagnostics: last server packet
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
@@ -215,10 +221,15 @@ namespace
     // right after SetPlayerInfo: death match (0x00AD98B0) 1000, the player's share of the
     // team power; tag match (0x00ADB390: the death match Init, then record +0x30 * 100, at
     // most 1000); grid match (0x00ADB790) 1; normal and leader match nothing.
+    // In tag match record +0x30 is the player's unit costs; PT_NTF_DEAD_UNIT divides by the
+    // slot record's +0x30 (0x004D92CB), so an AI player whose record has none gets its one
+    // unit's cost, the NPC points the client counts for an NPC (npc data +0xF1).
     constexpr size_t kSlotScore = 0x48;
+    constexpr size_t kSlotRecordCopy = 0x44;    // the slot's copy of the player record
     constexpr size_t kRecordTagCost = 0x30;
+    constexpr size_t kNpcPoints = 0xF1;
 
-    void InitAiSlot(int classIndex, uint8_t* playerSlot, uint8_t* record)
+    void InitAiSlot(int classIndex, uint8_t* playerSlot, uint8_t* unit)
     {
         auto score = reinterpret_cast<int32_t*>(playerSlot + kSlotScore);
         if (classIndex == 1) {
@@ -226,10 +237,15 @@ namespace
         } else if (classIndex == 2) {
             *score = 1;
         } else if (classIndex == 4) {
-            int32_t cost = *reinterpret_cast<int32_t*>(record + kRecordTagCost);
-            *score = cost * 100 < 1001 ? cost * 100 : 1000;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "tag match: AI player %08lX record +0x30 = %ld",
-                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)), static_cast<long>(cost));
+            uint8_t* record = *reinterpret_cast<uint8_t**>(playerSlot + kSlotRecordCopy);
+            auto cost = reinterpret_cast<int32_t*>(record + kRecordTagCost);
+            const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "tag match: AI player %08lX record +0x30 = %ld, NPC points %ld",
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)), static_cast<long>(*cost),
+                       npc ? static_cast<long>(*reinterpret_cast<const int32_t*>(npc + kNpcPoints)) : -1L);
+            if (*cost <= 0 && npc)
+                *cost = *reinterpret_cast<const int32_t*>(npc + kNpcPoints);
+            *score = *cost * 100 < 1001 ? *cost * 100 : 1000;
         }
     }
 
@@ -262,6 +278,7 @@ namespace
         g_botMode = mode;
         g_soloAiMode = nullptr;
         g_natCheckSkipped = false;
+        g_heapBroken = false;
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
@@ -345,7 +362,7 @@ namespace
                 auto name = reinterpret_cast<const wchar_t*>(npc + 5);
                 g_game.assign(g_game.playerSlot(um, slot) + kSlotName, name, wcslen(name));
             }
-            InitAiSlot(ModeClassIndex(mode), g_game.playerSlot(um, slot), record);
+            InitAiSlot(ModeClassIndex(mode), g_game.playerSlot(um, slot), unit);
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
@@ -608,93 +625,184 @@ namespace
         return g_originalTeamSearch(npc);
     }
 
-    // ---- server pilot ids of the AI players ----------------------------------------------
+    // ---- server pilot ids and object ids of the AI players -------------------------------
     //
     // The battle packets name a player by server pilot id; UM::ObjectIdFromPilotId (0x0049BF00)
     // finds the object id among the player slots below the player count (UM +0x8C), then
-    // among the live AI units (UM +0x70). The AI battle mode counts its AI players in UM +0x8C
-    // (0x0040417C); here that count stays at the humans, so a dead AI player was not found
-    // and its respawn (PT_NTF_PLAYBACK_UNIT) was dropped. The lookup now answers for the AI
-    // players of this battle the way their slot would.
-    // The respawn handler then calls UM::SetSlotColour(object id - 1, colour) (0x004C1DD0),
-    // which maps NPC object ids to their slot only in the AI modes; for a PvP mode it gets
-    // the AI player's slot.
+    // among the live AI units (UM +0x70), so a dead AI player was not found and its respawn
+    // (PT_NTF_PLAYBACK_UNIT) was dropped. Kills, deaths and score: the PT_NTF_DEAD_UNIT and
+    // PT_NTF_MAP_DAMAGE handlers credit them to UM::PlayerSlot(object id - 1) only when
+    // UM::IsPlayerObject(object id) (1..12). The AI battle mode credits an NPC through
+    // PlayerSlot, which there maps object id - 1 >= 1000 to the AI players' slots; elsewhere it
+    // uses the index as it is, far past the unit manager (the score sync 0x004C5140 writes
+    // there). The respawn handler's UM::SetSlotColour(object id - 1, colour) (0x004C1DD0) maps
+    // the same way. HUD loops over the counted slots look each slot's unit up with
+    // UM::FindPlayer (0x004999A0), which knows only AddPlayer's units (humans); the death
+    // match HUD (0x00530010) reads it without a NULL check and skips NPC units (IsA 10).
+    //
+    // All of them answer for an AI player of the table while its player slot still holds it
+    // (object id at slot +4, record at slot +0x44 with the pilot id at +0), also after the
+    // battle (result screen, teardown). A slot index >= 1000 that is no AI player gets a
+    // scratch slot in the PvP modes, where the game has no such players, instead of memory
+    // past the unit manager; its callers are logged.
 
-    const Bot* BotByPilot(uint32_t pilotId)
+    constexpr size_t kSlotObjectId = 0x04;
+    constexpr size_t kSlotRecord = 0x44;
+
+    bool SlotHolds(void* um, const Bot& bot)
     {
-        if (!(pilotId & kAiPilotBit) || g_botTable.empty() || !g_botMode || CurrentPvpMode() != g_botMode)
+        __try {
+            uint8_t* slot = g_originalPlayerSlot(um, bot.slot);
+            if (*reinterpret_cast<uint32_t*>(slot + kSlotObjectId) != bot.objectId)
+                return false;
+            uint8_t* record = *reinterpret_cast<uint8_t**>(slot + kSlotRecord);
+            return record && *reinterpret_cast<uint32_t*>(record) == bot.pilotId;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    const Bot* BotByPilot(void* um, uint32_t pilotId)
+    {
+        if (!(pilotId & kAiPilotBit))
             return nullptr;
         for (const Bot& bot : g_botTable)
-            if (bot.pilotId == pilotId)
+            if (bot.pilotId == pilotId && SlotHolds(um, bot))
                 return &bot;
         return nullptr;
+    }
+
+    const Bot* BotByObject(void* um, uint32_t objectId)
+    {
+        if (objectId < 1001)
+            return nullptr;
+        for (const Bot& bot : g_botTable)
+            if (bot.objectId == objectId && SlotHolds(um, bot))
+                return &bot;
+        return nullptr;
+    }
+
+    // The current game mode of any class, or NULL.
+    uint8_t* CurrentMode()
+    {
+        __try {
+            uint8_t* app = g_gameApp();
+            uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
+            return service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return nullptr;
+        }
+    }
+
+    // No game mode, or one of the PvP modes: slot indexes >= 1000 are not mapped by the game.
+    bool OutsideAiModes()
+    {
+        uint8_t* mode = CurrentMode();
+        if (!mode)
+            return true;
+        __try {
+            return IsPvpMode(mode);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return true;
+        }
+    }
+
+    alignas(16) uint8_t g_scratchSlot[0x70] = {};
+    void* g_strayCallers[8] = {};
+
+    void LogStraySlot(int index, void* caller)
+    {
+        for (void*& seen : g_strayCallers) {
+            if (seen == caller)
+                return;
+            if (!seen) {
+                seen = caller;
+                g_api->Log(g_mod, SDGO_LOG_WARN, "player slot %d asked for by %p: no AI player there, scratch slot given",
+                           index, caller);
+                return;
+            }
+        }
     }
 
     uint32_t __fastcall ObjectIdFromPilot(void* um, void* /*edx*/, uint32_t pilotId)
     {
-        if (const Bot* bot = BotByPilot(pilotId))
+        if (const Bot* bot = BotByPilot(um, pilotId))
             return bot->objectId;
         return g_originalObjectIdFromPilot(um, pilotId);
     }
 
-    // Kills, deaths and score: the PT_NTF_DEAD_UNIT and PT_NTF_MAP_DAMAGE handlers credit them
-    // to UM::PlayerSlot(object id - 1) only when UM::IsPlayerObject(object id) (1..12); the AI
-    // battle mode credits an NPC killer through PlayerSlot, which there maps object id - 1 >=
-    // 1000 to the AI players' slots. For a PvP mode both answer for this battle's AI players
-    // the same way; the score sync (0x004C5140) and the other PlayerSlot(object id - 1) users
-    // then reach the AI player's slot instead of memory far past the unit manager.
-
-    const Bot* BotByObject(uint32_t objectId)
-    {
-        if (objectId < 1001 || g_botTable.empty() || !g_botMode || CurrentPvpMode() != g_botMode)
-            return nullptr;
-        for (const Bot& bot : g_botTable)
-            if (bot.objectId == objectId)
-                return &bot;
-        return nullptr;
-    }
-
     bool __fastcall IsPlayerObject(void* um, void* /*edx*/, uint32_t objectId)
     {
-        return g_originalIsPlayerObject(um, objectId) || BotByObject(objectId) != nullptr;
+        return g_originalIsPlayerObject(um, objectId) || BotByObject(um, objectId) != nullptr;
     }
 
     uint8_t* __fastcall PlayerSlot(void* um, void* /*edx*/, int index)
     {
-        if (index >= 1000)
-            if (const Bot* bot = BotByObject(static_cast<uint32_t>(index) + 1))
+        if (index >= 1000) {
+            if (const Bot* bot = BotByObject(um, static_cast<uint32_t>(index) + 1))
                 return g_originalPlayerSlot(um, bot->slot);
+            if (OutsideAiModes()) {
+                LogStraySlot(index, _ReturnAddress());
+                memset(g_scratchSlot, 0, sizeof(g_scratchSlot));
+                return g_scratchSlot;
+            }
+        }
         return g_originalPlayerSlot(um, index);
     }
 
-    // With the AI players counted, HUD loops over the player slots look up each slot's unit
-    // with UM::FindPlayer (0x004999A0), which knows only the units AddPlayer added (humans).
-    // For an AI player's slot it now returns that AI player's unit; the death match HUD
-    // (0x00530010) reads it without a NULL check and skips NPC units (IsA 10).
     void* __fastcall FindPlayer(void* um, void* /*edx*/, uint32_t objectId)
     {
         void* unit = g_originalFindPlayer(um, objectId);
-        if (!unit && BotByObject(objectId))
+        if (!unit && BotByObject(um, objectId))
             unit = g_findObject(um, objectId);
         return unit;
     }
 
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
-        if (index >= 1000 && CurrentPvpMode()) {
-            for (const Bot& bot : g_botTable) {
-                if (bot.objectId != static_cast<uint32_t>(index + 1))
-                    continue;
+        if (index >= 1000) {
+            if (const Bot* bot = BotByObject(um, static_cast<uint32_t>(index) + 1)) {
                 g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX respawns: object %lu %s, slot %d, colour %d",
-                           static_cast<unsigned long>(bot.pilotId), static_cast<unsigned long>(bot.objectId),
-                           g_findObject(um, bot.objectId) ? "present" : "MISSING", bot.slot, colour);
-                g_originalSetSlotColour(um, bot.slot, colour);
+                           static_cast<unsigned long>(bot->pilotId), static_cast<unsigned long>(bot->objectId),
+                           g_findObject(um, bot->objectId) ? "present" : "MISSING", bot->slot, colour);
+                g_originalSetSlotColour(um, bot->slot, colour);
                 return;
             }
-            g_api->Log(g_mod, SDGO_LOG_WARN, "respawn colour for object %d not set: no AI player slot", index + 1);
-            return;
+            if (OutsideAiModes()) {
+                LogStraySlot(index, _ReturnAddress());
+                return;
+            }
         }
         g_originalSetSlotColour(um, index, colour);
+    }
+
+    // ---- diagnostics: heap check ---------------------------------------------------------
+    //
+    // A heap corruption (0xC0000374) was raised when the units were freed after a death match
+    // with AI players. While a battle has AI players, the process heaps are validated after
+    // server packets and from CNPC::Think, at most twice a second; the first failure is logged
+    // with the packets around it.
+
+    void CheckHeaps(int opcode, const char* where)
+    {
+        if (!g_heapChecks || g_heapBroken || g_botTable.empty())
+            return;
+        DWORD now = GetTickCount();
+        if (now - g_lastHeapCheck < 500)
+            return;
+        g_lastHeapCheck = now;
+        HANDLE heaps[64];
+        DWORD count = GetProcessHeaps(64, heaps);
+        for (DWORD i = 0; i < count && i < 64; ++i) {
+            if (!HeapValidate(heaps[i], 0, nullptr)) {
+                g_heapBroken = true;
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "heap %p corrupted: found %s (last packet %04X); the check before was fine (after packet %04X)",
+                           heaps[i], where, opcode, g_lastCheckedOpcode);
+                return;
+            }
+        }
+        g_lastCheckedOpcode = opcode;
     }
 
     // ---- diagnostics: who runs CNPC::Think ------------------------------------------------
@@ -704,6 +812,7 @@ namespace
 
     void __fastcall Think(uint8_t* unit, void* /*edx*/)
     {
+        CheckHeaps(g_lastOpcode, "in CNPC::Think");
         if (g_thinkSamples >= 5000) {
             g_originalThink(unit);
             return;
@@ -742,7 +851,6 @@ namespace
         return g_originalLuaOnError(L);
     }
 
-    int g_lastOpcode = -1;
     int g_opcodeRepeat = 0;
     int g_packetLines = 0;
 
@@ -789,7 +897,9 @@ namespace
                 ++g_packetLines;
             }
         }
-        return g_originalPacketDispatch(self, a, b, c, opcode, packet);
+        int result = g_originalPacketDispatch(self, a, b, c, opcode, packet);
+        CheckHeaps(op, "after a packet");
+        return result;
     }
 
     // ---- diagnostics: every error the client names ------------------------------------
@@ -923,6 +1033,7 @@ SDGO_MOD_ENTRY
         api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
     if (api->SettingInt(mod, "LogDiagnostics", 1) != 0) {
         InstallFaultLogger();
+        g_heapChecks = api->SettingInt(mod, "HeapChecks", 1) != 0;
         Bind(g_luaToString, "lua.tostring");
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
             api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
