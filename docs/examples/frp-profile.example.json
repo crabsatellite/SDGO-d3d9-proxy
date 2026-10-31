@@ -1,0 +1,34 @@
+{
+  "schema_version": 2,
+  "udp_bind_ip": "192.0.2.10",
+  "login": {
+    "logical_ip": "192.0.2.10",
+    "logical_port": 15001,
+    "aliases": [],
+    "external_host": "node.example.invalid",
+    "external_port": 25001
+  },
+  "tcp": [],
+  "udp": [
+    {
+      "local_port": 10001,
+      "external_host": "node.example.invalid",
+      "external_port": 26017
+    },
+    {
+      "local_port": 10002,
+      "external_host": "node.example.invalid",
+      "external_port": 27103
+    },
+    {
+      "local_port": 10003,
+      "external_host": "node.example.invalid",
+      "external_port": 28842
+    },
+    {
+      "local_port": 10004,
+      "external_host": "node.example.invalid",
+      "external_port": 29531
+    }
+  ]
+}

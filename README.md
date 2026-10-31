@@ -1,7 +1,7 @@
 # SDGO mod framework
 
-A mod loader for the SD Gundam Online game client (`GOnline.exe`) and battle server
-(`BattleServer.exe`). It puts a small core into both programs that checks the exe build,
+A mod loader for the SD Gundam Online game client (`GOnline.exe`), Agent server
+(`AgentServer.exe`) and battle server (`BattleServer.exe`). Its core checks the exe build,
 verifies every code address before using it and loads mods. Features are built as mods on
 top of it, on the client, the battle server, or both.
 
@@ -17,6 +17,11 @@ to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
 
 ## Features
 
+FRP networking is in **Beta**. For incremental installation and owner/player configuration, see the
+[distribution guide](docs/frp-distribution.zh-CN.md). The bundled framework is updated;
+other mods and global switches are preserved. Players use their existing launcher;
+no special networking launch script is required. Human multiplayer acceptance remains manual.
+
 Each feature is one or more mods with its own guide (use, settings, logs, how it works).
 
 | feature | what it does | mods | install on | guide |
@@ -27,6 +32,9 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 | General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
+| Endpoint routing (Beta) | Configurable TCP/UDP destinations and UDP reply addresses for arbitrary tunnel ports. Battle relay acceptance is separate. Off by default. | `net_route` | clients | [English](docs/net-route.md) · [中文](docs/net-route.zh-CN.md) |
+| Native UDP port pool (Beta) | Bounds per-user Agent UDP sockets to reusable tunnelled ports. Off by default. | `agent_udp_pool` | Agent servers | [Sakura setup](docs/sakura-frp-setup.zh-CN.md) |
+| Native relay diagnostic fix | Corrects a verified integer-IP printf format that can crash the original Agent after UDP relay forwarding. Enabled by default. | `agent_relay_log_fix` | Agent servers | [Sakura setup](docs/sakura-frp-setup.zh-CN.md) |
 
 A feature that lists the battle server works only when the battle servers have the server
 part and the players have matching client parts. Every participant in a PvP AI room
@@ -56,11 +64,12 @@ SDGO-ModFramework-<version>/
   client/                 goes next to GOnline.exe
     d3d9.dll
     sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
-    sdgo\mods\            findwindow_fix, ime_fix, mission_ai, match_ai, net_probe (off), startup_crash_fix
-  server/                 goes next to BattleServer.exe
+    sdgo\mods\            findwindow_fix, ime_fix, mission_ai, match_ai, net_probe (off), startup_crash_fix, net_route (off)
+  server/                 goes next to BattleServer.exe or AgentServer.exe
     winmm.dll
     sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
-    sdgo\mods\            coop_ai, pvp_ai
+    sdgo\mods\            coop_ai, pvp_ai, agent_udp_pool (off), agent_relay_log_fix
+  frp/                    complete incremental FRP kit, owner tools and tutorial
   install_client.ps1      installs client\ into a game folder
   install_server.ps1      installs server\ into battle server folders
   README.md, README.zh-CN.md, docs\, LICENSE, THIRD_PARTY_NOTICES.md, licenses\
@@ -90,6 +99,7 @@ The framework only touches code it can verify. Each exe build has a *host key*,
 |---|---|---|
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2 (and the client it is based on) |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | the common private server pack (BattleServer1..N folders) |
+| AgentServer.exe | `AgentServer-548A86BC-000D7000` | the corresponding private server pack (AgentServer1..3 folders) |
 
 The install scripts print the host key of your exe. With another build the framework still
 loads, logs that no symbol file matches and keeps every mod disabled, so the game is
@@ -130,6 +140,10 @@ Check: after the game has started, `sdgo\logs\sdgo.log` begins with
 `loaded <mod>` line per mod.
 
 ### Battle server (whoever hosts the server)
+
+For the Beta native UDP pool, install into **AgentServer** folders with
+`install_server.ps1 -ServerRoot ... -Role Agent`; see the [Sakura setup guide](docs/sakura-frp-setup.zh-CN.md).
+The default role remains Battle for existing AI features.
 
 Only needed for features that list the battle server. Stop the battle servers, then:
 
@@ -191,7 +205,8 @@ nothing.
 
 ## Building from source
 
-Visual Studio 2022 (C++ tools) and CMake 3.20 or newer; both targets are 32-bit.
+Visual Studio 2022 (C++ tools), CMake 3.20 or newer and Python 3.10+ for packaging;
+all host targets are 32-bit. Regression commands: [FRP verification](docs/frp-testing.md).
 
 ```bash
 cmake -S . -B build -G "Visual Studio 17 2022" -A Win32

@@ -26,6 +26,7 @@ foreach ($tree in "client", "server") {
 $name = "SDGO-ModFramework-$version"
 $dist = Join-Path $repo "dist"
 $out = Join-Path $dist $name
+if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($out)) -ne [IO.Path]::GetFullPath($dist)) { throw 'Invalid package output path' }
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
@@ -40,6 +41,11 @@ Copy-Item -LiteralPath (Join-Path $repo "THIRD_PARTY_NOTICES.md") -Destination $
 if (Test-Path -LiteralPath (Join-Path $repo "LICENSE")) { Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $out }
 New-Item -ItemType Directory -Force -Path (Join-Path $out "licenses") | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo "third_party\minhook\LICENSE.txt") -Destination (Join-Path $out "licenses\MinHook-LICENSE.txt")
+
+# The normal release contains the same complete incremental FRP kit as the
+# standalone artifact, so its distribution tutorial is usable after extraction.
+& python (Join-Path $repo 'tools\package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $repo "build\$Config") --directory-only
+if($LASTEXITCODE -ne 0){throw 'FRP kit packaging failed'}
 
 $zip = Join-Path $dist "$name.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }

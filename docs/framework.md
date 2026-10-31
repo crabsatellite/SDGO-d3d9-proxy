@@ -59,6 +59,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
     symbols\<host key>.ini      one per supported exe build (files for other hosts are ignored)
     mods\<id>\mod.ini           manifest + [settings]
     mods\<id>\<id>.dll          (+ any files the mod reads, located with ModDirectory)
+    mods\<id>\config.ini        optional user settings, supported by the network mods
     logs\sdgo.log, sdgo.prev.log
 ```
 
@@ -163,6 +164,16 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
+
+The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
+When present, its `[settings]` section is authoritative; otherwise they use the
+legacy manifest settings. Other mods keep their existing configuration behavior.
+The incremental FRP installer always updates core and loader to the bundled latest
+version and verifies their hashes. It refuses an older kit instead of downgrading.
+Other mods, global switches and settings remain. Network symbols are merged without
+replacing unrelated definitions; conflicts are rejected. Core 1.1.3 supports exact
+ordinal imports in HookImport for the Agent bind. See [distribution](frp-distribution.zh-CN.md).
+Build, regression and installer commands are in [FRP verification](frp-testing.md).
 
 Before reading `HookSystemExport`, check
 `api->size >= offsetof(SdgoApi, HookSystemExport) + sizeof(api->HookSystemExport)`

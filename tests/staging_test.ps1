@@ -16,7 +16,11 @@ try {
     foreach ($name in @('mod.ini', 'mission_ai.lua')) {
         $source = Join-Path $repo "mods\mission_ai\$name"
         $actual = Join-Path $stage $name
-        if ((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $actual).Hash) {
+        # Use byte equality without depending on optional cmdlet/module discovery
+        # in a Windows PowerShell child launched by CTest or a newer PowerShell.
+        $expectedBytes=[Convert]::ToBase64String([IO.File]::ReadAllBytes($source))
+        $actualBytes=[Convert]::ToBase64String([IO.File]::ReadAllBytes($actual))
+        if ($expectedBytes -cne $actualBytes) {
             throw "Incremental build did not restage $name"
         }
     }

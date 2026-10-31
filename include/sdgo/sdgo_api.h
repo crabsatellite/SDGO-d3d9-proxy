@@ -61,7 +61,9 @@ typedef struct SdgoApi {
     /* Swap the pointer stored in a verified kind=slot symbol (vtable entry, function pointer). */
     int (*HookSlot)(SdgoMod* mod, const char* name, void* detour, void** original);
 
-    /* Replace one entry of the host executable's import table. */
+    /* Replace one entry of the host executable's import table. A named export
+     * request also matches an ordinal import using the dependency's exact
+     * export ordinal (not equality of potentially aliased function addresses). */
     int (*HookImport)(SdgoMod* mod, const char* dll, const char* function, void* detour, void** original);
 
     /* Values from the [settings] section of the mod's mod.ini. */
