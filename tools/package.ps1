@@ -70,8 +70,20 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
     & python (Join-Path $PSScriptRoot 'package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'FRP toolkit packaging failed' }
 }
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::CreateFromDirectory($out, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
+$archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($file in Get-ChildItem -LiteralPath $out -File -Recurse) {
+        $relative = $file.FullName.Substring($out.Length + 1).Replace('\','/')
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $relative, [IO.Compression.CompressionLevel]::Optimal)
+    }
+    foreach ($dir in Get-ChildItem -LiteralPath $out -Directory -Recurse) {
+        if (@(Get-ChildItem -LiteralPath $dir.FullName -Force).Count -eq 0) {
+            [void]$archive.CreateEntry($dir.FullName.Substring($out.Length + 1).Replace('\','/') + '/')
+        }
+    }
+} finally { $archive.Dispose() }
 Write-Host $zip
 $hashAlgorithm = [Security.Cryptography.SHA256]::Create()
 $zipStream = [IO.File]::OpenRead($zip)

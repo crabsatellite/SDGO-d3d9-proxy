@@ -13,6 +13,7 @@
 |---|---|---|
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
+| AgentServer.exe | `AgentServer-548A86BC-000D7000` | 原生 Agent 中继宿主 |
 
 安装脚本会打印你的 exe 的 host key。其它版本也能装，但框架会记录"没有匹配的 symbol 文件"并关闭所有
 mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
@@ -60,6 +61,16 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 （`BattleServer1`、`BattleServer2`……）；`-Only BattleServer3` 只装指定目录。装完再启动对战服务器；用什么方式
 启动（服务端管理器、批处理、服务）都可以。已有的 `winmm.dll` 的串联、更新时保留设置，都和客户端一样。
 手动安装：把 `server\` 的内容复制到每个对战服务器目录。
+
+### Agent 服务器
+
+联机工具和中继日志修复使用同一个服务器安装器，指定 Agent 角色：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\AgentServer1" -Role Agent
+```
+
+默认角色仍为 Battle。服主和玩家的配置分发见 [FRP 分发指南](frp-distribution.zh-CN.md)。
 
 ## 卸载
 

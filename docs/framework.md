@@ -1,7 +1,7 @@
 # Framework reference
 
 For people who build the framework or write mods. Installing is covered in the
-[README](../README.md); using each feature in its guide, linked from the README's
+[installation guide](setup.md); using each feature in its guide, linked from the README's
 [feature categories](../README.md#core-fixes).
 
 * [How the framework gets into the process](#how-the-framework-gets-into-the-process)
@@ -171,6 +171,7 @@ unless `-OverwriteConfig` is explicit. Shipped examples and code still update.
 Only relative config/data paths are allowed: no parent traversal, absolute paths,
 DLLs or replacement manifests. Mods read their own data via `ModDirectory`; this
 does not change the existing `[settings]` API or invent a new data format.
+
 
 ## Mod API
 
