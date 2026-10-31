@@ -89,6 +89,10 @@ namespace
     using ErrorNameFn = const char*(__cdecl*)(int code);
     using ThinkFn = void(__thiscall*)(uint8_t* unit);
     using UdpSetupFn = void(__thiscall*)(uint8_t* waitRoom);
+    struct lua_State;
+    using LuaOnErrorFn = int(__cdecl*)(lua_State* L);
+    using LuaToStringFn = const char*(__cdecl*)(lua_State* L, int index);
+    using PacketDispatchFn = int(__thiscall*)(void* self, int a, int b, int c, int opcode, void* packet);
 
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
     constexpr size_t kWaitRoomSlots = 0xA00;    // CServiceWaitRoomMgr: pilot id per slot
@@ -118,11 +122,15 @@ namespace
     ErrorNameFn g_originalErrorName = nullptr;
     ThinkFn g_originalThink = nullptr;
     UdpSetupFn g_originalUdpSetup = nullptr;
+    LuaOnErrorFn g_originalLuaOnError = nullptr;
+    LuaToStringFn g_luaToString = nullptr;
+    PacketDispatchFn g_originalPacketDispatch = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
     std::vector<uint8_t*> g_bots;
     uint8_t* g_botMode = nullptr;
+    bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
 
     struct ModeClass
     {
@@ -191,7 +199,13 @@ namespace
         uint8_t* humanRecords = *reinterpret_cast<uint8_t**>(room + kRoomHumansBegin);
         int nextIndex[3] = {};
         for (int k = 0; k < humans; ++k) {
-            int team = humanRecords[k * kRecordSize + kRecordTeam];
+            uint8_t* human = humanRecords + k * kRecordSize;
+            int team = human[kRecordTeam];
+            uint8_t* start = g_game.findStartPoint(um, team, nextIndex[team == 1 || team == 2 ? team : 0]);
+            auto hp = start ? reinterpret_cast<float*>(start + kStartPointPos) : nullptr;
+            g_api->Log(g_mod, SDGO_LOG_INFO, "human %08lX: team +0x19 %u, colour +0x1A %u, start point (%.0f, %.0f, %.0f)",
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(human)), human[0x19], human[0x1A],
+                       hp ? hp[0] : 0.0f, hp ? hp[1] : 0.0f, hp ? hp[2] : 0.0f);
             if (team == 1 || team == 2)
                 ++nextIndex[team];
         }
@@ -213,6 +227,8 @@ namespace
                 continue;
             }
             auto pos = reinterpret_cast<float*>(start + kStartPointPos);
+            g_api->Log(g_mod, SDGO_LOG_INFO, "AI %08lX: team +0x19 %u, colour +0x1A %u, start point %d (%.0f, %.0f, %.0f)",
+                       static_cast<unsigned long>(serverId), record[0x19], record[0x1A], index, pos[0], pos[1], pos[2]);
             uint8_t* unit = g_game.baseCreateNpc(mode, npcData, pos[0], pos[1], pos[2], team, 0.0f, 0.0f, 1.0f);
             if (!unit) {
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: creating NPC %lu failed",
@@ -239,6 +255,7 @@ namespace
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
             g_bots.push_back(unit);
+            g_logPackets = true;
             ++spawned;
             g_api->Log(g_mod, SDGO_LOG_INFO, "%s: AI player %08lX joined as object %lu (NPC %lu, team %d, slot %d)",
                        className, static_cast<unsigned long>(serverId), static_cast<unsigned long>(objectId),
@@ -364,6 +381,42 @@ namespace
         g_originalThink(unit);
     }
 
+    // ---- diagnostics: Lua errors of unit AI and the server's packets ----------------------
+
+    int g_luaErrors = 0;
+
+    int __cdecl LuaOnError(lua_State* L)
+    {
+        if (g_luaErrors < 40) {
+            ++g_luaErrors;
+            const char* message = g_luaToString ? g_luaToString(L, -1) : nullptr;
+            g_api->Log(g_mod, SDGO_LOG_WARN, "Lua error: %s", message ? message : "(not a string)");
+        }
+        return g_originalLuaOnError(L);
+    }
+
+    int g_lastOpcode = -1;
+    int g_opcodeRepeat = 0;
+    int g_packetLines = 0;
+
+    int __fastcall PacketDispatch(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
+    {
+        int op = opcode & 0xFFFF;
+        if (g_logPackets && g_packetLines < 3000) {
+            if (op == g_lastOpcode) {
+                ++g_opcodeRepeat;
+            } else {
+                if (g_opcodeRepeat > 0)
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "  (opcode %04X repeated %d more)", g_lastOpcode, g_opcodeRepeat);
+                g_api->Log(g_mod, SDGO_LOG_INFO, "packet %04X", op);
+                g_lastOpcode = op;
+                g_opcodeRepeat = 0;
+                ++g_packetLines;
+            }
+        }
+        return g_originalPacketDispatch(self, a, b, c, opcode, packet);
+    }
+
     // ---- diagnostics: every error the client names ------------------------------------
     //
     // The server error popup (0x006FD480) and the client error popups name the error code
@@ -411,6 +464,15 @@ SDGO_MOD_ENTRY
     if (api->SettingInt(mod, "LogThinkCallers", 1) != 0 &&
         !api->HookCode(mod, "npc.think", reinterpret_cast<void*>(&Think), reinterpret_cast<void**>(&g_originalThink)))
         api->Log(mod, SDGO_LOG_WARN, "Think logging not available");
+    if (api->SettingInt(mod, "LogDiagnostics", 1) != 0) {
+        Bind(g_luaToString, "lua.tostring");
+        if (!api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
+                           reinterpret_cast<void**>(&g_originalLuaOnError)))
+            api->Log(mod, SDGO_LOG_WARN, "Lua error logging not available");
+        if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
+                           reinterpret_cast<void**>(&g_originalPacketDispatch)))
+            api->Log(mod, SDGO_LOG_WARN, "packet logging not available");
+    }
     if (api->SettingInt(mod, "LogErrors", 1) != 0 &&
         !api->HookCode(mod, "game.error_name", reinterpret_cast<void*>(&ErrorName),
                        reinterpret_cast<void**>(&g_originalErrorName)))
