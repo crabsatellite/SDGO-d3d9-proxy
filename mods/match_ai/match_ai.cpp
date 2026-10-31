@@ -165,6 +165,7 @@ namespace
     LuaTeamSearchFn g_originalTeamSearch = nullptr;
     NatCheckFn g_originalNatCheck = nullptr;
     bool g_natCheckSkipped = false;
+    bool g_creatingAiUnit = false;   // set while CreateNpc builds an AI player's unit
     bool g_heapChecks = false;       // diagnostics: heap validation during battles with AI players
     bool g_heapBroken = false;
     DWORD g_lastHeapCheck = 0;
@@ -338,7 +339,9 @@ namespace
             auto pos = reinterpret_cast<float*>(start + kStartPointPos);
             g_api->Log(g_mod, SDGO_LOG_INFO, "AI %08lX: team +0x19 %u, colour +0x1A %u, start point %d (%.0f, %.0f, %.0f)",
                        static_cast<unsigned long>(serverId), record[0x19], record[0x1A], index, pos[0], pos[1], pos[2]);
+            g_creatingAiUnit = true;
             uint8_t* unit = g_game.baseCreateNpc(mode, npcData, pos[0], pos[1], pos[2], team, 0.0f, 0.0f, 1.0f);
+            g_creatingAiUnit = false;
             if (!unit) {
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "AI player %08lX: creating NPC %lu failed",
                            static_cast<unsigned long>(serverId), static_cast<unsigned long>(npcData));
@@ -393,6 +396,7 @@ namespace
             SpawnAiPlayers(mode, className);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_creatingAiUnit = false;
             *code = GetExceptionCode();
             return false;
         }
@@ -973,6 +977,30 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_WARN, "access violation logging not available");
     }
 
+    // ---- mode 7: an AI player keeps its own unit -------------------------------------------
+    //
+    // CUnit::InitUnitData (0x0067F170) in a network battle of mode 7 takes every unit from a
+    // human player's deck: human record room +0x1C [n], n = the players UM has added so far.
+    // For an AI player's unit n is past the humans and the copy read garbage (the spawn failed,
+    // no AI player showed). NPC units keep the unit they are built with, so for an AI player's
+    // unit (while it is created, or one of this battle's later) the branch is skipped.
+
+    int __stdcall KeepOwnUnit(uint8_t* unit)
+    {
+        if (g_creatingAiUnit)
+            return 1;
+        __try {
+            if (!unit || !g_botMode || CurrentPvpMode() != g_botMode)
+                return 0;
+            for (const Bot& bot : g_botTable)
+                if (bot.unit == unit)
+                    return 1;
+            return 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    }
+
     // ---- dead AI players stay for their respawn ------------------------------------------
     //
     // UnitManager::Update (0x0049F6A0) handles an object that is gone in two steps, each
@@ -1029,6 +1057,31 @@ static int __stdcall KeepDeadInList(uint8_t* node)
 static int __stdcall KeepDeadOutOfPool(uint8_t* node)
 {
     return KeepDeadAiPlayer(node, 1);
+}
+
+// CUnit::InitUnitData's mode 7 check (esi = the unit): an AI player's unit goes straight to
+// the end of the player-deck branch.
+static void* g_deckCheckResume = nullptr;
+static void* g_deckSkip = nullptr;
+
+static int __stdcall KeepOwnUnitThunk(uint8_t* unit)
+{
+    return KeepOwnUnit(unit);
+}
+
+static __declspec(naked) void DeckCheckDetour()
+{
+    __asm {
+        pushad
+        push esi
+        call KeepOwnUnitThunk
+        test eax, eax
+        popad
+        jnz skip_deck
+        jmp dword ptr [g_deckCheckResume]
+    skip_deck:
+        jmp dword ptr [g_deckSkip]
+    }
 }
 
 static __declspec(naked) void DeadNpcListDetour()
@@ -1102,6 +1155,11 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
                        reinterpret_cast<void**>(&g_originalFindPlayer)))
+        return 0;
+    // Without this an AI player's unit is not created in mode 7.
+    g_deckSkip = api->Symbol(mod, "unit.init_deck_skip");
+    if (!g_deckSkip ||
+        !api->HookCode(mod, "unit.init_deck_check", reinterpret_cast<void*>(&DeckCheckDetour), &g_deckCheckResume))
         return 0;
     // Without these a dead AI player is pooled, and its respawn corrupts the heap.
     if (!api->HookCode(mod, "um.update_dead_npc_list", reinterpret_cast<void*>(&DeadNpcListDetour),
