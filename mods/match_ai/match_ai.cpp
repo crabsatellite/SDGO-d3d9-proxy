@@ -978,6 +978,12 @@ namespace
     // at the next unit of its team in a copy of UM's player list (0x00AD7A40), which holds
     // only CPlayer units. The AI players' units join that copy, at its end, with nodes from
     // the game's own operator new: the game frees the list itself.
+    // The tracking camera (0x00493F30, offsets set by 0x00495490) scales its distance from the
+    // target by unit +0x2EEC, which CUnit's init (vt slot 20, 0x0067A520) sets to 1.0 (to 1.7
+    // or 1.2 for a leader) and CNPC never sets: on an AI unit the camera sat at its centre (seen
+    // through the unit, shaking with its turns). A watched AI unit without one gets 1.0.
+    constexpr size_t kUnitCameraScale = 0x2EEC;
+
     struct ListNode
     {
         ListNode* next;
@@ -1006,6 +1012,9 @@ namespace
                 auto unit = static_cast<uint8_t*>(g_findObject(um, bot.objectId));
                 if (!unit)
                     continue;
+                auto& cameraScale = *reinterpret_cast<float*>(unit + kUnitCameraScale);
+                if (!(cameraScale > 0.0f))
+                    cameraScale = 1.0f;
                 bool listed = false;
                 for (ListNode* node = list->head->next; node != list->head && !listed; node = node->next)
                     listed = node->unit == unit;
