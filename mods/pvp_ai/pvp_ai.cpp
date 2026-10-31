@@ -114,6 +114,7 @@ namespace
     {
         int defaultLevel = 2;
         int fillTeamSize = 3;
+        int gradeCost[5] = {}; // [1..4]: death match life cost of a player unit of that grade, 0 = keep
         int logRoom = 1;
         std::vector<uint32_t> levels[6]; // [1..5]
     } g_settings;
@@ -149,6 +150,12 @@ namespace
     {
         g_settings.defaultLevel = g_api->SettingInt(g_mod, "DefaultLevel", 2);
         g_settings.fillTeamSize = g_api->SettingInt(g_mod, "FillTeamSize", 3);
+        const int playerCost[5] = {0, 250, 334, 455, 556};
+        for (int grade = 1; grade <= 4; ++grade) {
+            char key[24];
+            sprintf_s(key, "LifeCostGrade%d", grade);
+            g_settings.gradeCost[grade] = g_api->SettingInt(g_mod, key, playerCost[grade]);
+        }
         g_settings.logRoom = g_api->SettingInt(g_mod, "LogRoom", 1);
         for (int level = 1; level <= 5; ++level) {
             char key[16];
@@ -346,6 +353,34 @@ namespace
 
     // ---- 2. AI pilots after the human setup -------------------------------------------
 
+    // Death match lives (modes 3, 14): the AI pilot setup (0x004D7A10) copies the unit's life
+    // cost from its unit data (+9, the DB's BattleCost) and pays the first life from the
+    // pilot's 1000 power. The AI battle units (tbl_UnitNpc) cost more than player units of the
+    // same grade (grade 3: 500 against 455, grade 4: 606 against 556). With LifeCostGradeN set,
+    // an AI unit of grade N (unit record +0x0B = unit data +6, the DB's UnitGradeNumber) costs
+    // what a player unit of that grade does, and the first life is paid again with it.
+    constexpr size_t kUnitGrade = 0x0B;
+    constexpr int kPilotStartPower = 1000;
+
+    void ApplyPlayerLifeCost(uint8_t* room, uint8_t* pilot, uint8_t* unit)
+    {
+        uint8_t mode = room[kRoomMode];
+        if (mode != 3 && mode != 14)
+            return;
+        uint8_t grade = unit[kUnitGrade];
+        if (grade < 1 || grade > 4 || g_settings.gradeCost[grade] <= 0 || g_settings.gradeCost[grade] > kPilotStartPower)
+            return;
+        auto cost = static_cast<uint16_t>(g_settings.gradeCost[grade]);
+        auto& unitCost = *reinterpret_cast<uint16_t*>(unit + kUnitLifeCost);
+        auto& power = *reinterpret_cast<uint16_t*>(pilot + kPilotPower);
+        auto& lifeCost = *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost);
+        if (unitCost == cost)
+            return;
+        unitCost = cost;
+        power = static_cast<uint16_t>(kPilotStartPower - cost);
+        lifeCost = cost;
+    }
+
     // Same steps as the AI battle mode (0x004B79D0) for an AI slot, with the given team.
     bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team, uint8_t colour)
     {
@@ -393,10 +428,11 @@ namespace
             memset(pilot, 0, kPilotStride);
             return false;
         }
+        ApplyPlayerLifeCost(room, pilot, unit);
         g_api->Log(g_mod, SDGO_LOG_INFO,
-                   "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u; unit life cost %u, max HP %lu, power %u, "
-                   "life cost %u",
-                   slot, static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team, colour,
+                   "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u; unit grade %u, life cost %u, max HP %lu, "
+                   "power %u, life cost %u",
+                   slot, static_cast<unsigned long>(id), static_cast<unsigned long>(npcData), team, colour, unit[kUnitGrade],
                    *reinterpret_cast<uint16_t*>(unit + kUnitLifeCost),
                    static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(unit + kUnitMaxHp)),
                    *reinterpret_cast<uint16_t*>(pilot + kPilotPower), *reinterpret_cast<uint16_t*>(pilot + kPilotLifeCost));
