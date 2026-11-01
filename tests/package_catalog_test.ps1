@@ -83,7 +83,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager','collection_capsule'))
     $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
     Check-Package $dailyZip ($baseMods + @('daily_rewards'))
     $dailyFolder = Join-Path $work 'daily-unpacked'
@@ -102,6 +102,9 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('collection/tools/collection_capsule.py','collection/owner/collection_capsule/native_catalog.py','collection/framework/support/capsule-registry/capsule_catalog.dll','collection/SHA256.json')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lost collection owner component: $required" }
+        }
         foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
         }
