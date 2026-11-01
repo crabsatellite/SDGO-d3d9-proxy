@@ -103,7 +103,17 @@
 ## 奖励规则与验证
 
 [战斗贡献奖励（Beta）](docs/battle-rewards.zh-CN.md)已接入原生结算和服主钱包工作器。
-[规则文档](docs/battle-reward-design.zh-CN.md)包含已确认数值与离线计算器。
+服主在辅助入口的 `/rewards` 页面调整 GB/MB 基础倍率；玩家继续使用原客户端和启动器。
+击杀、实际伤害、助攻、任务小怪与 Boss 贡献参与结算，对战 MVP 额外获得 MB。
+带 AI 的对战与纯真人同档；每多一名有效真人再乘 `1.1`，并与已有双倍时段相乘。
+例如基础十倍、双倍时段、四名真人为 `10 × 2 × 1.1³ = 26.62` 倍。
+
+安装完整包中的 `rewards/` 工具到所有参与结算的 BattleServer，共用一个服主 workspace，
+再用 `tools/Start-Battle-Rewards.ps1` 启动钱包工作器与辅助入口。
+该入口可挂载已安装的副官助手，在同一端口保留原有模块；关闭浏览器不会停止入账工作器。
+更新前需停止目标 BattleServer，安装后重启；随后调倍率可以热更新。
+具体步骤见[安装、启动与恢复教程](docs/battle-rewards.zh-CN.md)，
+数值与封顶见[完整奖励规则](docs/battle-reward-design.zh-CN.md)。
 真实账号对局、HUD 和重连仍由服主手动验收；安装保留其他功能与原有状态。
 
 ## 开发诊断
