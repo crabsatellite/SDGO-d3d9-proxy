@@ -52,6 +52,7 @@ and random-unit gameplay belong in this category.
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
+| Collection capsule (Beta) | Spend 100,000 GP for a never-acquired initial form; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
@@ -168,6 +169,7 @@ For development and troubleshooting; disabled by default.
 | Tool | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
+| Native GameTest (Experimental) | Run assertions inside isolated native game instances | `game_test_client`, `game_test_server` | Clients + Battle servers | [Use](docs/game-test.md) |
 <!-- /mod-category:development -->
 
 ## Install and use

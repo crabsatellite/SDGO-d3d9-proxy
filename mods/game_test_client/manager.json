@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "game_test_client",
+  "title": "原生 GameTest 客户端",
+  "category": "development",
+  "hosts": ["client"],
+  "description": "开发测试组件，默认关闭。仅在显式测试任务中运行；安装或启用本身不会开始测试。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "在真实客户端主线程调用原生业务流程，等待真实回包并记录断言。私有测试账号与一次性任务由开发测试运行器提供。"
+}

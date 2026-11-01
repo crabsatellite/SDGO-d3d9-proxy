@@ -42,6 +42,7 @@
 #include <windows.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -50,10 +51,12 @@
 
 #include "sdgo/sdgo_api.h"
 #include "sdgo/ai_scoring.h"
+#include "sdgo/pvp_ai_client_observer.h"
 
 namespace
 {
     constexpr size_t kModeRoom = 0x08;          // room data*
+    constexpr size_t kModeRoomMode = 0x66;      // u16, room data: battle mode
     constexpr size_t kRoomHumansBegin = 0x1C;   // vector of 0x344-byte records
     constexpr size_t kRoomHumansEnd = 0x20;
     constexpr size_t kRoomAiBegin = 0x3C;
@@ -163,6 +166,7 @@ namespace
     RegisterLuaBindingsFn g_registerLuaBindings = nullptr;
     GameLogFn g_originalGameLog = nullptr;
     GameAppFn g_gameApp = nullptr;
+    uint8_t** g_profilePointer = nullptr;
     LockTargetFn g_lockTarget = nullptr;
     RunLuaFunctionFn g_runLuaFunction = nullptr;
     LuaLockFn g_originalLockPlayerA = nullptr;
@@ -175,6 +179,8 @@ namespace
     bool g_natCheckSkipped = false;
     bool g_creatingAiUnit = false;   // set while CreateNpc builds an AI player's unit
     int g_lastOpcode = -1;           // diagnostics: last server packet
+    volatile LONG g_luaErrors = 0;   // current real battle; observed even when diagnostic logging is off
+    volatile LONG g_luaErrorObserverAvailable = 0;
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
@@ -320,6 +326,12 @@ namespace
         int lifeCost[4];
     };
     StartDeck g_startDecks[12] = {};
+    volatile LONG g_receivedBattleStartCount = 0;
+    volatile LONG g_receivedBattleStartMode = 0;
+    volatile LONG g_createReplyVersion = 0;
+    volatile LONG g_createReplySequence = 0;
+    volatile LONG g_createReplyRoom = 0;
+    volatile LONG g_createReplyDetails = 0;
 
     void ReadStartDecks(const uint8_t* packet)
     {
@@ -367,10 +379,51 @@ namespace
 
     int __fastcall ServicePacket(void* self, void* /*edx*/, int a, int b, int c, int opcode, void* packet)
     {
-        if ((opcode & 0xFFFF) == kPacketBattleStart && packet &&
-            !GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
-        return g_originalServicePacket(self, a, b, c, opcode, packet);
+        const uint16_t operation = static_cast<uint16_t>(opcode);
+        bool createReply = false;
+        uint32_t createdRoom = 0;
+        uint16_t createError = 0;
+        // 0918's native consumer reads a u32 room id at +6; the distinct
+        // A0A rejection reads only a u16 error there. Copy before the original
+        // dispatch can release the packet, then publish after it completes.
+        if (packet && (operation == 0x0918 || operation == 0x0A0A)) {
+            __try {
+                const uint8_t* data = static_cast<const uint8_t*>(packet);
+                if (operation == 0x0918) createdRoom = *reinterpret_cast<const uint32_t*>(data + 6);
+                else createError = *reinterpret_cast<const uint16_t*>(data + 6);
+                createReply = true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) { createReply = false; }
+        }
+        if ((opcode & 0xFFFF) == kPacketBattleStart && packet) {
+            InterlockedIncrement(&g_receivedBattleStartCount);
+            __try {
+                uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
+                uint8_t* service =
+                    app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
+                uint8_t* mode =
+                    service ? *reinterpret_cast<uint8_t**>(service + kServiceMode) : nullptr;
+                uint8_t* room =
+                    mode ? *reinterpret_cast<uint8_t**>(mode + kModeRoom) : nullptr;
+                if (room) {
+                    InterlockedExchange(
+                        &g_receivedBattleStartMode,
+                        *reinterpret_cast<const uint16_t*>(room + kModeRoomMode));
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                InterlockedExchange(&g_receivedBattleStartMode, 0);
+            }
+            if (!GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception reading the AI decks of the battle start packet");
+        }
+        const int handled = g_originalServicePacket(self, a, b, c, opcode, packet);
+        if (createReply) {
+            InterlockedIncrement(&g_createReplyVersion);
+            InterlockedExchange(&g_createReplyRoom, static_cast<LONG>(createdRoom));
+            InterlockedExchange(&g_createReplyDetails, static_cast<LONG>(operation | (static_cast<uint32_t>(createError) << 16)));
+            InterlockedIncrement(&g_createReplySequence);
+            InterlockedIncrement(&g_createReplyVersion);
+        }
+        return handled;
     }
 
     constexpr size_t kNpcUnitDataId = 0x69;     // NPC data: its unit data id
@@ -379,8 +432,6 @@ namespace
     constexpr size_t kUnitDeckEnd = 0x2ED4;
     constexpr size_t kUnitDeckEntry = 0x60C;
     constexpr size_t kUnitDeckIndex = 0x2EE4;   // deck entry in play
-    constexpr size_t kModeRoomMode = 0x66;      // u16, room data: battle mode
-
     const uint8_t* FindNpcData(uint32_t npcId)
     {
         const uint8_t* npc = nullptr;
@@ -572,6 +623,9 @@ namespace
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
+        InterlockedExchange(
+            &g_receivedBattleStartMode,
+            static_cast<LONG>(*reinterpret_cast<uint16_t*>(room + kModeRoomMode)));
         int count = RecordCount(room, kRoomAiBegin, kRoomAiEnd);
         if (count == 0)
             return;
@@ -697,6 +751,7 @@ namespace
     void __fastcall ModeInit(uint8_t* mode, void* /*edx*/)
     {
         if (GuardedHasAi(mode)) {
+            InterlockedExchange(&g_luaErrors, 0);
             g_registerLuaBindings();
             g_api->Log(g_mod, SDGO_LOG_INFO, "%s: Lua bindings registered for the AI players", g_classes[I].name);
         }
@@ -1353,12 +1408,10 @@ namespace
 
     // ---- diagnostics: Lua errors of unit AI and the server's packets ----------------------
 
-    int g_luaErrors = 0;
-
     int __cdecl LuaOnError(lua_State* L)
     {
-        if (g_luaErrors < 40) {
-            ++g_luaErrors;
+        const LONG count = InterlockedIncrement(&g_luaErrors);
+        if (g_logDiagnostics && count <= 40) {
             const char* message = g_luaToString ? g_luaToString(L, -1) : nullptr;
             g_api->Log(g_mod, SDGO_LOG_WARN, "Lua error: %s", message ? message : "(not a string)");
         }
@@ -1547,6 +1600,8 @@ namespace
     }
 }
 
+#include "observer.inl"
+
 // The two decisions of UnitManager::Update: al holds mode->IsA(9), ebx the object's node. The
 // detours set al for an AI player of this battle, then resume with the original test/jne.
 static void* g_deadListResume = nullptr;
@@ -1698,6 +1753,10 @@ SDGO_MOD_ENTRY
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
         return 0;
+    // The profile pointer is only used by the optional read-only GameTest
+    // observer. Older supported symbol maps must still load the production AI
+    // feature; their snapshots simply report pilot id 0.
+    Bind(g_profilePointer, "game.profile_pointer");
     // The AI players' scripts call these; without them they would jump to address 0.
     if (!api->HookCode(mod, "lua.search_lock_player_a", reinterpret_cast<void*>(&LockPlayerA),
                        reinterpret_cast<void**>(&g_originalLockPlayerA)) ||
@@ -1764,14 +1823,17 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_originalUdpSetup)))
         return 0;
     g_logDiagnostics = api->SettingInt(mod, "LogDiagnostics", 0) != 0;
+    if (g_logDiagnostics)
+        Bind(g_luaToString, "lua.tostring");
+    if (api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
+                      reinterpret_cast<void**>(&g_originalLuaOnError)))
+        InterlockedExchange(&g_luaErrorObserverAvailable, 1);
+    else
+        api->Log(mod, SDGO_LOG_WARN, "Lua error counting not available");
     if (g_logDiagnostics) {
         InstallFaultLogger();
-        Bind(g_luaToString, "lua.tostring");
         if (!api->HookCode(mod, "game.log", reinterpret_cast<void*>(&GameLog), reinterpret_cast<void**>(&g_originalGameLog)))
             api->Log(mod, SDGO_LOG_WARN, "game log copy not available");
-        if (!api->HookCode(mod, "lua_tinker.on_error", reinterpret_cast<void*>(&LuaOnError),
-                           reinterpret_cast<void**>(&g_originalLuaOnError)))
-            api->Log(mod, SDGO_LOG_WARN, "Lua error logging not available");
         if (!api->HookCode(mod, "game.packet_dispatch", reinterpret_cast<void*>(&PacketDispatch),
                            reinterpret_cast<void**>(&g_originalPacketDispatch)))
             api->Log(mod, SDGO_LOG_WARN, "packet logging not available");

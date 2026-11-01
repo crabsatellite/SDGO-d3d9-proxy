@@ -142,6 +142,9 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp LIBS user32)
+sdgo_add_mod(game_test_server SERVER DESCRIPTION "isolated native GameTest battle server" SOURCES mods/game_test_server/game_test_server.cpp)
+
 sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta)"
              SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
@@ -170,6 +173,19 @@ sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle
              LIBS room_metadata_common bcrypt)
 
 sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
+sdgo_add_mod(collection_capsule SERVER DESCRIPTION "never-acquired base-form capsule machine"
+             SOURCES mods/collection_capsule/collection_capsule.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
+# Shared capsule resource provider, distributed inside the owner toolkit. The
+# generated player bundle uses one capsule_catalog instance for all machines.
+add_library(capsule_registry_support SHARED
+    support/capsule_registry/capsule_catalog.cpp support/capsule_registry/capsule_runtime.cpp)
+set_target_properties(capsule_registry_support PROPERTIES OUTPUT_NAME capsule_catalog)
+target_link_libraries(capsule_registry_support PRIVATE sdgo_api)
+sdgo_strict(capsule_registry_support)
+sdgo_version_resource(capsule_registry_support capsule_catalog.dll "SDGO shared capsule resource registry")
+sdgo_stage(capsule_registry_support "support/capsule-registry")
 
 # Optional catalog provider, same mod id in the two processes. Owner-generated
 # catalog.bin is never staged or bundled by a framework build.
@@ -231,6 +247,11 @@ if(SDGO_BUILD_MANAGER)
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/shop/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/sql/*.sql"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/*collection_capsule*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/capsule_registry/*"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mods/collection_capsule/assets/*"
         "${CMAKE_CURRENT_SOURCE_DIR}/mods/*/manager.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.sql" "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.py"
@@ -293,6 +314,28 @@ sdgo_strict(daily_rewards_runtime_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(game_test_framework_host tests/game_test_framework_host.cpp)
+    target_link_libraries(game_test_framework_host PRIVATE sdgo_api)
+    sdgo_strict(game_test_framework_host)
+    add_test(NAME game_test_framework_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_test_framework_test.py"
+        --host "$<TARGET_FILE:game_test_framework_host>")
+    set_tests_properties(game_test_framework_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(game_test_onboarding_gate_test tests/game_test_onboarding_gate_test.cpp)
+    sdgo_strict(game_test_onboarding_gate_test)
+    add_test(NAME game_test_onboarding_gate_offline COMMAND game_test_onboarding_gate_test)
+    set_tests_properties(game_test_onboarding_gate_offline PROPERTIES TIMEOUT 30)
+    add_executable(game_test_room_actions_test tests/game_test_room_actions_test.cpp)
+    target_link_libraries(game_test_room_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_room_actions_test)
+    add_test(NAME game_test_room_actions_offline COMMAND game_test_room_actions_test)
+    set_tests_properties(game_test_room_actions_offline PROPERTIES TIMEOUT 30)
+    add_executable(game_test_server_test tests/game_test_server_test.cpp)
+    target_link_libraries(game_test_server_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_server_test)
+    add_test(NAME game_test_server_offline COMMAND game_test_server_test)
+    set_tests_properties(game_test_server_offline PROPERTIES TIMEOUT 30)
+
     if(SDGO_BUILD_MANAGER)
         add_test(NAME shop_owner_domain_service COMMAND "${CMAKE_BINARY_DIR}/manager-services/ShopUiTests.exe")
         set_tests_properties(shop_owner_domain_service PROPERTIES TIMEOUT 60)
@@ -507,6 +550,9 @@ if(BUILD_TESTING)
     add_test(NAME mod_catalog_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_catalog.py" -v)
     set_tests_properties(mod_catalog_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_test(NAME game_test_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test.py" -v)
+    set_tests_properties(game_test_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -657,4 +703,10 @@ if(BUILD_TESTING)
     add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
     target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
     sdgo_strict(new_account_sql_test)
+    add_test(NAME collection_capsule_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_collection*.py" -v)
+    set_tests_properties(collection_capsule_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(collection_capsule_sql_test tests/collection_capsule_sql_test.cpp)
+    target_link_libraries(collection_capsule_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(collection_capsule_sql_test)
 endif()

@@ -29,6 +29,16 @@ float seenYaw = 0, seenPitch = 0;
 std::vector<std::pair<int, int>> starts;
 std::vector<void*> allocations;
 int allocationBudget = 12;
+void* inboundAllocation = nullptr;
+LONG sequenceInsideInbound = -1;
+int __fastcall Inbound(void*, void*, int, int, int, int, void*) {
+    sequenceInsideInbound = InterlockedCompareExchange(&g_createReplySequence, 0, 0);
+    if (inboundAllocation) {
+        CHECK(VirtualFree(inboundAllocation, 0, MEM_RELEASE) != 0);
+        inboundAllocation = nullptr;
+    }
+    return 73;
+}
 
 uint8_t* __cdecl App() { return app.data(); }
 bool __cdecl Network() { return network; }
@@ -318,6 +328,30 @@ int main() {
     CHECK(AngleDelta(std::numeric_limits<float>::infinity(), 0) == 0);
     CHECK(std::fabs(AngleDelta(100000000.0f, 0)) <= kPi);
     CHECK(std::fabs(AngleDelta(std::numeric_limits<float>::max(), -std::numeric_limits<float>::max())) <= kPi);
+    SCENARIO("room rejection observation reads only the native header and preserves dispatch ownership");
+    g_originalServicePacket = reinterpret_cast<PacketDispatchFn>(&Inbound);
+    InterlockedExchange(&g_createReplyVersion, 0); InterlockedExchange(&g_createReplySequence, 0);
+    SYSTEM_INFO system{}; GetSystemInfo(&system);
+    const size_t page = system.dwPageSize;
+    inboundAllocation = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    CHECK(inboundAllocation != nullptr);
+    DWORD previousProtection = 0;
+    CHECK(VirtualProtect(static_cast<uint8_t*>(inboundAllocation) + page, page, PAGE_NOACCESS, &previousProtection) != 0);
+    uint8_t* rejection = static_cast<uint8_t*>(inboundAllocation) + page - 8;
+    Put<uint16_t>(rejection, 6, 0x0BC2);
+    CHECK(ServicePacket(nullptr, nullptr, 0, 0, 0, 0x0A0A, rejection) == 73);
+    CHECK(sequenceInsideInbound == 0 && g_createReplySequence == 1);
+    CHECK((static_cast<uint32_t>(g_createReplyDetails) >> 16) == 0x0BC2 && g_createReplyRoom == 0);
+    inboundAllocation = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    CHECK(inboundAllocation != nullptr);
+    CHECK(VirtualProtect(static_cast<uint8_t*>(inboundAllocation) + page, page, PAGE_NOACCESS, &previousProtection) != 0);
+    uint8_t* accepted = static_cast<uint8_t*>(inboundAllocation) + page - 10;
+    Put<uint32_t>(accepted, 6, 37);
+    CHECK(ServicePacket(nullptr, nullptr, 0, 0, 0, 0x0918, accepted) == 73);
+    CHECK(sequenceInsideInbound == 1 && g_createReplySequence == 2 && g_createReplyRoom == 37);
+    CHECK(static_cast<uint32_t>(g_createReplyDetails) == 0x0918);
+    CHECK(ServicePacket(nullptr, nullptr, 0, 0, 0, 0x1234, nullptr) == 73);
+    CHECK(g_createReplySequence == 2);
     for (void* p : allocations) std::free(p); allocations.clear();
     return ai_test::Finish();
 }
