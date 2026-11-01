@@ -30,6 +30,7 @@ class CollectionManagerTests(unittest.TestCase):
 
     def build_state(self):
         state = {'build_id': 'a' * 32,
+                 'machine_kind': 'activity',
                  'config_revision': storage.revision(storage.json_bytes(self.provider.config)),
                  'machine_id': 990001, 'eligible_roots': 1}
         storage.atomic(self.provider.state_file, storage.json_bytes(state))
@@ -59,6 +60,17 @@ class CollectionManagerTests(unittest.TestCase):
         with patch('tools.collection_capsule.install_server', return_value={'applied': True}) as install:
             self.action('install-server', server_ini='attacker-target', package='attacker-package')
         install.assert_called_once_with(output / 'server-package', Path(self.provider.config['server_ini']))
+
+    def test_catalog_upgrade_needs_no_build_and_history_import_is_removed(self):
+        database = Mock()
+        with patch('owner.collection_capsule.deployment.connection', return_value=database), \
+             patch('owner.collection_capsule.deployment.upgrade_catalog', return_value={'applied':True,'world_restart_required':False}) as upgrade:
+            result = self.action('upgrade-catalog')
+        self.assertTrue(result['applied']);self.assertFalse(result['world_restart_required'])
+        upgrade.assert_called_once_with(database)
+        database.close.assert_called_once()
+        with self.assertRaises(ValueError):
+            self.action('import-history', history={'complete':True})
 
     def test_family_can_register_before_first_build(self):
         database = Mock()

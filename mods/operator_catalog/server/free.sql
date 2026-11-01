@@ -5,7 +5,7 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
     IF NOT EXISTS(SELECT 1 FROM dbo.tbl_Users WHERE AccountNumber=@AccountNumber) RETURN;
-    DECLARE @OperatorID INT=0,@CategoryID INT,@Existing BIGINT,@Lock INT;
+    DECLARE @OperatorID INT=0,@CategoryID INT,@Existing BIGINT,@Lock INT,@FixedName BIT,@NameToken VARCHAR(16);
     DECLARE @Slot INT,@UserOp BIGINT,@Serial BIGINT,@RC INT;
     DECLARE @Resource NVARCHAR(255)=N'SDGO:operator-grants:'+CONVERT(NVARCHAR(20),@AccountNumber);
     BEGIN TRY
@@ -13,13 +13,20 @@ BEGIN
         EXEC @Lock=sys.sp_getapplock @Resource=@Resource,@LockMode='Exclusive',
             @LockOwner='Transaction',@LockTimeout=2000;
         IF @Lock<0 BEGIN ROLLBACK TRANSACTION; RETURN; END;
+        -- Also repairs fixed-name holdings registered as products, without
+        -- granting product entries or touching any other operator's nickname.
+        UPDATE U SET OperatorNickname='@SDGO:'+CONVERT(VARCHAR(5),U.OperatorNumber),IsSetName=1
+        FROM dbo.tbl_UserOperators U JOIN dbo.sdgo_OperatorProfiles P ON P.OperatorID=U.OperatorNumber
+        WHERE U.AccountNumber=@AccountNumber AND P.Enabled=1 AND P.FixedName=1 AND ISNULL(U.Forbidden,0)=0
+          AND (U.IsSetName<>1 OR U.OperatorNickname COLLATE Latin1_General_100_BIN2<>'@SDGO:'+CONVERT(VARCHAR(5),U.OperatorNumber));
         WHILE 1=1
         BEGIN
-            SELECT TOP 1 @OperatorID=OperatorID,@CategoryID=CategoryID
+            SELECT TOP 1 @OperatorID=OperatorID,@CategoryID=CategoryID,@FixedName=FixedName
             FROM dbo.sdgo_OperatorProfiles
             WHERE OperatorID>@OperatorID AND Enabled=1 AND DeliveryMode='all_players'
             ORDER BY OperatorID;
             IF @@ROWCOUNT=0 BREAK;
+            SET @NameToken='@SDGO:'+CONVERT(VARCHAR(5),@OperatorID);
             IF EXISTS(SELECT 1 FROM dbo.tbl_UserOperators WHERE AccountNumber=@AccountNumber
                       AND OperatorNumber=@OperatorID AND ISNULL(Forbidden,0)=0 AND OPType=0 AND RunOut=0) CONTINUE;
             -- Existing personal nicknames, active selection and paid records stay
@@ -52,6 +59,9 @@ BEGIN
             IF @RC=0 AND (@Slot<1 OR @Slot>100 OR
                 (SELECT COUNT(*) FROM dbo.tbl_UserOperators WHERE AccountNumber=@AccountNumber AND SlotNumber=@Slot)<>1)
                 THROW 51013,'Native operator slot allocation changed during grant',1;
+            IF @RC=0 AND @FixedName=1
+                UPDATE dbo.tbl_UserOperators SET OperatorNickname=@NameToken,IsSetName=1
+                WHERE AccountNumber=@AccountNumber AND UserOperatorNumber=@UserOp AND OperatorNumber=@OperatorID;
             IF @RC<>0
             BEGIN
                 UPDATE dbo.sdgo_OperatorGrantIssues SET ReturnCode=@RC,LastAttempt=GETDATE()

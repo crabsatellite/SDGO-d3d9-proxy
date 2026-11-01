@@ -19,6 +19,10 @@ core 提供统一的 `FindRoomCommand` 公共接口；`room_random`、`pvp_ai`�
 未知的 `!指令` 同样划分参数范围，避免以后增加 Mod 时发生参数串用。
 同名命令重复时使用第一个有效命令。`!aim`、`房间!ai3`、`!ai3x`、`!rand!ai3` 不会当作 `!ai`。
 
+配齐[战斗 AI](battle-ai.md)后，对战的 `!ai` 参数段还支持 `easy`、`medium`、`hard`，
+例如 `!ai3 hard`，默认 Medium。`lv1`–`lv5` 仍选择 NPC 池；实际机体等级 Medium 为 Lv12，
+Hard 为 EX13。`!ai !rand hard` 中的 `hard` 不会改变 AI 难度。
+
 原生房名最多 **20 字节**。可选的[长房名 Mod](room-titles.zh-CN.md)通过配套客户端、Agent 和 Battle 扩展到 128 个 Unicode 标量 / 512 字节 UTF-8；更新后的三个规则 Mod 读取完整标题。未启用扩展时，组合仍受原生限制。上表两个完整 PvP 组合各为 19 个 ASCII 字节。
 未启用扩展时，加入中文房名仍需留意原生编码与字节数，使用短命令 `!rand` 可节省空间。
 
@@ -28,9 +32,11 @@ core 提供统一的 `FindRoomCommand` 公共接口；`room_random`、`pvp_ai`�
 |---|---|---|
 | 任务 | `周末朋友任务房，慢慢打一起练习 !ai3 lv4 !rand` | 请求 3 个 4 级僚机，真人每局随机 |
 | 对战 | `朋友练习局，慢慢打欢迎新手 !ai e2 a1 lv4 !rand` | 2 个敌人、1 个队友，4 级池，真人每局随机 |
+| Hard 对战 | `朋友高手练习局，一起来挑战 !ai e2 a1 lv4 hard !rand` | 同样的人数和池，使用 Hard 战斗 AI |
 
 三端房名 Mod 默认关闭：客户端启用 `room_titles`，所有相关 Agent 启用 `room_titles_agent`，
 所有相关 Battle 启用 `room_titles_server`；再更新已使用的 `coop_ai`、`pvp_ai`、`room_random`。
+使用战斗 AI 时，同时更新 `battle_ai`、`match_ai`、`battle_ai_server`。
 玩家正常启动游戏。房主照常设置房名，等服务端确认后再开始；失败时文字保留，可修改重试。
 长房名不会自动安装 AI、扩充空位、解锁库存或创建新的指令，仍按对应玩法 Mod 的设置执行。
 仅选择 `room-titles` 功能包不包含 AI / 随机机体 Mod；使用完整框架包或同时选入所需玩法。

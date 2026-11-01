@@ -3,16 +3,25 @@
   "id": "collection_capsule",
   "title": "收藏扭蛋（Beta）",
   "category": "gameplay",
-  "hosts": ["world"],
+  "hosts": [
+    "world"
+  ],
   "provider": "collection_capsule",
   "presentation": "configurable",
-  "description": "100,000 GP 抽取从未获得的初始形态；出售后仍不重复。配套资源、安装与玩家分发由收藏扭蛋面板管理。",
-  "mechanism": "World Mod 截获本机台交付，独立事务动态解析当前机体族和获得历史；原生流程预扣及失败补偿。初始形态来自原生目录或导入元数据，非固定奖品名单。",
+  "description": "活动扭蛋机：100,000 GP，先补未解锁图鉴，图鉴全解锁后补当前机库缺少的初始机体。C/B/A/S 权重35/30/20/15。",
+  "mechanism": "World Mod 自动维护最小图鉴解锁标记，候选来自可用数据库初始机体，允许没有原生图鉴条目的新内容。未领取奖品视为已在手；安装或更新通过 Manager 自动建表迁移，不要求玩家运行 SQL。",
   "settings": [
     {
-      "id": "machine_id", "key": "MachineID", "label": "机台内部编号（须与生成包一致）",
-      "type": "integer", "default": 990001, "minimum": 1, "maximum": 2147483647,
-      "file": "config.ini", "section": "settings", "audience": "developer",
+      "id": "machine_id",
+      "key": "MachineID",
+      "label": "机台内部编号（须与生成包一致）",
+      "type": "integer",
+      "default": 990001,
+      "minimum": 1,
+      "maximum": 2147483647,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
       "activation": "restart_required"
     }
   ]

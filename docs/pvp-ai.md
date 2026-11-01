@@ -51,6 +51,11 @@ The host runs the AI and other clients display synchronized copies. Grid/Tag
 modes can use AI decks. The existing dead view can follow AI players. Respawn,
 life consumption and victory conditions follow the selected mode.
 
+`match_ai 0.1.2` repairs the original search's participant indices and team-1 branch:
+bots on either team can target opposing humans and AI while excluding teammates.
+This compatibility fix also applies to Easy or clients without enhanced Battle AI.
+See [Battle AI](battle-ai.md) for the separate Medium/Hard controller and version checks.
+
 ## Settings
 
 Server: `[settings]` in `sdgo/mods/pvp_ai/mod.ini`; restart the affected battle

@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from owner.collection_capsule.deployment import connection, import_history, register_unit_family, export_configuration, registration_baseline
+from owner.collection_capsule.deployment import connection, register_unit_family, export_configuration, upgrade_catalog
 from owner.collection_capsule.metadata import imported_roots, registered_imports
 from owner.collection_capsule.pool import build_pool, load_units
 from owner.collection_capsule.sql import installation, disable, pool_hash
@@ -61,16 +61,18 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
     roots.update(existing)
     roots.update(explicit)
     pool = build_pool(rows, verified_bases=roots)
+    from owner.collection_capsule.items import build_unit_items
+    unit_items = build_unit_items(snapshot, pool['units'], client_root=client_root, client_gdrs=client_gdrs)
     unresolved = [entry for entry in pool["excluded"] if entry["reason"] == "ambiguous_transform_cycle"]
     if unresolved:
         raise ValueError("Native/import form metadata is required for all ambiguous families; "
                          + str(len(unresolved)) + " form records remain unresolved")
     output.mkdir(parents=True, exist_ok=False)
     model = {"schema_version": 1, "feature": "collection-capsule", "machine_id": machine_id,
-             "price_gp": 100000, "source_units": rows, "pool": pool,
-             "native_root_revision": native["revision"], "native_root_audit": native["audit"]}
+             "price_gp": 100000, "machine_kind": "activity", "source_units": rows, "pool": pool,
+             "native_root_revision": native["revision"], "native_root_audit": native["audit"], "unit_items": unit_items}
     write_json(output / "model.json", model)
-    (output / "install.sql").write_text(installation(pool, rows, machine_id), encoding="utf-8")
+    (output / "install.sql").write_text(installation(pool, rows, machine_id, unit_items=unit_items), encoding="utf-8")
     (output / "disable.sql").write_text(disable(machine_id), encoding="utf-8")
     if framework_stage:
         server = output / "server"
@@ -90,7 +92,7 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in output.rglob("*") if path.is_file()}
     write_json(output / "manifest.json", {"schema_version": 1, "feature": "collection-capsule",
-               "machine_id": machine_id, "price_gp": 100000, "pool_revision": pool_hash(pool),
+               "machine_id": machine_id, "price_gp": 100000, "machine_kind": "activity", "pool_revision": pool_hash(pool),
                "files": files})
     return {"machine_id": machine_id, "price_gp": 100000, "resolved_roots": len(pool["units"]),
             "pool_revision": pool_hash(pool), "output": str(output)}
@@ -101,6 +103,7 @@ def checked_model(package):
     if (manifest.get("schema_version") != 1 or manifest.get("feature") != "collection-capsule"
             or model.get("schema_version") != 1 or model.get("feature") != "collection-capsule"
             or manifest.get("machine_id") != model.get("machine_id")
+            or model.get("machine_kind") != "activity" or manifest.get("machine_kind") != "activity"
             or model.get("price_gp") != 100000 or manifest.get("price_gp") != 100000
             or manifest.get("pool_revision") != pool_hash(model["pool"])):
         raise ValueError("Collection server package metadata differs")
@@ -116,7 +119,7 @@ def checked_model(package):
     server_files = {name.removeprefix("server/") for name in actual if name.startswith("server/")}
     if server_files and server_files != SERVER_FILES:
         raise ValueError("Server package attempts to modify files outside this Mod/framework payload")
-    expected_install = installation(model["pool"], model["source_units"], model["machine_id"])
+    expected_install = installation(model["pool"], model["source_units"], model["machine_id"], unit_items=model.get('unit_items', []))
     if (package / "install.sql").read_text(encoding="utf-8") != expected_install:
         raise ValueError("Server SQL differs from this feature's trusted generator")
     return model, expected_install
@@ -138,8 +141,16 @@ def merged_world_symbols(existing: bytes | None, incoming: bytes) -> bytes:
         for key in ("timestamp", "size_of_image"):
             if int(present["host"][key], 0) != int(wanted["host"][key], 0):
                 raise ValueError("Existing World symbol host differs from the supported executable")
+    if 'collection.pick' in present:
+        legacy = present['collection.pick']
+        if (legacy.get('kind') != 'code' or int(legacy.get('rva', '0'), 0) != 0xE510
+                or ' '.join(legacy.get('expect', '').upper().split()) != '55 8B EC 81 EC 60 07 00 00'):
+            raise ValueError('The obsolete collection World symbol was externally edited')
+        current = re.sub(r'(?ms)^\[collection\.pick\]\s*\n.*?(?=^\[|\Z)', '', current)
+        prefix = b'\xff\xfe' if encoding == 'utf-16-le' else b'\xef\xbb\xbf' if (existing or b'').startswith(b'\xef\xbb\xbf') else b''
+        existing = prefix + current.encode(encoding)
     additions = []
-    names = ["collection.pick", "collection.connection_command"]
+    names = ["collection.activity_pick", "collection.connection_command"]
     if not current:
         names.insert(0, "host")
     for name in names:
@@ -251,8 +262,7 @@ def install_server(package, server_ini, *, check_only=False):
     with contextlib.closing(connection(server_ini)) as db:
         actual = db.cursor().execute("SELECT DB_NAME()").fetchone()[0]
         if check_only:
-            return {"checked": True, "database": actual, "machine_id": model["machine_id"], "applied": False}
-        legacy_max = registration_baseline(server_ini)
+            return {"checked": True, "database": actual, "machine_id": model["machine_id"], "machine_kind": "activity", "applied": False}
         with tempfile.TemporaryDirectory(prefix="sdgo-collection-server-") as temporary:
             payload = Path(temporary) / "server"
             shutil.copytree(package / "server", payload)
@@ -265,9 +275,8 @@ def install_server(package, server_ini, *, check_only=False):
                 # after the complete file update and state readback have succeeded.
                 cursor.execute("SET XACT_ABORT ON;BEGIN TRANSACTION;")
                 cursor.execute(sql)
-                cursor.execute("UPDATE sdgo_collection_capsule.State SET LegacyAccountMax=?,RegistrationBaseline=1 WHERE Singleton=1 AND RegistrationBaseline=0", legacy_max)
-                row = cursor.execute("SELECT MachineID,PriceGP,Enabled,PoolHash FROM sdgo_collection_capsule.State WHERE Singleton=1").fetchone()
-                if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"])):
+                row = cursor.execute("SELECT s.MachineID,s.PriceGP,s.Enabled,s.PoolHash,s.SchemaVersion,p.Type,p.Price,p.Disable FROM sdgo_collection_capsule.State s JOIN dbo.tbl_ItemMachinePrice p ON p.MachineID=s.MachineID WHERE s.Singleton=1").fetchone()
+                if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"]), 3, 0, 100000, 0):
                     raise RuntimeError("Installed collection state readback differs")
                 result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                     str(ROOT / "tools/install_server.ps1"), "-ServerRoot", str(target), "-Role", "World",
@@ -284,7 +293,8 @@ def install_server(package, server_ini, *, check_only=False):
                 raise
             finally:
                 cursor.close()
-    return {"applied": True, "machine_id": model["machine_id"], "price_gp": 100000,
+    return {"applied": True, "machine_id": model["machine_id"], "machine_kind": "activity", "price_gp": 100000,
+            "catalog_schema_version": 3, "database_setup_automatic": True, "players_require_sql": False,
             "restart_world_required": True, "backup": str(files.backup)}
 
 
@@ -310,9 +320,8 @@ def main():
     p = commands.add_parser("disable")
     p.add_argument("--server-ini", type=Path, required=True)
     p.add_argument("--machine-id", type=int, default=990001)
-    p = commands.add_parser("import-history")
+    p = commands.add_parser("upgrade-catalog")
     p.add_argument("--server-ini", type=Path, required=True)
-    p.add_argument("--history", type=Path, required=True)
     p = commands.add_parser("export")
     p.add_argument("--server-ini", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -343,10 +352,10 @@ def main():
     elif args.command == "disable":
         with contextlib.closing(connection(args.server_ini)) as db:
             db.cursor().execute(disable(args.machine_id))
-        print(json.dumps({"disabled": True, "history_preserved": True, "restart_world_required": True}))
-    elif args.command == "import-history":
+        print(json.dumps({"disabled": True, "catalog_unlocks_preserved": True, "restart_world_required": True}))
+    elif args.command == "upgrade-catalog":
         with contextlib.closing(connection(args.server_ini)) as db:
-            print(json.dumps(import_history(db, read_json(args.history))))
+            print(json.dumps(upgrade_catalog(db)))
     elif args.command == "export":
         with contextlib.closing(connection(args.server_ini)) as db:
             print(json.dumps(export_configuration(db, args.out)))
@@ -371,7 +380,7 @@ def main():
                        args.unit_family, stage / "server", client_root=args.client)
         model = read_json(args.out / "server-package/model.json")
         registry = build_client_registry(client_root=args.client, current_registry=current,
-            source_units=model["pool"]["units"], machine_id=args.machine_id, cover=args.cover,
+            source_units=model["pool"]["units"], unit_items=model['unit_items'], machine_id=args.machine_id, cover=args.cover,
             output=args.out / "client-registry")
         player = package_client_registry(registry=args.out / "client-registry", framework_stage=stage / "client",
                                          support_dll=support, output=args.out / "player")

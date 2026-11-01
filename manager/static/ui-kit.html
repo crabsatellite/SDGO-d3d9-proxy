@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDGO Mecha UI</title>
+<link rel="stylesheet" href="/ui.css">
+<style>
+  body {
+    background:
+      radial-gradient(1100px 700px at 80% -10%, rgb(47 107 255 / 16%), transparent 60%),
+      linear-gradient(180deg, #060a12, var(--ui-void) 40%);
+    background-attachment: fixed;
+  }
+  .kit { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+  .kit-nav {
+    --art: none;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    padding: 26px 14px;
+    background: linear-gradient(180deg, rgb(7 11 20 / 85%), rgb(5 8 15 / 96%)), var(--art) center / cover, var(--ui-hull-900);
+    box-shadow: inset -1px 0 0 var(--ui-line);
+  }
+  .kit-brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 18px; color: var(--ui-armor); text-decoration: none; }
+  .kit-brand .ui-mark { width: 44px; height: 44px; }
+  .kit-brand b { display: block; font: 800 22px/1 var(--ui-font-display); letter-spacing: .12em; }
+  .kit-brand span { display: block; margin-top: 4px; font: 600 10px/1 var(--ui-font-display); letter-spacing: .3em; color: var(--ui-gold); }
+  .kit-nav a.ui-nav-item { text-decoration: none; }
+  .kit-main { padding: 34px 44px 80px; max-width: 1400px; }
+  .kit-section { margin: 0 0 54px; scroll-margin-top: 20px; }
+  .kit-section > p { margin-top: -6px; }
+  .demo { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 14px 0; }
+  .demo.col { flex-direction: column; align-items: stretch; }
+  .swatch { width: 150px; }
+  .swatch i { display: block; height: 64px; clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); }
+  .swatch b { display: block; margin-top: 8px; font: 600 12px/1.2 var(--ui-font-display); letter-spacing: .06em; }
+  .swatch code { font-size: 11px; color: var(--ui-muted); }
+  .type-row { display: flex; align-items: baseline; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--ui-line); }
+  .type-row code { width: 150px; flex: none; color: var(--ui-muted); font-size: 11px; }
+  .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .icon-cell { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font: 500 12px/1 var(--ui-font-mono); color: var(--ui-text-dim); background: var(--ui-hull-850); box-shadow: inset 0 0 0 1px var(--ui-line); }
+  .icon-cell svg { width: 20px; height: 20px; color: var(--ui-cyan); }
+  .art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+  .art-grid figure { margin: 0; }
+  .art-grid .ui-art { height: 130px; }
+  .art-grid figcaption { margin-top: 6px; font: 500 12px/1 var(--ui-font-mono); color: var(--ui-muted); }
+  .deco { width: 220px; height: 110px; display: grid; place-items: center; background: var(--ui-hull-850); color: var(--ui-muted); font: 600 11px/1 var(--ui-font-display); letter-spacing: .2em; }
+  .deco.ui-hazard { background: var(--ui-hazard); }
+  .deco-tag { padding: 6px 10px; background: var(--ui-hull-950); color: var(--ui-gold); }
+  .nav-demo { display: grid; grid-template-columns: 260px minmax(0, 560px); gap: 28px; align-items: start; }
+  @media (max-width: 720px) { .nav-demo { grid-template-columns: 1fr; } }
+  pre.usage { margin: 0; padding: 16px 18px; overflow: auto; font: 12.5px/1.6 var(--ui-font-mono); color: var(--ui-text-dim); background: var(--ui-hull-950); box-shadow: inset 0 0 0 1px var(--ui-line), inset 3px 0 0 var(--ui-gold); }
+  @media (max-width: 900px) { .kit { display: block; } .kit-nav { position: relative; height: auto; } .kit-main { padding: 24px 18px 60px; } }
+</style>
+</head>
+<body data-ui-kit>
+<div class="kit">
+  <aside class="kit-nav" data-ui-art="plating">
+    <a class="kit-brand" href="#top" data-ui-mark><span><b>MECHA UI</b><span>SDGO MANAGER</span></span></a>
+    <div class="ui-nav-label">FOUNDATION</div>
+    <a class="ui-nav-item" href="#tokens" data-ui-icon="settings">色彩与令牌</a>
+    <a class="ui-nav-item" href="#type" data-ui-icon="developer">字体排印</a>
+    <a class="ui-nav-item" href="#icons" data-ui-icon="mods">图标</a>
+    <a class="ui-nav-item" href="#art" data-ui-icon="host">客户端美术</a>
+    <div class="ui-nav-label">COMPONENTS</div>
+    <a class="ui-nav-item" href="#buttons" data-ui-icon="play">按钮</a>
+    <a class="ui-nav-item" href="#forms" data-ui-icon="settings">表单控件</a>
+    <a class="ui-nav-item" href="#status" data-ui-icon="check">状态与标签</a>
+    <a class="ui-nav-item" href="#data" data-ui-icon="services">数据展示</a>
+    <a class="ui-nav-item" href="#surfaces" data-ui-icon="archive">面板与卡片</a>
+    <a class="ui-nav-item" href="#navigation" data-ui-icon="frp">导航</a>
+    <a class="ui-nav-item" href="#feedback" data-ui-icon="warning">反馈与浮层</a>
+    <a class="ui-nav-item" href="#decoration" data-ui-icon="capsules">装饰</a>
+    <a class="ui-nav-item" href="#usage" data-ui-icon="copy">使用方法</a>
+  </aside>
+
+  <main class="kit-main" id="top">
+    <section class="kit-section">
+      <div class="ui-hero" data-ui-art="hero-unicorn">
+        <span class="ui-hero-tag">MOBILE SUIT HANGAR</span>
+        <i class="ui-hero-scan"></i>
+        <div class="ui-hero-copy">
+          <span class="ui-eyebrow">SDGO MECHA UI // 组件库</span>
+          <h1 class="ui-title">机库整备界面</h1>
+          <p>Mod Manager 的界面组件库：机库夜色的底，RX 三色（联邦蓝、红、V 型天线金）点缀，光束青色作焦点；装甲板切角、HUD 角标与警示条纹。美术图从玩家自己的客户端读取。</p>
+        </div>
+        <div class="ui-hero-stats">
+          <div class="ui-stat"><b>60+</b><span>组件</span></div>
+          <div class="ui-stat is-gold"><b>9</b><span>美术槽</span></div>
+          <div class="ui-stat is-green"><b>0</b><span>外部依赖</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="kit-section" id="tokens">
+      <h2 class="ui-heading">色彩与令牌</h2>
+      <p class="ui-lead">所有颜色、字体、切角和动效都是 <code>:root</code> 上的 <code>--ui-*</code> 变量；影子 DOM 里的面板也能继承。</p>
+      <div class="demo">
+        <div class="swatch"><i style="background:var(--ui-blue)"></i><b>联邦蓝</b><code>--ui-blue</code></div>
+        <div class="swatch"><i style="background:var(--ui-red)"></i><b>RX 红</b><code>--ui-red</code></div>
+        <div class="swatch"><i style="background:var(--ui-gold)"></i><b>V 型天线金</b><code>--ui-gold</code></div>
+        <div class="swatch"><i style="background:var(--ui-cyan)"></i><b>光束青</b><code>--ui-cyan</code></div>
+        <div class="swatch"><i style="background:var(--ui-green)"></i><b>GN 绿</b><code>--ui-green</code></div>
+        <div class="swatch"><i style="background:var(--ui-amber)"></i><b>警告橙</b><code>--ui-amber</code></div>
+        <div class="swatch"><i style="background:var(--ui-armor)"></i><b>装甲白</b><code>--ui-armor</code></div>
+      </div>
+      <div class="demo">
+        <div class="swatch"><i style="background:var(--ui-void)"></i><b>深空</b><code>--ui-void</code></div>
+        <div class="swatch"><i style="background:var(--ui-hull-900)"></i><b>舰体 900</b><code>--ui-hull-900</code></div>
+        <div class="swatch"><i style="background:var(--ui-hull-800)"></i><b>舰体 800</b><code>--ui-hull-800</code></div>
+        <div class="swatch"><i style="background:var(--ui-hull-600)"></i><b>舰体 600</b><code>--ui-hull-600</code></div>
+        <div class="swatch"><i style="background:var(--ui-steel-400)"></i><b>钢 400</b><code>--ui-steel-400</code></div>
+        <div class="swatch"><i style="background:var(--ui-line-strong)"></i><b>线条</b><code>--ui-line-strong</code></div>
+        <div class="swatch"><i style="background:var(--ui-hazard)"></i><b>警示条纹</b><code>--ui-hazard</code></div>
+      </div>
+    </section>
+
+    <section class="kit-section" id="type">
+      <h2 class="ui-heading">字体排印</h2>
+      <p class="ui-lead">标题用 Bahnschrift（Windows 自带的 DIN 风格字体），中文用微软雅黑，代码用 Cascadia Mono。全部是系统字体，离线可用。</p>
+      <div class="type-row"><code>.ui-title</code><span class="ui-title">机动战士 MOD HANGAR</span></div>
+      <div class="type-row"><code>.ui-heading</code><span class="ui-heading" style="flex:1;margin:0">面板标题 Panel heading</span></div>
+      <div class="type-row"><code>.ui-eyebrow</code><span class="ui-eyebrow">SYSTEM // 玩家与服主</span></div>
+      <div class="type-row"><code>.ui-lead</code><span class="ui-lead">正文导语，用于页面说明。</span></div>
+      <div class="type-row"><code>.ui-muted</code><span class="ui-muted">次要说明文字</span></div>
+      <div class="type-row"><code>code</code><code style="width:auto;color:var(--ui-cyan)">sdgo/mods/pvp_ai/mod.ini · LogBattle</code></div>
+    </section>
+
+    <section class="kit-section" id="icons">
+      <h2 class="ui-heading">图标</h2>
+      <p class="ui-lead"><code>icon(name)</code> 或 <code>data-ui-icon="name"</code>。24×24 线条图标，直角收尾，与装甲板的切角一致。</p>
+      <div class="icon-grid">
+        <span class="icon-cell" data-ui-icon="mods">mods</span><span class="icon-cell" data-ui-icon="services">services</span>
+        <span class="icon-cell" data-ui-icon="archive">archive</span><span class="icon-cell" data-ui-icon="shop">shop</span>
+        <span class="icon-cell" data-ui-icon="operators">operators</span><span class="icon-cell" data-ui-icon="capsules">capsules</span>
+        <span class="icon-cell" data-ui-icon="collection_capsule">collection</span><span class="icon-cell" data-ui-icon="rewards">rewards</span>
+        <span class="icon-cell" data-ui-icon="frp">frp</span><span class="icon-cell" data-ui-icon="ai_catalog">ai_catalog</span>
+        <span class="icon-cell" data-ui-icon="developer">developer</span><span class="icon-cell" data-ui-icon="exit">exit</span>
+        <span class="icon-cell" data-ui-icon="add">add</span><span class="icon-cell" data-ui-icon="host">host</span>
+        <span class="icon-cell" data-ui-icon="back">back</span><span class="icon-cell" data-ui-icon="copy">copy</span>
+        <span class="icon-cell" data-ui-icon="bug">bug</span><span class="icon-cell" data-ui-icon="settings">settings</span>
+        <span class="icon-cell" data-ui-icon="import">import</span><span class="icon-cell" data-ui-icon="save">save</span>
+        <span class="icon-cell" data-ui-icon="check">check</span><span class="icon-cell" data-ui-icon="warning">warning</span>
+        <span class="icon-cell" data-ui-icon="play">play</span><span class="icon-cell" data-ui-icon="refresh">refresh</span>
+        <span class="icon-cell" data-ui-icon="search">search</span>
+      </div>
+    </section>
+
+    <section class="kit-section" id="art">
+      <h2 class="ui-heading">客户端美术</h2>
+      <p class="ui-lead">仓库和发行包里不带游戏美术。<code>/api/art/&lt;key&gt;</code> 从已添加客户端的 GPackData 读取贴图，按固定区域裁切；没有客户端时，这些位置保留绘制的装甲板外观。</p>
+      <div class="art-grid">
+        <figure><div class="ui-art" data-ui-art="hero-unicorn"></div><figcaption>hero-unicorn</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="hero-strike"></div><figcaption>hero-strike</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="hero-maoh"></div><figcaption>hero-maoh</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="hero-awaken"></div><figcaption>hero-awaken</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="hero-space"></div><figcaption>hero-space</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="hangar"></div><figcaption>hangar</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="plating"></div><figcaption>plating</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="nebula"></div><figcaption>nebula</figcaption></figure>
+        <figure><div class="ui-art" data-ui-art="squad"></div><figcaption>squad</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="kit-section" id="buttons">
+      <h2 class="ui-heading">按钮</h2>
+      <div class="demo">
+        <button class="ui-btn is-primary" data-ui-icon="play">出击</button>
+        <button class="ui-btn is-blue" data-ui-icon="settings">设置功能</button>
+        <button class="ui-btn">普通</button>
+        <button class="ui-btn is-ghost" data-ui-icon="copy">复制给 AI</button>
+        <button class="ui-btn is-danger" data-ui-icon="warning">删除</button>
+        <button class="ui-btn" disabled>不可用</button>
+      </div>
+      <div class="demo">
+        <button class="ui-btn is-primary is-large" data-ui-icon="save">保存配置</button>
+        <button class="ui-btn is-blue is-small" data-ui-icon="add">添加</button>
+        <button class="ui-btn is-ghost is-small" data-ui-icon="refresh">刷新</button>
+        <button class="ui-btn is-icon" data-ui-icon="search" aria-label="搜索"></button>
+        <button class="ui-btn is-icon is-ghost ui-tooltip" data-tip="复制" data-ui-icon="copy" aria-label="复制"></button>
+      </div>
+    </section>
+
+    <section class="kit-section" id="forms">
+      <h2 class="ui-heading">表单控件</h2>
+      <div class="ui-grid" style="--ui-min: 260px">
+        <label class="ui-field"><span>机体名称</span><input class="ui-input" placeholder="RX-78-2"><small class="ui-help">保存后需重启对应游戏</small></label>
+        <label class="ui-field"><span>等级池</span><select class="ui-select"><option>Level 2</option><option>Level 4</option></select></label>
+        <label class="ui-field"><span>搜索</span><input class="ui-input ui-search" placeholder="搜索机体或副官"></label>
+        <label class="ui-field"><span>数值</span><input class="ui-input" type="number" value="2500"></label>
+      </div>
+      <div class="demo">
+        <label class="ui-check-label"><input type="checkbox" class="ui-switch" checked> 游戏扩展总开关</label>
+        <label class="ui-check-label"><input type="checkbox" class="ui-switch"> 联机功能总开关</label>
+        <label class="ui-check-label"><input type="checkbox" class="ui-check" checked> 显示已停售</label>
+        <label class="ui-check-label"><input type="checkbox" class="ui-check"> 只看 S 级</label>
+        <label class="ui-check-label"><input type="radio" name="kit-r" class="ui-check" checked> 客户端</label>
+        <label class="ui-check-label"><input type="radio" name="kit-r" class="ui-check"> 服务器</label>
+      </div>
+      <label class="ui-field"><span>给 AI 的说明</span><textarea class="ui-textarea">[mod]&#10;id=pvp_ai&#10;LogBattle=0</textarea></label>
+    </section>
+
+    <section class="kit-section" id="status">
+      <h2 class="ui-heading">状态与标签</h2>
+      <div class="demo">
+        <span class="ui-chip">默认</span><span class="ui-chip is-blue">v1.1.2</span><span class="ui-chip is-red">已停售</span>
+        <span class="ui-chip is-gold">NEW</span><span class="ui-chip is-cyan">运行中</span><span class="ui-chip is-green">已启用</span><span class="ui-chip is-amber">上层开关已关闭</span>
+      </div>
+      <div class="demo">
+        <span class="ui-rank is-s">S</span><span class="ui-rank is-a">A</span><span class="ui-rank is-b">B</span><span class="ui-rank">C</span>
+        <span class="ui-status"><i class="ui-led is-on"></i>在线</span>
+        <span class="ui-status"><i class="ui-led is-warn"></i>等待健康回报</span>
+        <span class="ui-status"><i class="ui-led is-error"></i>出错</span>
+        <span class="ui-status"><i class="ui-led is-blue"></i>热更新</span>
+        <span class="ui-status"><i class="ui-led"></i>已停止</span>
+        <span class="ui-badge">3</span>
+      </div>
+    </section>
+
+    <section class="kit-section" id="data">
+      <h2 class="ui-heading">数据展示</h2>
+      <div class="demo">
+        <div class="ui-stat"><b>12</b><span>功能</span></div>
+        <div class="ui-stat is-green"><b>9</b><span>已启用</span></div>
+        <div class="ui-stat is-gold"><b>48,000</b><span>G 币</span></div>
+        <div class="ui-stat is-red"><b>2</b><span>需要处理</span></div>
+      </div>
+      <div class="ui-grid" style="--ui-min: 280px">
+        <div class="ui-gauge"><div class="ui-gauge-label"><span>MY TEAM</span><span>62 / 80</span></div><div class="ui-gauge-track" style="--value: 77%"></div></div>
+        <div class="ui-gauge is-red"><div class="ui-gauge-label"><span>ENEMY</span><span>36 / 80</span></div><div class="ui-gauge-track" style="--value: 45%"></div></div>
+        <div class="ui-gauge is-gold"><div class="ui-gauge-label"><span>DECK POINTS</span><span>8 / 10</span></div><div class="ui-gauge-track" style="--value: 80%"></div></div>
+      </div>
+      <div class="demo"><progress class="ui-meter" value="64" max="100"></progress></div>
+      <table class="ui-table">
+        <thead><tr><th>机体</th><th>等级</th><th>点数</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>全装甲独角兽高达</td><td><span class="ui-rank is-s">S</span></td><td>5</td><td><span class="ui-chip is-green">在售</span></td></tr>
+          <tr><td>强袭自由高达</td><td><span class="ui-rank is-s">S</span></td><td>5</td><td><span class="ui-chip is-gold">NEW</span></td></tr>
+          <tr><td>百式</td><td><span class="ui-rank is-a">A</span></td><td>4</td><td><span class="ui-chip">常规</span></td></tr>
+          <tr><td>扎古 II</td><td><span class="ui-rank">C</span></td><td>2</td><td><span class="ui-chip is-red">已停售</span></td></tr>
+        </tbody>
+      </table>
+      <div class="ui-grid" style="--ui-min: 320px; margin-top: 18px">
+        <dl class="ui-kv"><dt>宿主</dt><dd>SDGO-client · 客户端</dd><dt>版本</dt><dd>1.1.2</dd><dt>工作区</dt><dd>本机</dd></dl>
+        <ul class="ui-list"><li><i class="ui-led is-on"></i>奖励钱包服务</li><li><i class="ui-led"></i>商城业务通道</li><li><i class="ui-led is-warn"></i>中继服务器</li></ul>
+      </div>
+    </section>
+
+    <section class="kit-section" id="surfaces">
+      <h2 class="ui-heading">面板与卡片</h2>
+      <div class="ui-grid" style="--ui-min: 300px">
+        <div class="ui-panel"><div class="ui-panel-head">PARAMETERS // 日常参数</div><p class="ui-muted">.ui-panel 带 .ui-panel-head 的装甲面板。</p><button class="ui-btn is-primary is-small">保存</button></div>
+        <div class="ui-panel is-warn"><div class="ui-panel-head">CAUTION // 需要重启</div><p class="ui-muted">.ui-panel.is-warn</p></div>
+        <div class="ui-panel is-danger"><div class="ui-panel-head">DANGER // 不可撤销</div><p class="ui-muted">.ui-panel.is-danger</p></div>
+      </div>
+      <div class="ui-grid" style="--ui-min: 300px; margin-top: 18px">
+        <article class="ui-card ui-boot" style="--i:0">
+          <div class="ui-card-head"><div><h3 class="ui-card-title">对战 AI · 客户端</h3><span class="ui-card-code">MATCH_AI</span></div><input type="checkbox" class="ui-switch" checked></div>
+          <p class="ui-card-body">显示并运行对战 AI 机体，需要配套服务器支持。</p>
+          <div class="ui-card-foot"><span class="ui-status"><i class="ui-led is-on"></i>配置已启用</span><span class="ui-chip is-blue">v0.1.0</span></div>
+          <div class="ui-btn-row"><button class="ui-btn is-blue is-small" data-ui-icon="settings">设置功能</button><button class="ui-btn is-ghost is-small" data-ui-icon="copy">复制给 AI</button></div>
+        </article>
+        <article class="ui-card is-off ui-boot" style="--i:1">
+          <div class="ui-card-head"><div><h3 class="ui-card-title">任务 AI 队友</h3><span class="ui-card-code">MISSION_AI</span></div><input type="checkbox" class="ui-switch"></div>
+          <p class="ui-card-body">关闭状态的卡片：脊线变灰、颜色降饱和。</p>
+          <div class="ui-card-foot"><span class="ui-status"><i class="ui-led"></i>配置已关闭</span></div>
+        </article>
+        <article class="ui-card ui-boot" style="--i:2; --spine: var(--ui-gold)">
+          <div class="ui-card-head"><h3 class="ui-card-title">自定义脊线颜色</h3><span class="ui-rank is-s">S</span></div>
+          <p class="ui-card-body">用 <code>--spine</code> 改卡片左侧发光脊线的颜色。</p>
+        </article>
+      </div>
+      <div class="ui-empty" style="margin-top: 22px">
+        <div class="ui-art" data-ui-art="squad"></div>
+        <span class="ui-eyebrow">欢迎使用 SDGO</span>
+        <h2>从你的客户端开始</h2>
+        <p>.ui-empty：空状态。选择已经安装好的单机版，查看可用 Mod。</p>
+        <button class="ui-btn is-primary is-large">选择客户端</button>
+      </div>
+    </section>
+
+    <section class="kit-section" id="navigation">
+      <h2 class="ui-heading">导航</h2>
+      <div class="nav-demo">
+        <div>
+          <div class="ui-nav-label">MANAGEMENT</div>
+          <button class="ui-nav-item is-active" data-ui-icon="shop">商城商品</button>
+          <button class="ui-nav-item" data-ui-icon="operators">副官与掉落</button>
+          <button class="ui-nav-item" data-ui-icon="capsules">扭蛋机</button>
+        </div>
+        <div class="ui-stack">
+          <div class="ui-tabs" role="tablist"><button class="ui-tab is-active">现有机体</button><button class="ui-tab">已停售</button><button class="ui-tab">草稿</button></div>
+          <div class="ui-crumbs"><span>HANGAR</span><span>扭蛋机</span><span>编辑</span></div>
+          <ol class="ui-steps" style="padding:0;margin:0"><li class="is-done">选择客户端</li><li class="is-active">检查计划</li><li>安装</li></ol>
+        </div>
+      </div>
+    </section>
+
+    <section class="kit-section" id="feedback">
+      <h2 class="ui-heading">反馈与浮层</h2>
+      <div class="demo col">
+        <div class="ui-log">已保存，重新启动对应游戏或服务器后生效。</div>
+        <div class="ui-log is-error">安装计划检查未通过：对战服务器仍在运行。</div>
+        <div class="ui-toast"><i class="ui-led is-on"></i><span>配置包已导入。</span></div>
+      </div>
+      <details class="ui-accordion"><summary>选择游戏目录与现有配置</summary><p class="ui-muted">.ui-accordion：可折叠的设置区。</p></details>
+      <div class="demo">
+        <button class="ui-btn is-blue" data-ui-open="kit-dialog" data-ui-icon="host">打开对话框</button>
+        <span class="ui-chip is-cyan ui-tooltip" data-tip="data-tip 提示">悬停查看提示</span>
+      </div>
+      <dialog class="ui-dialog" id="kit-dialog">
+        <span class="ui-eyebrow">TARGET HOST</span>
+        <h2>添加客户端</h2>
+        <p class="ui-muted">选择含有游戏 EXE 的目录。配置只保存在本机。</p>
+        <label class="ui-field"><span>目录路径</span><input class="ui-input" placeholder="D:\Games\SDGO"></label>
+        <div class="ui-dialog-actions"><button class="ui-btn is-ghost" data-ui-close>取消</button><button class="ui-btn is-primary" data-ui-close>添加</button></div>
+      </dialog>
+    </section>
+
+    <section class="kit-section" id="decoration">
+      <h2 class="ui-heading">装饰</h2>
+      <div class="demo">
+        <div class="deco ui-brackets">.ui-brackets</div>
+        <div class="deco ui-hazard"><span class="deco-tag">.ui-hazard</span></div>
+        <div class="deco ui-scanlines" style="background:linear-gradient(135deg,var(--ui-blue-deep),var(--ui-hull-900))">.ui-scanlines</div>
+        <div class="deco ui-plate">.ui-plate</div>
+        <span class="ui-mark" data-ui-mark style="width:auto;height:auto"></span>
+      </div>
+      <hr class="ui-divider">
+    </section>
+
+    <section class="kit-section" id="usage">
+      <h2 class="ui-heading">使用方法</h2>
+      <pre class="usage">&lt;link rel="stylesheet" href="/ui.css"&gt;            组件与令牌
+&lt;script type="module" src="/ui.js"&gt;&lt;/script&gt;    图标、标志、客户端美术、构建函数
+
+import {icon, mark, hero, chip, led, status, stat, gauge, applyArt} from '/ui.js';
+root.append(hero({eyebrow: 'MOD HANGAR', title: host.name, stats: [{value: 7, label: '功能'}]}));
+button.prepend(icon('settings'));
+applyArt(element, 'hangar');          // 成功读取后设置 --art，并加上 has-art
+
+旧面板：放在 .ui-auto 里，普通 button / input / select / textarea / 复选框 / table / details
+自动套用组件样式；元素自己写的 .ui-* 类优先，.ui-plain 可以排除。
+影子 DOM 面板：--ui-* 变量会继承进去，可以在 :host 里写 var(--ui-gold, 原颜色)。</pre>
+    </section>
+  </main>
+</div>
+<script type="module" src="/ui.js"></script>
+</body>
+</html>

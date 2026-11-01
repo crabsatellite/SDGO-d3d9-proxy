@@ -129,6 +129,8 @@ sdgo_stage(shop_catalog_apply "server/sdgo/mods/shop_catalog")
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP bots" SOURCES mods/battle_ai_server/battle_ai_server.cpp)
+sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery" SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
              SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
@@ -222,6 +224,13 @@ add_custom_target(ai_catalog_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/server.ini"
         "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
 
+sdgo_add_mod(capsule_catalog DESCRIPTION "native capsule catalog overlay"
+             SOURCES mods/capsule_catalog/capsule_catalog.cpp mods/capsule_catalog/capsule_runtime.cpp)
+sdgo_add_mod(capsule_currency_fix DESCRIPTION "activity capsule currency display fix"
+             SOURCES mods/capsule_currency_fix/capsule_currency_fix.cpp mods/capsule_currency_fix/capsule_currency_logic.cpp)
+sdgo_add_mod(capsule_price_probe DESCRIPTION "read-only capsule price UI diagnostics"
+             SOURCES mods/capsule_price_probe/capsule_price_probe.cpp)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -280,6 +289,21 @@ endif()
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
 
+add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_runtime_harness PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_runtime_harness)
+add_executable(capsule_client_native_stream_test tests/capsule_client_native_stream_test.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_native_stream_test PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_native_stream_test)
+add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_currency_fix_test.cpp
+               mods/capsule_currency_fix/capsule_currency_logic.cpp)
+target_include_directories(capsule_currency_fix_test PRIVATE mods/capsule_currency_fix)
+sdgo_strict(capsule_currency_fix_test)
+add_executable(capsule_price_probe_test mods/capsule_price_probe/capsule_price_probe_test.cpp)
+sdgo_strict(capsule_price_probe_test)
+
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.
 add_executable(findwindow_fix_test tests/findwindow_fix_test.cpp)
@@ -323,6 +347,18 @@ if(BUILD_TESTING)
     add_executable(core_ini_test tests/core_ini_test.cpp)
     sdgo_strict(core_ini_test)
     add_test(NAME core_ini_offline COMMAND core_ini_test)
+    foreach(test capsule_currency_fix capsule_price_probe)
+        add_test(NAME ${test}_offline COMMAND ${test}_test)
+        set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_test(NAME capsule_configuration COMMAND "${CMAKE_COMMAND}" -E env
+        "CAPSULE_RUNTIME_HARNESS=$<TARGET_FILE:capsule_client_runtime_harness>"
+        "${Python3_EXECUTABLE}" -B -X utf8 -m unittest discover -s tests -p "test_capsule*.py" -q)
+    set_tests_properties(capsule_configuration PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 180)
+endif()
+
+if(BUILD_TESTING)
     add_executable(game_test_framework_host tests/game_test_framework_host.cpp)
     target_link_libraries(game_test_framework_host PRIVATE sdgo_api)
     sdgo_strict(game_test_framework_host)
@@ -392,6 +428,17 @@ if(BUILD_TESTING)
     sdgo_strict(hangar_page_ui_test)
     target_compile_options(hangar_page_ui_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_page_ui_offline COMMAND hangar_page_ui_test)
+    # Optional execution of two hash-pinned native UI snippets. The game image
+    # is read only; no entry point, imports, rendering or networking is started.
+    set(SDGO_HANGAR_NATIVE_HOST "" CACHE FILEPATH "Local supported GOnline.exe for hangar mouse replay")
+    if(SDGO_HANGAR_NATIVE_HOST)
+        add_executable(hangar_native_input_test tests/hangar_native_input_test.cpp mods/hangar_manager/native_ui.cpp)
+        target_link_libraries(hangar_native_input_test PRIVATE sdgo_api user32 bcrypt)
+        sdgo_strict(hangar_native_input_test)
+        target_compile_options(hangar_native_input_test PRIVATE /UNDEBUG)
+        add_test(NAME hangar_native_input_replay COMMAND hangar_native_input_test "${SDGO_HANGAR_NATIVE_HOST}")
+        set_tests_properties(hangar_native_input_replay PROPERTIES TIMEOUT 60)
+    endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
     sdgo_strict(shop_labels_test)
@@ -416,7 +463,7 @@ if(BUILD_TESTING)
     add_executable(operator_catalog_test tests/operator_catalog_test.cpp)
     target_link_libraries(operator_catalog_test PRIVATE sdgo_api)
     sdgo_strict(operator_catalog_test)
-    foreach(case RANGE 0 2)
+    foreach(case RANGE 0 3)
         add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
                  "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
     endforeach()
@@ -586,6 +633,7 @@ if(BUILD_TESTING)
         add_test(NAME ${mod}_offline COMMAND ${mod}_test)
         set_tests_properties(${mod}_offline PROPERTIES TIMEOUT 30)
     endforeach()
+    target_link_libraries(match_ai_test PRIVATE minhook)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
@@ -735,4 +783,47 @@ if(BUILD_TESTING)
     add_executable(collection_capsule_sql_test tests/collection_capsule_sql_test.cpp)
     target_link_libraries(collection_capsule_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
     sdgo_strict(collection_capsule_sql_test)
+endif()
+
+# Battle AI component tests never enter a shipped payload.
+add_executable(battle_ai_math_test tests/battle_ai_math_test.cpp)
+sdgo_strict(battle_ai_math_test)
+add_executable(battle_ai_capabilities_test tests/battle_ai_capabilities_test.cpp)
+sdgo_strict(battle_ai_capabilities_test)
+add_executable(battle_ai_navigation_test tests/battle_ai_navigation_test.cpp)
+sdgo_strict(battle_ai_navigation_test)
+add_executable(battle_ai_special_budget_test tests/battle_ai_special_budget_test.cpp)
+sdgo_strict(battle_ai_special_budget_test)
+add_executable(battle_ai_items_test tests/battle_ai_items_test.cpp)
+sdgo_strict(battle_ai_items_test)
+add_executable(battle_ai_loadout_test tests/battle_ai_loadout_test.cpp)
+sdgo_strict(battle_ai_loadout_test)
+add_executable(battle_ai_server_native_test tests/battle_ai_server_native_test.cpp)
+target_link_libraries(battle_ai_server_native_test PRIVATE sdgo_api)
+sdgo_strict(battle_ai_server_native_test)
+add_library(battle_ai_bridge_fixture SHARED tests/battle_ai_bridge_fixture.cpp)
+sdgo_strict(battle_ai_bridge_fixture)
+add_executable(match_ai_loadout_bridge_test tests/match_ai_loadout_bridge_test.cpp)
+target_link_libraries(match_ai_loadout_bridge_test PRIVATE sdgo_api)
+sdgo_strict(match_ai_loadout_bridge_test)
+if(TARGET ai_test_lua50)
+ add_executable(battle_ai_lua_test tools/lua50_host.c)
+ target_link_libraries(battle_ai_lua_test PRIVATE ai_test_lua50)
+ add_executable(battle_ai_native_test tests/battle_ai_native_test.cpp)
+ target_link_libraries(battle_ai_native_test PRIVATE ai_test_lua50 sdgo_api)
+ sdgo_strict(battle_ai_native_test)
+endif()
+
+if(BUILD_TESTING)
+    foreach(component math capabilities navigation special_budget items loadout)
+        add_test(NAME battle_ai_${component}_offline COMMAND battle_ai_${component}_test)
+    endforeach()
+    if(TARGET battle_ai_lua_test)
+        foreach(policy policy universal)
+            add_test(NAME battle_ai_${policy}_offline
+                COMMAND battle_ai_lua_test tests/battle_ai_${policy}.lua)
+            set_tests_properties(battle_ai_${policy}_offline PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+        endforeach()
+    endif()
 endif()

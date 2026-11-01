@@ -1,15 +1,14 @@
-// Internal Manager panel. No server, launcher or standalone page.
-export async function mount(root,ctx){
+// Capsule management panel owned by the unified Mod Manager.
+export async function mount(root,ctx) {
  const shadow=root.attachShadow({mode:"open"});
- shadow.innerHTML="<style>"+":host {\n  color-scheme: dark;\n  --bg: #080b10;\n  --surface: #101620;\n  --surface-2: #151e2a;\n  --surface-3: #1c2836;\n  --line: #273749;\n  --text: #eef5fb;\n  --muted: #8da0b2;\n  --cyan: #46dbe8;\n  --cyan-strong: #09adc1;\n  --amber: #ffba52;\n  --red: #ff6470;\n  --green: #55d899;\n  --shadow: 0 18px 60px rgb(0 0 0 / 36%);\n  font-family: Inter, \"Segoe UI\", \"Microsoft YaHei UI\", sans-serif;\n}\n\n* {\n  box-sizing: border-box;\n}\n\nbody {\n  margin: 0;\n  min-width: 1040px;\n  min-height: 100vh;\n  color: var(--text);\n  background:\n    radial-gradient(circle at 85% 0%, rgb(24 86 105 / 20%), transparent 30rem),\n    linear-gradient(135deg, #07090d, #0b1018 55%, #080d14);\n}\n\nbutton,\ninput,\nselect {\n  font: inherit;\n}\n\nbutton,\n.button-link {\n  min-height: 38px;\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 0 14px;\n  color: var(--text);\n  background: var(--surface-2);\n  cursor: pointer;\n  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;\n}\n\nbutton:hover,\n.button-link:hover {\n  border-color: #4d6a83;\n  background: var(--surface-3);\n}\n\nbutton:active {\n  transform: translateY(1px);\n}\n\nbutton:disabled {\n  opacity: .45;\n  cursor: not-allowed;\n}\n\nbutton.primary,\n.button-link.primary {\n  color: #031014;\n  border-color: var(--cyan);\n  background: var(--cyan);\n  font-weight: 700;\n}\n\nbutton.primary:hover {\n  background: #7ee9f1;\n}\n\nbutton.danger {\n  color: #ffdfe2;\n  border-color: rgb(255 100 112 / 55%);\n  background: rgb(255 100 112 / 10%);\n}\n\nbutton.success {\n  color: #dffff0;\n  border-color: rgb(85 216 153 / 55%);\n  background: rgb(85 216 153 / 10%);\n}\n\n.button-link {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  text-decoration: none;\n}\n\n.topbar {\n  height: 86px;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 24px;\n  border-bottom: 1px solid var(--line);\n  background: rgb(8 11 16 / 92%);\n}\n\n.topbar h1,\n.editor-heading h2,\n.section-heading h3,\n.dialog-heading h2 {\n  margin: 0;\n}\n\n.topbar h1 {\n  font-size: 23px;\n  letter-spacing: .02em;\n}\n\n.eyebrow {\n  margin: 0 0 5px;\n  color: var(--cyan);\n  font-size: 10px;\n  font-weight: 800;\n  letter-spacing: .16em;\n}\n\n.topbar-status,\n.editor-badges,\n.footer-actions,\n.editor-actions {\n  display: flex;\n  align-items: center;\n  gap: 9px;\n}\n\n.status-pill,\n.badge {\n  display: inline-flex;\n  align-items: center;\n  min-height: 25px;\n  border: 1px solid var(--line);\n  border-radius: 999px;\n  padding: 0 9px;\n  color: var(--muted);\n  background: rgb(255 255 255 / 3%);\n  font-size: 12px;\n}\n\n.status-pill.dirty {\n  color: #ffe4b7;\n  border-color: rgb(255 186 82 / 60%);\n}\n\n.status-pill.saving {\n  color: #c8faff;\n  border-color: rgb(70 219 232 / 60%);\n}\n\n.status-pill.error {\n  color: #ffd9dd;\n  border-color: rgb(255 100 112 / 60%);\n}\n\n.badge.accent {\n  color: #bff9ff;\n  border-color: rgb(70 219 232 / 45%);\n  background: rgb(70 219 232 / 8%);\n}\n\n.muted {\n  color: var(--muted);\n}\n\n.mono {\n  font-family: \"Cascadia Mono\", Consolas, monospace;\n  font-size: 12px;\n}\n\n.workspace {\n  display: grid;\n  grid-template-columns: 330px minmax(710px, 1fr);\n  height: calc(100vh - 144px);\n}\n\n.sidebar {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  border-right: 1px solid var(--line);\n  background: rgb(11 16 24 / 86%);\n}\n\n.sidebar-actions {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 8px;\n  padding: 14px;\n}\n\n.sidebar-actions .primary {\n  grid-column: 1 / -1;\n}\n\n.tabs {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  margin: 0 14px 13px;\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 3px;\n  background: #080c12;\n}\n\n.tab {\n  border: 0;\n  background: transparent;\n}\n\n.tab.active {\n  color: #031014;\n  background: var(--cyan);\n  font-weight: 700;\n}\n\n.search-box {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin: 0 14px 10px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.search-box.large {\n  margin: 0 0 12px;\n}\n\ninput,\nselect {\n  width: 100%;\n  min-height: 39px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  outline: none;\n  padding: 8px 10px;\n  color: var(--text);\n  background: #0a1018;\n}\n\ninput:focus,\nselect:focus {\n  border-color: var(--cyan-strong);\n  box-shadow: 0 0 0 3px rgb(70 219 232 / 10%);\n}\n\ninput:disabled,\nselect:disabled {\n  color: var(--muted);\n  background: #10151d;\n}\n\ninput[type=\"checkbox\"],\ninput[type=\"radio\"] {\n  width: 16px;\n  min-height: 16px;\n  accent-color: var(--cyan);\n}\n\n.filter-row {\n  display: flex;\n  gap: 13px;\n  padding: 0 14px 10px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.filter-row label {\n  display: flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.list-caption {\n  padding: 0 14px 8px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.machine-list {\n  min-height: 0;\n  overflow: auto;\n  padding: 0 8px 20px;\n}\n\n.machine-card {\n  width: 100%;\n  min-height: 76px;\n  display: grid;\n  grid-template-columns: 48px 1fr auto;\n  gap: 10px;\n  align-items: center;\n  margin: 0 0 5px;\n  padding: 9px;\n  text-align: left;\n  background: transparent;\n}\n\n.machine-card.active {\n  border-color: var(--cyan);\n  background: rgb(70 219 232 / 9%);\n}\n\n.machine-card.retired {\n  opacity: .58;\n}\n\n.machine-position {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  min-height: 48px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  background: #090e15;\n  color: var(--cyan);\n  font-weight: 800;\n}\n\n.machine-position small {\n  color: var(--muted);\n  font-size: 9px;\n  font-weight: 500;\n}\n\n.machine-copy {\n  min-width: 0;\n}\n\n.machine-copy strong,\n.machine-copy small {\n  display: block;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.machine-copy strong {\n  margin-bottom: 4px;\n  font-size: 13px;\n}\n\n.machine-copy small {\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.machine-price {\n  color: #d3e2ed;\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 11px;\n}\n\n.main-panel {\n  min-width: 0;\n  overflow: auto;\n  padding: 20px 24px 60px;\n}\n\n.empty-state {\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  color: var(--muted);\n  text-align: center;\n}\n\n.empty-state h2 {\n  margin: 8px 0;\n  color: var(--text);\n}\n\n.empty-state p {\n  width: 460px;\n  line-height: 1.7;\n}\n\n.empty-mark {\n  color: var(--cyan);\n  font-size: 56px;\n  filter: drop-shadow(0 0 18px rgb(70 219 232 / 35%));\n}\n\n.hidden {\n  display: none !important;\n}\n\n.editor {\n  max-width: 1180px;\n  margin: 0 auto;\n}\n\n.editor-heading,\n.section-heading,\n.dialog-heading {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 18px;\n}\n\n.editor-heading {\n  margin-bottom: 16px;\n}\n\n.editor-heading h2 {\n  margin-top: 9px;\n}\n\n.editor-heading p {\n  margin: 5px 0 0;\n}\n\n.panel {\n  margin-bottom: 16px;\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  padding: 18px;\n  background: linear-gradient(145deg, rgb(18 26 37 / 94%), rgb(12 18 27 / 94%));\n  box-shadow: 0 8px 28px rgb(0 0 0 / 15%);\n}\n\n.form-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 13px;\n}\n\n.form-grid label,\n.form-stack label,\n.read-only-field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  color: #aebdca;\n  font-size: 12px;\n}\n\n.read-only-field strong {\n  min-height: 39px;\n  display: flex;\n  align-items: center;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  padding: 0 11px;\n  color: #d9e7f2;\n  background: rgb(255 255 255 / 2%);\n  font-weight: 600;\n}\n\n.form-grid .span-2 {\n  grid-column: span 2;\n}\n\n.form-grid small {\n  color: var(--muted);\n  line-height: 1.4;\n}\n\n.check-field {\n  flex-direction: row !important;\n  align-items: center;\n  align-self: end;\n  min-height: 39px;\n}\n\n.section-heading {\n  align-items: center;\n  margin-bottom: 10px;\n}\n\n.section-heading h3 {\n  font-size: 17px;\n}\n\n.section-note {\n  margin: 0 0 14px;\n  color: var(--muted);\n  font-size: 12px;\n  line-height: 1.6;\n}\n\n.weight-total {\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 8px 12px;\n  color: var(--amber);\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 12px;\n}\n\n.weight-total.valid {\n  color: var(--green);\n  border-color: rgb(85 216 153 / 45%);\n}\n\n.entry-table {\n  display: flex;\n  flex-direction: column;\n  gap: 7px;\n}\n\n.entry-row {\n  display: grid;\n  grid-template-columns: 38px 54px minmax(190px, 1.6fr) minmax(150px, .8fr) minmax(130px, .7fr) 38px;\n  gap: 8px;\n  align-items: center;\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 8px;\n  background: rgb(5 10 16 / 46%);\n}\n\n.entry-row.custom-row {\n  grid-template-columns: 38px 54px minmax(180px, 1.4fr) repeat(4, minmax(82px, .7fr)) 78px 38px;\n}\n\n.entry-index {\n  color: var(--cyan);\n  font-family: \"Cascadia Mono\", monospace;\n  font-weight: 800;\n  text-align: center;\n}\n\n.unit-thumb,\n.unit-placeholder {\n  width: 52px;\n  height: 52px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  object-fit: contain;\n  background:\n    linear-gradient(135deg, rgb(70 219 232 / 9%), transparent),\n    #080c12;\n}\n\n.unit-placeholder {\n  display: grid;\n  place-items: center;\n  color: #4f6477;\n  font-size: 20px;\n}\n\n.unit-select-button {\n  min-width: 0;\n  height: 52px;\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  justify-content: center;\n  text-align: left;\n}\n\n.unit-select-button strong,\n.unit-select-button small {\n  width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.unit-select-button small {\n  color: var(--muted);\n}\n\n.mini-field {\n  display: flex;\n  flex-direction: column;\n  gap: 3px;\n  color: var(--muted);\n  font-size: 9px;\n  text-transform: uppercase;\n}\n\n.mini-field input {\n  min-height: 34px;\n  padding: 6px 8px;\n}\n\n.weight-input-row {\n  display: grid;\n  grid-template-columns: minmax(72px, 1fr) 58px;\n  gap: 6px;\n  align-items: center;\n}\n\n.slot-percent {\n  color: var(--cyan);\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 11px;\n  text-align: right;\n}\n\n.entry-advanced {\n  min-width: 0;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  padding: 7px 9px;\n  color: var(--muted);\n  font-size: 10px;\n  line-height: 1.45;\n}\n\n.entry-advanced summary {\n  color: #b7c8d6;\n  cursor: pointer;\n}\n\n.entry-advanced span {\n  display: block;\n  margin-top: 4px;\n}\n\n.remove-entry,\n.icon-button {\n  width: 36px;\n  min-height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.rules-heading {\n  margin-top: 24px;\n}\n\n.rules-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.rule-card {\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 10px;\n  background: rgb(5 10 16 / 46%);\n}\n\n.rule-card h4 {\n  margin: 0 0 8px;\n  color: var(--cyan);\n}\n\n.rule-card label {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  margin-top: 7px;\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.rule-card .inline-check {\n  flex-direction: row;\n  align-items: center;\n}\n\n.notice {\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 10px 12px;\n  color: #b7c8d6;\n  background: rgb(255 255 255 / 3%);\n  font-size: 12px;\n  line-height: 1.55;\n}\n\n.notice.error {\n  margin-bottom: 14px;\n  color: #ffdadd;\n  border-color: rgb(255 100 112 / 48%);\n  background: rgb(255 100 112 / 8%);\n}\n\n.footerbar {\n  height: 58px;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 20px;\n  padding: 0 18px;\n  border-top: 1px solid var(--line);\n  background: #090d13;\n}\n\n.footerbar > div:first-child {\n  min-width: 0;\n  flex: 1;\n}\n\n.footer-actions {\n  flex-shrink: 0;\n}\n\n#catalog-path {\n  display: block;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\ndialog {\n  width: min(720px, calc(100vw - 48px));\n  max-height: calc(100vh - 48px);\n  border: 1px solid #395068;\n  border-radius: 14px;\n  padding: 0;\n  color: var(--text);\n  background: #101720;\n  box-shadow: var(--shadow);\n}\n\ndialog::backdrop {\n  background: rgb(1 4 8 / 74%);\n  backdrop-filter: blur(4px);\n}\n\n.dialog-card {\n  display: flex;\n  flex-direction: column;\n  max-height: calc(100vh - 50px);\n}\n\n.dialog-heading,\n.dialog-actions {\n  padding: 17px 18px;\n  border-bottom: 1px solid var(--line);\n}\n\n.dialog-actions {\n  display: flex;\n  justify-content: flex-end;\n  gap: 8px;\n  border-top: 1px solid var(--line);\n  border-bottom: 0;\n}\n\n.dialog-body {\n  min-height: 0;\n  overflow: auto;\n  padding: 18px;\n}\n\n.form-stack {\n  display: flex;\n  flex-direction: column;\n  gap: 13px;\n}\n\n.unit-dialog-card {\n  width: min(980px, calc(100vw - 48px));\n}\n\n#unit-dialog {\n  width: min(980px, calc(100vw - 48px));\n}\n\n.unit-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.unit-card {\n  min-width: 0;\n  height: auto;\n  display: grid;\n  grid-template-columns: 64px 1fr;\n  gap: 9px;\n  padding: 8px;\n  text-align: left;\n}\n\n.unit-card .unit-thumb,\n.unit-card .unit-placeholder {\n  width: 64px;\n  height: 64px;\n}\n\n.unit-card-copy {\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  justify-content: center;\n}\n\n.unit-card-copy strong,\n.unit-card-copy small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.unit-card-copy small {\n  margin-top: 5px;\n  color: var(--muted);\n}\n\n.result-content {\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  color: #c8d7e3;\n  font-family: \"Cascadia Mono\", \"Microsoft YaHei UI\", monospace;\n  font-size: 12px;\n  line-height: 1.65;\n}\n\n.toast {\n  position: fixed;\n  right: 20px;\n  bottom: 76px;\n  z-index: 100;\n  max-width: 430px;\n  border: 1px solid rgb(70 219 232 / 45%);\n  border-radius: 9px;\n  padding: 12px 15px;\n  color: #dffcff;\n  background: #10232a;\n  box-shadow: var(--shadow);\n}\n\n@media (max-width: 1180px) {\n  .form-grid {\n    grid-template-columns: repeat(2, minmax(0, 1fr));\n  }\n\n  .rules-grid {\n    grid-template-columns: repeat(2, minmax(0, 1fr));\n  }\n\n  .entry-row {\n    grid-template-columns: 34px 52px minmax(160px, 1.4fr) minmax(140px, .8fr) minmax(118px, .7fr) 36px;\n  }\n\n  .unit-grid {\n    grid-template-columns: repeat(3, minmax(0, 1fr));\n  }\n}\n\n.module-body{padding:0!important;max-width:none!important;margin:0!important} button,input,select,textarea{font-family:inherit} "+"</style><div class=\"module-body\"><meta name=\"csrf-token\" content=\""+ctx.token+"\">"+"\n  <header class=\"topbar\">\n    <div>\n      <p class=\"eyebrow\">CAPSULE RUNTIME CONFIG</p>\n      <h1>SDGO 扭蛋机配置台</h1>\n    </div>\n    <div class=\"topbar-status\">\n      <span id=\"save-state\" class=\"status-pill clean\">已同步</span>\n      <span id=\"revision\" class=\"mono muted\">revision —</span>\n    </div>\n  </header>\n\n  <div class=\"workspace\">\n    <aside class=\"sidebar\">\n      <div class=\"sidebar-actions\">\n        <button id=\"new-machine\" class=\"primary\">＋ 新建机台</button>\n        <button id=\"import-button\">导入配置</button>\n        <input id=\"import-file\" type=\"file\" accept=\"application/json,.json\" hidden>\n        <a class=\"button-link\" href=\"/api/providers/capsules/api/catalog/download\">下载目录 JSON</a>\n      </div>\n\n      <div class=\"tabs\" role=\"tablist\" aria-label=\"机台类型\">\n        <button class=\"tab active\" data-kind=\"fixed_machines\" role=\"tab\">固定扭蛋</button>\n        <button class=\"tab\" data-kind=\"custom_machines\" role=\"tab\">自定义扭蛋</button>\n      </div>\n\n      <label class=\"search-box\">\n        <span>搜索</span>\n        <input id=\"machine-search\" type=\"search\" placeholder=\"名称或 Machine ID\">\n      </label>\n\n      <div class=\"filter-row\">\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"all\" checked> 全部</label>\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"enabled\"> 启用</label>\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"retired\"> 下架</label>\n      </div>\n\n      <div id=\"machine-count\" class=\"list-caption\">正在读取…</div>\n      <nav id=\"machine-list\" class=\"machine-list\" aria-label=\"机台列表\"></nav>\n    </aside>\n\n    <main class=\"main-panel\">\n      <section id=\"empty-state\" class=\"empty-state\">\n        <div class=\"empty-mark\">◉</div>\n        <h2>选择一台扭蛋机</h2>\n        <p>可以修改价格、机体、权重与显示位置，也可以从原生 Pattern 或现有机台复制新建。</p>\n      </section>\n\n      <form id=\"editor\" class=\"editor hidden\">\n        <div class=\"editor-heading\">\n          <div>\n            <div class=\"editor-badges\">\n              <span id=\"editor-kind\" class=\"badge\"></span>\n              <span id=\"editor-location\" class=\"badge accent\"></span>\n              <span id=\"editor-owner\" class=\"badge\"></span>\n            </div>\n            <h2 id=\"editor-title\">机台</h2>\n            <p id=\"editor-subtitle\" class=\"muted\"></p>\n          </div>\n          <div class=\"editor-actions\">\n            <button id=\"restore-machine\" type=\"button\" class=\"success hidden\">恢复上架</button>\n            <button id=\"retire-machine\" type=\"button\" class=\"danger\">下架并保留 ID</button>\n            <button id=\"save-machine\" type=\"submit\" class=\"primary\">保存配置</button>\n          </div>\n        </div>\n\n        <div id=\"editor-error\" class=\"notice error hidden\" role=\"alert\"></div>\n\n        <section class=\"panel\">\n          <div class=\"form-grid\">\n            <label>\n              <span>Machine ID</span>\n              <input id=\"field-id\" type=\"number\" min=\"1\" required>\n            </label>\n            <label>\n              <span>配置顺序</span>\n              <input id=\"field-position\" type=\"number\" min=\"1\" required>\n              <small id=\"position-help\">固定机在游戏中倒序显示；上方显示实际页码和格位。</small>\n            </label>\n            <label class=\"span-2\">\n              <span>显示名称</span>\n              <input id=\"field-name\" type=\"text\" maxlength=\"100\" required>\n            </label>\n            <label>\n              <span>价格</span>\n              <input id=\"field-price\" type=\"number\" min=\"0\" required>\n            </label>\n            <label>\n              <span>货币</span>\n              <select id=\"field-currency\"></select>\n            </label>\n            <div class=\"read-only-field\">\n              <span>来源</span>\n              <strong id=\"field-owner-label\">—</strong>\n            </div>\n            <div class=\"read-only-field\">\n              <span>抽取方式</span>\n              <strong id=\"field-policy-label\">—</strong>\n            </div>\n            <label class=\"check-field\">\n              <input id=\"field-enabled\" type=\"checkbox\">\n              <span>启用机台</span>\n            </label>\n          </div>\n        </section>\n\n        <section id=\"fixed-editor\" class=\"panel\">\n          <div class=\"section-heading\">\n            <div>\n              <p class=\"eyebrow\">FIXED CAPSULE</p>\n              <h3>六格机体与权重</h3>\n            </div>\n            <div id=\"weight-total\" class=\"weight-total\">合计 0 / 1000</div>\n          </div>\n          <p class=\"section-note\">固定机当前运行时仅支持 GP。Machine ID 与显示位置分开保存；每页 8 台。</p>\n          <div id=\"fixed-slots\" class=\"entry-table\"></div>\n        </section>\n\n        <section id=\"custom-editor\" class=\"panel hidden\">\n          <div class=\"section-heading\">\n            <div>\n              <p class=\"eyebrow\">CUSTOM CAPSULE</p>\n              <h3>候选机体</h3>\n            </div>\n            <button id=\"add-candidate\" type=\"button\">＋ 添加候选</button>\n          </div>\n          <p class=\"section-note\">原生规则是 6 个基础格与 2 个扩展格。候选 SR 数量不等于槽位数量；每个候选保留自己的权重、累积、加价和重置参数。</p>\n          <p class=\"section-note\">保留原生基础候选。新增候选只允许 SR，或完全没有设计图的 SS；有设计图的 SS 不加入自定义池。</p>\n          <div id=\"custom-candidates\" class=\"entry-table\"></div>\n\n          <div class=\"section-heading rules-heading\">\n            <div>\n              <p class=\"eyebrow\">SLOT RULES</p>\n              <h3>八格选择限制</h3>\n            </div>\n          </div>\n          <div id=\"slot-rules\" class=\"rules-grid\"></div>\n        </section>\n      </form>\n    </main>\n  </div>\n\n  <footer class=\"footerbar\">\n    <div>\n      <span id=\"catalog-path\" class=\"mono muted\"></span>\n    </div>\n    <div class=\"footer-actions\">\n      <button id=\"initialize-button\">初始化缺失取得路线</button>\n      <button id=\"compile-button\">编译客户端 Overlay</button>\n      <button id=\"export-button\" class=\"primary\">导出客户端 / 服务端配置</button>\n      <button id=\"apply-button\" class=\"success\">导入到游戏</button>\n    </div>\n  </footer>\n\n  <dialog id=\"new-dialog\">\n    <div class=\"dialog-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">NEW MACHINE</p>\n          <h2>从模板新建机台</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"new-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"dialog-body form-stack\">\n        <label>\n          <span>创建方式</span>\n          <select id=\"new-method\"></select>\n        </label>\n        <label>\n          <span>Pattern / 来源机台</span>\n          <select id=\"new-template\"></select>\n        </label>\n        <div id=\"new-template-note\" class=\"notice\"></div>\n        <div class=\"form-grid\">\n          <label>\n            <span>新 Machine ID</span>\n            <input id=\"new-id\" type=\"number\" min=\"1\" required>\n          </label>\n          <label>\n            <span>插入位置</span>\n            <input id=\"new-position\" type=\"number\" min=\"1\" required>\n          </label>\n          <label class=\"span-2\">\n            <span>显示名称</span>\n            <input id=\"new-name\" type=\"text\" maxlength=\"100\" required>\n          </label>\n        </div>\n      </div>\n      <div class=\"dialog-actions\">\n        <button type=\"button\" data-close-dialog=\"new-dialog\">取消</button>\n        <button id=\"create-draft\" type=\"button\" class=\"primary\">打开新机台草稿</button>\n      </div>\n    </div>\n  </dialog>\n\n  <dialog id=\"unit-dialog\">\n    <div class=\"dialog-card unit-dialog-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">UNIT PICKER</p>\n          <h2>选择机体</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"unit-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"dialog-body\">\n        <label class=\"search-box large\">\n          <span>搜索机体</span>\n          <input id=\"unit-search\" type=\"search\" placeholder=\"机体名称、ID 或等级\">\n        </label>\n        <div id=\"unit-result-count\" class=\"list-caption\"></div>\n        <div id=\"unit-grid\" class=\"unit-grid\"></div>\n      </div>\n    </div>\n  </dialog>\n\n  <dialog id=\"result-dialog\">\n    <div class=\"dialog-card result-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">RESULT</p>\n          <h2 id=\"result-title\">操作完成</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"result-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div id=\"result-content\" class=\"dialog-body result-content\"></div>\n      <div class=\"dialog-actions\">\n        <button type=\"button\" class=\"primary\" data-close-dialog=\"result-dialog\">知道了</button>\n      </div>\n    </div>\n  </dialog>\n\n  <div id=\"toast\" class=\"toast hidden\" role=\"status\"></div>\n  \n"+"</div>";
- const document=new Proxy(shadow,{get(t,k){if(k==="createElement")return globalThis.document.createElement.bind(globalThis.document);const v=t[k];return typeof v==="function"?v.bind(t):v;}});
- const fetch=ctx.fetch, setInterval=ctx.setInterval;
+ const fetch=ctx.fetch;
  const window={confirm:globalThis.confirm.bind(globalThis),prompt:globalThis.prompt.bind(globalThis),setTimeout:globalThis.setTimeout.bind(globalThis),clearTimeout:globalThis.clearTimeout.bind(globalThis),addEventListener:ctx.onWindow};
+ shadow.innerHTML="<style>"+":host {\n  color-scheme: dark;\n  --bg: #080b10;\n  --surface: #101620;\n  --surface-2: #151e2a;\n  --surface-3: #1c2836;\n  --line: #273749;\n  --text: #eef5fb;\n  --muted: #8da0b2;\n  --cyan: #46dbe8;\n  --cyan-strong: #09adc1;\n  --amber: #ffba52;\n  --red: #ff6470;\n  --green: #55d899;\n  --shadow: 0 18px 60px rgb(0 0 0 / 36%);\n  font-family: Inter, \"Segoe UI\", \"Microsoft YaHei UI\", sans-serif;\n}\n\n* {\n  box-sizing: border-box;\n}\n\nbody {\n  margin: 0;\n  min-width: 1040px;\n  min-height: 100vh;\n  color: var(--text);\n  background:\n    radial-gradient(circle at 85% 0%, rgb(24 86 105 / 20%), transparent 30rem),\n    linear-gradient(135deg, #07090d, #0b1018 55%, #080d14);\n}\n\nbutton,\ninput,\nselect {\n  font: inherit;\n}\n\nbutton,\n.button-link {\n  min-height: 38px;\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 0 14px;\n  color: var(--text);\n  background: var(--surface-2);\n  cursor: pointer;\n  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;\n}\n\nbutton:hover,\n.button-link:hover {\n  border-color: #4d6a83;\n  background: var(--surface-3);\n}\n\nbutton:active {\n  transform: translateY(1px);\n}\n\nbutton:disabled {\n  opacity: .45;\n  cursor: not-allowed;\n}\n\nbutton.primary,\n.button-link.primary {\n  color: #031014;\n  border-color: var(--cyan);\n  background: var(--cyan);\n  font-weight: 700;\n}\n\nbutton.primary:hover {\n  background: #7ee9f1;\n}\n\nbutton.danger {\n  color: #ffdfe2;\n  border-color: rgb(255 100 112 / 55%);\n  background: rgb(255 100 112 / 10%);\n}\n\nbutton.success {\n  color: #dffff0;\n  border-color: rgb(85 216 153 / 55%);\n  background: rgb(85 216 153 / 10%);\n}\n\n.button-link {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  text-decoration: none;\n}\n\n.topbar {\n  height: 86px;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 24px;\n  border-bottom: 1px solid var(--line);\n  background: rgb(8 11 16 / 92%);\n}\n\n.topbar h1,\n.editor-heading h2,\n.section-heading h3,\n.dialog-heading h2 {\n  margin: 0;\n}\n\n.topbar h1 {\n  font-size: 23px;\n  letter-spacing: .02em;\n}\n\n.eyebrow {\n  margin: 0 0 5px;\n  color: var(--cyan);\n  font-size: 10px;\n  font-weight: 800;\n  letter-spacing: .16em;\n}\n\n.topbar-status,\n.editor-badges,\n.footer-actions,\n.editor-actions {\n  display: flex;\n  align-items: center;\n  gap: 9px;\n}\n\n.status-pill,\n.badge {\n  display: inline-flex;\n  align-items: center;\n  min-height: 25px;\n  border: 1px solid var(--line);\n  border-radius: 999px;\n  padding: 0 9px;\n  color: var(--muted);\n  background: rgb(255 255 255 / 3%);\n  font-size: 12px;\n}\n\n.status-pill.dirty {\n  color: #ffe4b7;\n  border-color: rgb(255 186 82 / 60%);\n}\n\n.status-pill.saving {\n  color: #c8faff;\n  border-color: rgb(70 219 232 / 60%);\n}\n\n.status-pill.error {\n  color: #ffd9dd;\n  border-color: rgb(255 100 112 / 60%);\n}\n\n.badge.accent {\n  color: #bff9ff;\n  border-color: rgb(70 219 232 / 45%);\n  background: rgb(70 219 232 / 8%);\n}\n\n.muted {\n  color: var(--muted);\n}\n\n.mono {\n  font-family: \"Cascadia Mono\", Consolas, monospace;\n  font-size: 12px;\n}\n\n.workspace {\n  display: grid;\n  grid-template-columns: 330px minmax(710px, 1fr);\n  height: calc(100vh - 144px);\n}\n\n.sidebar {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  border-right: 1px solid var(--line);\n  background: rgb(11 16 24 / 86%);\n}\n\n.sidebar-actions {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 8px;\n  padding: 14px;\n}\n\n.sidebar-actions .primary {\n  grid-column: 1 / -1;\n}\n\n.tabs {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  margin: 0 14px 13px;\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 3px;\n  background: #080c12;\n}\n\n.tab {\n  border: 0;\n  background: transparent;\n}\n\n.tab.active {\n  color: #031014;\n  background: var(--cyan);\n  font-weight: 700;\n}\n\n.search-box {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  margin: 0 14px 10px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.search-box.large {\n  margin: 0 0 12px;\n}\n\ninput,\nselect {\n  width: 100%;\n  min-height: 39px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  outline: none;\n  padding: 8px 10px;\n  color: var(--text);\n  background: #0a1018;\n}\n\ninput:focus,\nselect:focus {\n  border-color: var(--cyan-strong);\n  box-shadow: 0 0 0 3px rgb(70 219 232 / 10%);\n}\n\ninput:disabled,\nselect:disabled {\n  color: var(--muted);\n  background: #10151d;\n}\n\ninput[type=\"checkbox\"],\ninput[type=\"radio\"] {\n  width: 16px;\n  min-height: 16px;\n  accent-color: var(--cyan);\n}\n\n.filter-row {\n  display: flex;\n  gap: 13px;\n  padding: 0 14px 10px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.filter-row label {\n  display: flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.list-caption {\n  padding: 0 14px 8px;\n  color: var(--muted);\n  font-size: 12px;\n}\n\n.machine-list {\n  min-height: 0;\n  overflow: auto;\n  padding: 0 8px 20px;\n}\n\n.machine-card {\n  width: 100%;\n  min-height: 76px;\n  display: grid;\n  grid-template-columns: 48px 1fr auto;\n  gap: 10px;\n  align-items: center;\n  margin: 0 0 5px;\n  padding: 9px;\n  text-align: left;\n  background: transparent;\n}\n\n.machine-card.active {\n  border-color: var(--cyan);\n  background: rgb(70 219 232 / 9%);\n}\n\n.machine-card.retired {\n  opacity: .58;\n}\n\n.machine-position {\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  min-height: 48px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  background: #090e15;\n  color: var(--cyan);\n  font-weight: 800;\n}\n\n.machine-position small {\n  color: var(--muted);\n  font-size: 9px;\n  font-weight: 500;\n}\n\n.machine-copy {\n  min-width: 0;\n}\n\n.machine-copy strong,\n.machine-copy small {\n  display: block;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.machine-copy strong {\n  margin-bottom: 4px;\n  font-size: 13px;\n}\n\n.machine-copy small {\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.machine-price {\n  color: #d3e2ed;\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 11px;\n}\n\n.main-panel {\n  min-width: 0;\n  overflow: auto;\n  padding: 20px 24px 60px;\n}\n\n.empty-state {\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  color: var(--muted);\n  text-align: center;\n}\n\n.empty-state h2 {\n  margin: 8px 0;\n  color: var(--text);\n}\n\n.empty-state p {\n  width: 460px;\n  line-height: 1.7;\n}\n\n.empty-mark {\n  color: var(--cyan);\n  font-size: 56px;\n  filter: drop-shadow(0 0 18px rgb(70 219 232 / 35%));\n}\n\n.hidden {\n  display: none !important;\n}\n\n.editor {\n  max-width: 1180px;\n  margin: 0 auto;\n}\n\n.editor-heading,\n.section-heading,\n.dialog-heading {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 18px;\n}\n\n.editor-heading {\n  margin-bottom: 16px;\n}\n\n.editor-heading h2 {\n  margin-top: 9px;\n}\n\n.editor-heading p {\n  margin: 5px 0 0;\n}\n\n.panel {\n  margin-bottom: 16px;\n  border: 1px solid var(--line);\n  border-radius: 12px;\n  padding: 18px;\n  background: linear-gradient(145deg, rgb(18 26 37 / 94%), rgb(12 18 27 / 94%));\n  box-shadow: 0 8px 28px rgb(0 0 0 / 15%);\n}\n\n.form-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 13px;\n}\n\n.form-grid label,\n.form-stack label,\n.read-only-field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  color: #aebdca;\n  font-size: 12px;\n}\n\n.read-only-field strong {\n  min-height: 39px;\n  display: flex;\n  align-items: center;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  padding: 0 11px;\n  color: #d9e7f2;\n  background: rgb(255 255 255 / 2%);\n  font-weight: 600;\n}\n\n.form-grid .span-2 {\n  grid-column: span 2;\n}\n\n.form-grid small {\n  color: var(--muted);\n  line-height: 1.4;\n}\n\n.check-field {\n  flex-direction: row !important;\n  align-items: center;\n  align-self: end;\n  min-height: 39px;\n}\n\n.section-heading {\n  align-items: center;\n  margin-bottom: 10px;\n}\n\n.section-heading h3 {\n  font-size: 17px;\n}\n\n.section-note {\n  margin: 0 0 14px;\n  color: var(--muted);\n  font-size: 12px;\n  line-height: 1.6;\n}\n\n.weight-total {\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 8px 12px;\n  color: var(--amber);\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 12px;\n}\n\n.weight-total.valid {\n  color: var(--green);\n  border-color: rgb(85 216 153 / 45%);\n}\n\n.entry-table {\n  display: flex;\n  flex-direction: column;\n  gap: 7px;\n}\n\n.entry-row {\n  display: grid;\n  grid-template-columns: 38px 54px minmax(190px, 1.6fr) minmax(150px, .8fr) minmax(130px, .7fr) 38px;\n  gap: 8px;\n  align-items: center;\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 8px;\n  background: rgb(5 10 16 / 46%);\n}\n\n.entry-row.custom-row {\n  grid-template-columns: 38px 54px minmax(180px, 1.4fr) repeat(4, minmax(82px, .7fr)) 78px 38px;\n}\n\n.entry-index {\n  color: var(--cyan);\n  font-family: \"Cascadia Mono\", monospace;\n  font-weight: 800;\n  text-align: center;\n}\n\n.unit-thumb,\n.unit-placeholder {\n  width: 52px;\n  height: 52px;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  object-fit: contain;\n  background:\n    linear-gradient(135deg, rgb(70 219 232 / 9%), transparent),\n    #080c12;\n}\n\n.unit-placeholder {\n  display: grid;\n  place-items: center;\n  color: #4f6477;\n  font-size: 20px;\n}\n\n.unit-select-button {\n  min-width: 0;\n  height: 52px;\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  justify-content: center;\n  text-align: left;\n}\n\n.unit-select-button strong,\n.unit-select-button small {\n  width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.unit-select-button small {\n  color: var(--muted);\n}\n\n.mini-field {\n  display: flex;\n  flex-direction: column;\n  gap: 3px;\n  color: var(--muted);\n  font-size: 9px;\n  text-transform: uppercase;\n}\n\n.mini-field input {\n  min-height: 34px;\n  padding: 6px 8px;\n}\n\n.weight-input-row {\n  display: grid;\n  grid-template-columns: minmax(72px, 1fr) 58px;\n  gap: 6px;\n  align-items: center;\n}\n\n.slot-percent {\n  color: var(--cyan);\n  font-family: \"Cascadia Mono\", monospace;\n  font-size: 11px;\n  text-align: right;\n}\n\n.entry-advanced {\n  min-width: 0;\n  border: 1px solid var(--line);\n  border-radius: 7px;\n  padding: 7px 9px;\n  color: var(--muted);\n  font-size: 10px;\n  line-height: 1.45;\n}\n\n.entry-advanced summary {\n  color: #b7c8d6;\n  cursor: pointer;\n}\n\n.entry-advanced span {\n  display: block;\n  margin-top: 4px;\n}\n\n.remove-entry,\n.icon-button {\n  width: 36px;\n  min-height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.rules-heading {\n  margin-top: 24px;\n}\n\n.rules-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.rule-card {\n  border: 1px solid var(--line);\n  border-radius: 9px;\n  padding: 10px;\n  background: rgb(5 10 16 / 46%);\n}\n\n.rule-card h4 {\n  margin: 0 0 8px;\n  color: var(--cyan);\n}\n\n.rule-card label {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  margin-top: 7px;\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.rule-card .inline-check {\n  flex-direction: row;\n  align-items: center;\n}\n\n.notice {\n  border: 1px solid var(--line);\n  border-radius: 8px;\n  padding: 10px 12px;\n  color: #b7c8d6;\n  background: rgb(255 255 255 / 3%);\n  font-size: 12px;\n  line-height: 1.55;\n}\n\n.notice.error {\n  margin-bottom: 14px;\n  color: #ffdadd;\n  border-color: rgb(255 100 112 / 48%);\n  background: rgb(255 100 112 / 8%);\n}\n\n.footerbar {\n  height: 58px;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 20px;\n  padding: 0 18px;\n  border-top: 1px solid var(--line);\n  background: #090d13;\n}\n\n.footerbar > div:first-child {\n  min-width: 0;\n  flex: 1;\n}\n\n.footer-actions {\n  flex-shrink: 0;\n}\n\n#catalog-path {\n  display: block;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\ndialog {\n  width: min(720px, calc(100vw - 48px));\n  max-height: calc(100vh - 48px);\n  border: 1px solid #395068;\n  border-radius: 14px;\n  padding: 0;\n  color: var(--text);\n  background: #101720;\n  box-shadow: var(--shadow);\n}\n\ndialog::backdrop {\n  background: rgb(1 4 8 / 74%);\n  backdrop-filter: blur(4px);\n}\n\n.dialog-card {\n  display: flex;\n  flex-direction: column;\n  max-height: calc(100vh - 50px);\n}\n\n.dialog-heading,\n.dialog-actions {\n  padding: 17px 18px;\n  border-bottom: 1px solid var(--line);\n}\n\n.dialog-actions {\n  display: flex;\n  justify-content: flex-end;\n  gap: 8px;\n  border-top: 1px solid var(--line);\n  border-bottom: 0;\n}\n\n.dialog-body {\n  min-height: 0;\n  overflow: auto;\n  padding: 18px;\n}\n\n.form-stack {\n  display: flex;\n  flex-direction: column;\n  gap: 13px;\n}\n\n.unit-dialog-card {\n  width: min(980px, calc(100vw - 48px));\n}\n\n#unit-dialog {\n  width: min(980px, calc(100vw - 48px));\n}\n\n.unit-grid {\n  display: grid;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n  gap: 8px;\n}\n\n.unit-card {\n  min-width: 0;\n  height: auto;\n  display: grid;\n  grid-template-columns: 64px 1fr;\n  gap: 9px;\n  padding: 8px;\n  text-align: left;\n}\n\n.unit-card .unit-thumb,\n.unit-card .unit-placeholder {\n  width: 64px;\n  height: 64px;\n}\n\n.unit-card-copy {\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  justify-content: center;\n}\n\n.unit-card-copy strong,\n.unit-card-copy small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.unit-card-copy small {\n  margin-top: 5px;\n  color: var(--muted);\n}\n\n.result-content {\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n  color: #c8d7e3;\n  font-family: \"Cascadia Mono\", \"Microsoft YaHei UI\", monospace;\n  font-size: 12px;\n  line-height: 1.65;\n}\n\n.unit-choice { min-width: 0; display: flex; flex-direction: column; gap: 5px; }\n.unit-choice .unit-select-button { width: 100%; }\n.portrait-open { align-self: flex-start; padding: 4px 8px; font-size: 11px; color: #8ae6e8; }\n.portrait-dialog-card { width: 100%; }\n#portrait-dialog { width: min(1160px, calc(100vw - 48px)); max-width: 98vw; }\n#portrait-dialog .dialog-heading, #portrait-dialog .dialog-actions { flex-shrink: 0; }\n.portrait-toolbar { display: flex; gap: 16px; align-items: flex-end; margin: 16px 0; flex-wrap: wrap; }\n.portrait-toolbar label { display: flex; gap: 8px; align-items: center; }\n.portrait-upload-label input { width: 240px; }\n.portrait-workspace { display: grid; grid-template-columns: minmax(360px, 1fr) 366px; gap: 24px; }\n#portrait-canvas { display: block; width: 100%; height: auto; border: 1px solid #405264; border-radius: 7px; cursor: move; touch-action: none; }\n.portrait-zoom-label { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; }\n#portrait-zoom { flex: 1; }\n#portrait-zoom-value { min-width: 50px; }\n.portrait-preview-panel h3 { margin-top: 0; font-size: 14px; }\n#portrait-preview { width: 366px; height: 214px; max-width: 100%; object-fit: contain; image-rendering: auto; background: #17232c; }\n.portrait-preview-panel .inline-check { margin-top: 20px; }\n#portrait-error { margin-top: 14px; color: #ffbdb5; border-color: #a64f43; }\n@media (max-width: 900px) {\n  .portrait-workspace { grid-template-columns: 1fr; }\n  #portrait-dialog { width: 94vw; }\n}\n\n.toast {\n  position: fixed;\n  right: 20px;\n  bottom: 76px;\n  z-index: 100;\n  max-width: 430px;\n  border: 1px solid rgb(70 219 232 / 45%);\n  border-radius: 9px;\n  padding: 12px 15px;\n  color: #dffcff;\n  background: #10232a;\n  box-shadow: var(--shadow);\n}\n\n@media (max-width: 1180px) {\n  .form-grid {\n    grid-template-columns: repeat(2, minmax(0, 1fr));\n  }\n\n  .rules-grid {\n    grid-template-columns: repeat(2, minmax(0, 1fr));\n  }\n\n  .entry-row {\n    grid-template-columns: 34px 52px minmax(160px, 1.4fr) minmax(140px, .8fr) minmax(118px, .7fr) 36px;\n  }\n\n  .unit-grid {\n    grid-template-columns: repeat(3, minmax(0, 1fr));\n  }\n}\n\n:host { display:block; } .topbar { display:none; } .workspace { height:auto; min-height:650px; } .app-footer { position:sticky; bottom:0; }\n"+"</style>"+"<span id=\"save-state\" hidden></span><span id=\"revision\" hidden></span>\n\n  <div class=\"workspace\">\n    <aside class=\"sidebar\">\n      <div class=\"sidebar-actions\">\n        <button id=\"new-machine\" class=\"primary\">＋ 新建机台</button>\n        <button id=\"import-button\">导入配置</button>\n        <input id=\"import-file\" type=\"file\" accept=\"application/json,.json\" hidden>\n        <a class=\"button-link\" href=\"/api/catalog/download\">下载目录 JSON</a>\n      </div>\n\n      <div class=\"tabs\" role=\"tablist\" aria-label=\"机台类型\">\n        <button class=\"tab active\" data-kind=\"fixed_machines\" role=\"tab\">固定扭蛋</button>\n        <button class=\"tab\" data-kind=\"custom_machines\" role=\"tab\">自定义扭蛋</button>\n      </div>\n\n      <label class=\"search-box\">\n        <span>搜索</span>\n        <input id=\"machine-search\" type=\"search\" placeholder=\"名称或 Machine ID\">\n      </label>\n\n      <div class=\"filter-row\">\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"all\" checked> 全部</label>\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"enabled\"> 启用</label>\n        <label><input type=\"radio\" name=\"machine-filter\" value=\"retired\"> 下架</label>\n      </div>\n\n      <div id=\"machine-count\" class=\"list-caption\">正在读取…</div>\n      <nav id=\"machine-list\" class=\"machine-list\" aria-label=\"机台列表\"></nav>\n    </aside>\n\n    <main class=\"main-panel\">\n      <section id=\"empty-state\" class=\"empty-state\">\n        <div class=\"empty-mark\">◉</div>\n        <h2>选择一台扭蛋机</h2>\n        <p>可以修改价格、机体、权重与显示位置，也可以从原生 Pattern 或现有机台复制新建。</p>\n      </section>\n\n      <form id=\"editor\" class=\"editor hidden\">\n        <div class=\"editor-heading\">\n          <div>\n            <div class=\"editor-badges\">\n              <span id=\"editor-kind\" class=\"badge\"></span>\n              <span id=\"editor-location\" class=\"badge accent\"></span>\n              <span id=\"editor-owner\" class=\"badge\"></span>\n            </div>\n            <h2 id=\"editor-title\">机台</h2>\n            <p id=\"editor-subtitle\" class=\"muted\"></p>\n          </div>\n          <div class=\"editor-actions\">\n            <button id=\"restore-machine\" type=\"button\" class=\"success hidden\">恢复上架</button>\n            <button id=\"retire-machine\" type=\"button\" class=\"danger\">下架并保留 ID</button>\n            <button id=\"save-machine\" type=\"submit\" class=\"primary\">保存配置</button>\n          </div>\n        </div>\n\n        <div id=\"editor-error\" class=\"notice error hidden\" role=\"alert\"></div>\n\n        <section class=\"panel\">\n          <div class=\"form-grid\">\n            <label>\n              <span>Machine ID</span>\n              <input id=\"field-id\" type=\"number\" min=\"1\" required>\n            </label>\n            <label>\n              <span>配置顺序</span>\n              <input id=\"field-position\" type=\"number\" min=\"1\" required>\n              <small id=\"position-help\">固定机在游戏中倒序显示；上方显示实际页码和格位。</small>\n            </label>\n            <label class=\"span-2\">\n              <span>显示名称</span>\n              <input id=\"field-name\" type=\"text\" maxlength=\"100\" required>\n            </label>\n            <label>\n              <span>价格</span>\n              <input id=\"field-price\" type=\"number\" min=\"0\" required>\n            </label>\n            <label>\n              <span>货币</span>\n              <select id=\"field-currency\"></select>\n            </label>\n            <div class=\"read-only-field\">\n              <span>来源</span>\n              <strong id=\"field-owner-label\">—</strong>\n            </div>\n            <div class=\"read-only-field\">\n              <span>抽取方式</span>\n              <strong id=\"field-policy-label\">—</strong>\n            </div>\n            <label class=\"check-field\">\n              <input id=\"field-enabled\" type=\"checkbox\">\n              <span>启用机台</span>\n            </label>\n          </div>\n        </section>\n\n        <section id=\"fixed-editor\" class=\"panel\">\n          <div class=\"section-heading\">\n            <div>\n              <p class=\"eyebrow\">FIXED CAPSULE</p>\n              <h3>六格机体与权重</h3>\n            </div>\n            <div id=\"weight-total\" class=\"weight-total\">合计 0 / 1000</div>\n          </div>\n          <p class=\"section-note\">固定机当前运行时仅支持 GP。Machine ID 与显示位置分开保存；每页 8 台。</p>\n          <div id=\"fixed-slots\" class=\"entry-table\"></div>\n        </section>\n\n        <section id=\"custom-editor\" class=\"panel hidden\">\n          <div class=\"section-heading\">\n            <div>\n              <p class=\"eyebrow\">CUSTOM CAPSULE</p>\n              <h3>候选机体</h3>\n            </div>\n            <button id=\"add-candidate\" type=\"button\">＋ 添加候选</button>\n          </div>\n          <p class=\"section-note\">原生规则是 6 个基础格与 2 个扩展格。候选 SR 数量不等于槽位数量；每个候选保留自己的权重、累积、加价和重置参数。</p>\n          <p class=\"section-note\">保留原生基础候选。新增候选只允许 SR，或完全没有设计图的 SS；有设计图的 SS 不加入自定义池。</p>\n          <div id=\"custom-candidates\" class=\"entry-table\"></div>\n\n          <div class=\"section-heading rules-heading\">\n            <div>\n              <p class=\"eyebrow\">SLOT RULES</p>\n              <h3>八格选择限制</h3>\n            </div>\n          </div>\n          <div id=\"slot-rules\" class=\"rules-grid\"></div>\n        </section>\n      </form>\n    </main>\n  </div>\n\n  <footer class=\"footerbar\">\n    <div>\n      <span id=\"catalog-path\" class=\"mono muted\"></span>\n    </div>\n    <div class=\"footer-actions\">\n      <button id=\"initialize-button\">初始化缺失取得路线</button>\n      <button id=\"compile-button\">编译客户端 Overlay</button>\n      <button id=\"export-button\" class=\"primary\">导出客户端 / 服务端配置</button>\n      <button id=\"apply-button\" class=\"success\">导入到游戏</button>\n    </div>\n  </footer>\n\n  <dialog id=\"new-dialog\">\n    <div class=\"dialog-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">NEW MACHINE</p>\n          <h2>从模板新建机台</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"new-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"dialog-body form-stack\">\n        <label>\n          <span>创建方式</span>\n          <select id=\"new-method\"></select>\n        </label>\n        <label>\n          <span>Pattern / 来源机台</span>\n          <select id=\"new-template\"></select>\n        </label>\n        <div id=\"new-template-note\" class=\"notice\"></div>\n        <div class=\"form-grid\">\n          <label>\n            <span>新 Machine ID</span>\n            <input id=\"new-id\" type=\"number\" min=\"1\" required>\n          </label>\n          <label>\n            <span>插入位置</span>\n            <input id=\"new-position\" type=\"number\" min=\"1\" required>\n          </label>\n          <label class=\"span-2\">\n            <span>显示名称</span>\n            <input id=\"new-name\" type=\"text\" maxlength=\"100\" required>\n          </label>\n        </div>\n      </div>\n      <div class=\"dialog-actions\">\n        <button type=\"button\" data-close-dialog=\"new-dialog\">取消</button>\n        <button id=\"create-draft\" type=\"button\" class=\"primary\">打开新机台草稿</button>\n      </div>\n    </div>\n  </dialog>\n\n  <dialog id=\"unit-dialog\">\n    <div class=\"dialog-card unit-dialog-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">UNIT PICKER</p>\n          <h2>选择机体</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"unit-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"dialog-body\">\n        <label class=\"search-box large\">\n          <span>搜索机体</span>\n          <input id=\"unit-search\" type=\"search\" placeholder=\"机体名称、ID 或等级\">\n        </label>\n        <div id=\"unit-result-count\" class=\"list-caption\"></div>\n        <div id=\"unit-grid\" class=\"unit-grid\"></div>\n      </div>\n    </div>\n  </dialog>\n\n  <dialog id=\"portrait-dialog\">\n    <div class=\"dialog-card portrait-dialog-card\">\n      <div class=\"dialog-heading\">\n        <div><p class=\"eyebrow\">PORTRAIT</p><h2 id=\"portrait-title\">头像 PNG 与取景</h2></div>\n        <button id=\"portrait-close\" class=\"icon-button\" type=\"button\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"dialog-body\">\n        <p class=\"notice\">上传处理好的 PNG，拖动取景框并调整缩放。原生边框、等级条和稀有剪影自动合成；保存后此机体在所有机台同步使用。</p>\n        <div class=\"portrait-toolbar\">\n          <label>图片姿态 <select id=\"portrait-variant\"><option value=\"0\">姿态 1</option><option value=\"1\">姿态 2</option></select></label>\n          <label class=\"portrait-upload-label\">上传 PNG <input id=\"portrait-file\" type=\"file\" accept=\"image/png,.png\"></label>\n          <button id=\"portrait-fit\" type=\"button\">重置取景</button>\n        </div>\n        <div class=\"portrait-workspace\">\n          <div>\n            <canvas id=\"portrait-canvas\" width=\"720\" height=\"440\" aria-label=\"拖动头像取景框\"></canvas>\n            <label class=\"portrait-zoom-label\">放大取景 <input id=\"portrait-zoom\" type=\"range\" min=\"100\" max=\"800\" step=\"1\" value=\"100\"><output id=\"portrait-zoom-value\">1.00×</output></label>\n            <p id=\"portrait-source-info\" class=\"list-caption\">选择 PNG 后开始取景</p>\n          </div>\n          <aside class=\"portrait-preview-panel\">\n            <h3>游戏内卡片预览</h3>\n            <img id=\"portrait-preview\" alt=\"原生扭蛋卡预览\" width=\"366\" height=\"214\" class=\"hidden\">\n            <p id=\"portrait-preview-status\" class=\"list-caption\">配置客户端素材后可预览完整原生卡片。</p>\n            <label class=\"inline-check\"><input id=\"portrait-both\" type=\"checkbox\"> 两个姿态使用此 PNG 和取景</label>\n            <p class=\"list-caption\">仅替换机体图片，价格和抽取概率不变。恢复原图只作用于当前姿态。</p>\n          </aside>\n        </div>\n        <div id=\"portrait-error\" class=\"notice error hidden\" role=\"alert\"></div>\n      </div>\n      <div class=\"dialog-actions\">\n        <button id=\"portrait-reset\" type=\"button\">恢复原图</button>\n        <button id=\"portrait-save\" type=\"button\" class=\"primary\">保存头像与取景</button>\n      </div>\n    </div>\n  </dialog>\n\n  <dialog id=\"result-dialog\">\n    <div class=\"dialog-card result-card\">\n      <div class=\"dialog-heading\">\n        <div>\n          <p class=\"eyebrow\">RESULT</p>\n          <h2 id=\"result-title\">操作完成</h2>\n        </div>\n        <button class=\"icon-button\" type=\"button\" data-close-dialog=\"result-dialog\" aria-label=\"关闭\">×</button>\n      </div>\n      <div id=\"result-content\" class=\"dialog-body result-content\"></div>\n      <div class=\"dialog-actions\">\n        <button type=\"button\" class=\"primary\" data-close-dialog=\"result-dialog\">知道了</button>\n      </div>\n    </div>\n  </dialog>\n\n  <div id=\"toast\" class=\"toast hidden\" role=\"status\"></div>";
 "use strict";
 
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const csrfToken = $('meta[name="csrf-token"]').content;
+const $ = (selector, root = shadow) => root.querySelector(selector);
+const $$ = (selector, root = shadow) => [...root.querySelectorAll(selector)];
+const csrfToken = ctx.token;
 
 const state = {
   bootstrap: null,
@@ -21,6 +20,7 @@ const state = {
   unitTarget: null,
   unitMap: new Map(),
   newTemplates: [],
+  portrait: null,
 };
 
 function escapeHtml(value) {
@@ -122,7 +122,7 @@ async function apiPost(path, payload) {
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "X-Capsule-Token": csrfToken,
+      "X-ModManager-Token": csrfToken,
     },
     body: JSON.stringify(payload),
   });
@@ -262,11 +262,12 @@ function unitButton(unit, targetType, index) {
     ? `ID ${unit.id} · ${unit.grade || "?"}`
     : "尚未选择";
   return `
-    <button class="unit-select-button" type="button"
+    <div class="unit-choice"><button class="unit-select-button" type="button"
             data-pick-unit="${targetType}" data-entry-index="${index}">
       <strong>${escapeHtml(name)}</strong>
       <small>${escapeHtml(subtitle)}</small>
-    </button>`;
+    </button>${unit ? `<button class="portrait-open" type="button" data-edit-portrait="${unit.id}"
+      ${Number(unit.rank) > 3 ? 'disabled title="此等级暂无已验证的原生卡框"' : ''}>头像 PNG / 取景</button>` : ''}</div>`;
 }
 
 function renderFixedSlots(machine) {
@@ -918,11 +919,11 @@ async function initializeRoutes() {
     showToast("请先保存当前修改，再执行初始化");
     return;
   }
-  const raw = window.prompt("新固定扭蛋机的 GP 价格：", "1200");
+  const raw = window.prompt("新固定机价格：留空按原版模板定价；填写整数则统一覆盖。", "");
   if (raw === null) return;
-  const price = Number(raw);
-  if (!Number.isInteger(price) || price < 0) {
-    showToast("价格必须是非负整数");
+  const price = raw.trim() === "" ? null : Number(raw);
+  if (price !== null && (!Number.isInteger(price) || price < 0)) {
+    showToast("留空按模板定价，或填写非负整数");
     return;
   }
   if (!window.confirm("根据已配置的只读快照与客户端补齐缺失取得路线？现有机台不会被删除。")) return;
@@ -994,7 +995,261 @@ function removeCandidate(index) {
   setDirty(true);
 }
 
+function portraitError(message = "") {
+  $("#portrait-error").textContent = message;
+  $("#portrait-error").classList.toggle("hidden", !message);
+}
+
+function portraitChanged() {
+  const p = state.portrait;
+  if (!p) return;
+  p.dirty = true;
+  drawPortrait();
+  clearTimeout(p.timer);
+  p.timer = setTimeout(previewPortrait, 400);
+}
+
+function portraitFit(reset = false) {
+  const p = state.portrait;
+  if (!p?.image) return;
+  const width = Math.min(p.image.width, p.image.height * 163 / 64);
+  p.baseWidth = width;
+  if (reset || !p.crop) {
+    p.crop = [(p.image.width - width) / 2,
+      (p.image.height - width * 64 / 163) / 2, width, width * 64 / 163];
+  }
+  $("#portrait-zoom").value = String(Math.max(100, Math.min(800, width / p.crop[2] * 100)));
+  drawPortrait();
+}
+
+function clampPortraitCrop() {
+  const p = state.portrait;
+  if (!p?.image || !p.crop) return;
+  p.crop[0] = Math.max(0, Math.min(p.image.width - p.crop[2], p.crop[0]));
+  p.crop[1] = Math.max(0, Math.min(p.image.height - p.crop[3], p.crop[1]));
+}
+
+function drawPortrait() {
+  const canvas = $("#portrait-canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < canvas.height; y += 16) {
+    for (let x = 0; x < canvas.width; x += 16) {
+      ctx.fillStyle = ((x + y) / 16) % 2 ? "#26323e" : "#1d2833";
+      ctx.fillRect(x, y, 16, 16);
+    }
+  }
+  const p = state.portrait;
+  if (!p?.image || !p.crop) {
+    ctx.fillStyle = "#b3c5d5";
+    ctx.font = "18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("上传 PNG，然后拖动取景框", canvas.width / 2, canvas.height / 2);
+    return;
+  }
+  const scale = Math.min((canvas.width - 40) / p.image.width, (canvas.height - 40) / p.image.height);
+  const ox = (canvas.width - p.image.width * scale) / 2;
+  const oy = (canvas.height - p.image.height * scale) / 2;
+  p.transform = { scale, ox, oy };
+  ctx.drawImage(p.image, ox, oy, p.image.width * scale, p.image.height * scale);
+  const [cx, cy, cw, ch] = p.crop;
+  const x = ox + cx * scale, y = oy + cy * scale, w = cw * scale, h = ch * scale;
+  ctx.fillStyle = "rgba(0, 0, 0, .56)";
+  ctx.fillRect(0, 0, canvas.width, y);
+  ctx.fillRect(0, y + h, canvas.width, canvas.height - y - h);
+  ctx.fillRect(0, y, x, h);
+  ctx.fillRect(x + w, y, canvas.width - x - w, h);
+  ctx.strokeStyle = "#68e8ec";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = "#efffff";
+  for (const [px, py] of [[x,y],[x+w,y],[x,y+h],[x+w,y+h]]) ctx.fillRect(px-4, py-4, 8, 8);
+  $("#portrait-source-info").textContent = `${p.image.width} × ${p.image.height} PNG · 取景 ${cw.toFixed(1)} × ${ch.toFixed(1)} · 拖动框，滚轮或滑杆缩放`;
+  $("#portrait-zoom-value").textContent = `${(p.baseWidth / cw).toFixed(2)}×`;
+}
+
+async function setPortraitImage(dataUrl, crop = null) {
+  const p = state.portrait;
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error("无法读取 PNG"));
+    image.src = dataUrl;
+  });
+  if (state.portrait !== p) return;
+  if (image.width > 2048 || image.height > 2048) throw new Error("PNG 最大为 2048 × 2048");
+  p.image = image;
+  p.png_base64 = dataUrl.split(",")[1];
+  p.crop = crop ? [...crop] : null;
+  portraitFit();
+}
+
+async function loadPortraitVariant() {
+  const p = state.portrait;
+  if (!p) return;
+  const variant = Number($("#portrait-variant").value);
+  p.variant = variant;
+  p.image = null; p.crop = null; p.png_base64 = null; p.dirty = false;
+  $("#portrait-file").value = "";
+  clearTimeout(p.timer);
+  p.previewSequence = (p.previewSequence || 0) + 1;
+  portraitError(); drawPortrait();
+  $("#portrait-source-info").textContent = "正在读取图片与取景…";
+  $("#portrait-preview-status").textContent = "正在读取…";
+  const result = await apiGet(`/api/providers/capsules/api/portraits?unit_id=${p.unit.id}&variant=${variant}`);
+  if (state.portrait !== p || p.variant !== variant) return;
+  if (p.dirty) return;
+  if (result.catalog_revision !== state.revision) throw new Error("配置已变化，请刷新页面后再编辑头像");
+  if (result.image_data_url) await setPortraitImage(result.image_data_url, result.crop);
+  else $("#portrait-source-info").textContent = "未上传 PNG，当前使用原版素材";
+  const preview = $("#portrait-preview");
+  preview.classList.toggle("hidden", !result.card_data_url);
+  if (result.card_data_url) preview.src = result.card_data_url;
+  $("#portrait-preview-status").textContent = result.overridden ? "已保存的头像与取景" : "当前原图；上传 PNG 后可调整取景";
+}
+
+async function openPortrait(unitId) {
+  const unit = state.unitMap.get(unitId);
+  if (!unit) return;
+  state.portrait = { unit, variant: 0, dirty: false, previewSequence: 0 };
+  $("#portrait-title").textContent = `${unit.name} · ${unit.grade} · 头像取景`;
+  $("#portrait-variant").value = "0";
+  $("#portrait-both").checked = false;
+  $("#portrait-dialog").showModal();
+  try { await loadPortraitVariant(); } catch (error) { portraitError(error.message); }
+}
+
+async function previewPortrait() {
+  const p = state.portrait;
+  if (!p?.png_base64 || !p.crop) return;
+  const sequence = ++p.previewSequence;
+  $("#portrait-preview-status").textContent = "正在合成原生卡片…";
+  try {
+    const result = await apiPost("/api/providers/capsules/api/portraits/preview", {
+      expected_revision: state.revision, unit_id: p.unit.id, variant: p.variant,
+      png_base64: p.png_base64, crop: p.crop,
+    });
+    if (state.portrait !== p || sequence !== p.previewSequence) return;
+    if (result.card_data_url) {
+      $("#portrait-preview").src = result.card_data_url;
+      $("#portrait-preview").classList.remove("hidden");
+      $("#portrait-preview-status").textContent = "原生卡框、等级条和稀有剪影已合成；取景尚未保存";
+    }
+    portraitError();
+  } catch (error) {
+    if (state.portrait === p && sequence === p.previewSequence) {
+      $("#portrait-preview-status").textContent = "预览不可用；可保存 PNG 与取景，配置客户端素材后编译。";
+      portraitError(error.message);
+    }
+  }
+}
+
+async function savePortrait(reset = false) {
+  const p = state.portrait;
+  if (!p) return;
+  if (!reset && (!p.png_base64 || !p.crop)) { portraitError("请先上传 PNG"); return; }
+  const button = $(reset ? "#portrait-reset" : "#portrait-save");
+  button.disabled = true;
+  clearTimeout(p.timer);
+  try {
+    const payload = { expected_revision: state.revision, unit_id: p.unit.id, variant: p.variant };
+    if (!reset) Object.assign(payload, { png_base64: p.png_base64, crop: p.crop, apply_to_both: $("#portrait-both").checked });
+    const result = await apiPost(`/api/providers/capsules/api/portraits/${reset ? 'reset' : 'save'}`, payload);
+    state.revision = result.catalog_revision;
+    state.bootstrap.catalog_revision = result.catalog_revision;
+    $("#revision").textContent = `revision ${result.catalog_revision.slice(0,12)}`;
+    p.dirty = false;
+    await loadPortraitVariant();
+    showToast(reset ? "已恢复当前姿态原图" : "头像与取景已保存，导入游戏后生效");
+  } catch (error) { portraitError(error.message); }
+  finally { button.disabled = false; }
+}
+
+function closePortrait() {
+  const p = state.portrait;
+  if (p?.dirty && !window.confirm("取景尚未保存，关闭并放弃本次修改？")) return;
+  if (p) clearTimeout(p.timer);
+  state.portrait = null;
+  $("#portrait-dialog").close();
+}
+
+function bindPortraitEvents() {
+  $("#portrait-close").addEventListener("click", closePortrait);
+  $("#portrait-dialog").addEventListener("cancel", event => { event.preventDefault(); closePortrait(); });
+  $("#portrait-file").addEventListener("change", async event => {
+    const file = event.target.files[0]; if (!file) return;
+    try {
+      if (file.size > 4*1024*1024) throw new Error("PNG 最大为 4 MiB");
+      if (file.type && file.type !== "image/png") throw new Error("只接受 PNG 图片");
+      const dataUrl = await new Promise((resolve,reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(reader.result);
+        reader.onerror = reject; reader.readAsDataURL(file);
+      });
+      await setPortraitImage(dataUrl); portraitChanged();
+    } catch (error) { portraitError(error.message || "PNG 读取失败"); }
+  });
+  $("#portrait-variant").addEventListener("change", async () => {
+    const p = state.portrait;
+    if (p?.dirty && !window.confirm("当前取景尚未保存，切换姿态并放弃修改？")) {
+      $("#portrait-variant").value = String(p.variant); return;
+    }
+    try { await loadPortraitVariant(); } catch (error) { portraitError(error.message); }
+  });
+  $("#portrait-fit").addEventListener("click", () => { portraitFit(true); portraitChanged(); });
+  const zoom = () => {
+    const p = state.portrait; if (!p?.crop) return;
+    const cx = p.crop[0]+p.crop[2]/2, cy = p.crop[1]+p.crop[3]/2;
+    const w = p.baseWidth * 100 / Number($("#portrait-zoom").value), h = w*64/163;
+    p.crop = [cx-w/2,cy-h/2,w,h]; clampPortraitCrop(); portraitChanged();
+  };
+  $("#portrait-zoom").addEventListener("input", zoom);
+  const canvas = $("#portrait-canvas");
+  canvas.addEventListener("wheel", event => {
+    if (!state.portrait?.image) return; event.preventDefault();
+    const slider = $("#portrait-zoom"); slider.value = String(Math.max(100,Math.min(800,Number(slider.value)+(event.deltaY<0?10:-10)))); zoom();
+  }, {passive:false});
+  const point = event => { const r=canvas.getBoundingClientRect(); return [(event.clientX-r.left)*canvas.width/r.width,(event.clientY-r.top)*canvas.height/r.height]; };
+  canvas.addEventListener("pointerdown", event => {
+    const p=state.portrait; if(!p?.image || !p.transform) return;
+    const [x,y]=point(event), t=p.transform;
+    const ix=(x-t.ox)/t.scale, iy=(y-t.oy)/t.scale;
+    if(ix<0||iy<0||ix>p.image.width||iy>p.image.height) return;
+    const corners = [[0,0],[1,0],[0,1],[1,1]];
+    const corner = corners.find(([right,bottom]) => Math.hypot(
+      x-(t.ox+(p.crop[0]+right*p.crop[2])*t.scale),
+      y-(t.oy+(p.crop[1]+bottom*p.crop[3])*t.scale)) <= 12);
+    if(!corner && (ix<p.crop[0]||ix>p.crop[0]+p.crop[2]||iy<p.crop[1]||iy>p.crop[1]+p.crop[3])) {
+      p.crop[0]=ix-p.crop[2]/2; p.crop[1]=iy-p.crop[3]/2; clampPortraitCrop();
+    }
+    p.drag={x,y,crop:[...p.crop],corner}; canvas.setPointerCapture(event.pointerId); drawPortrait();
+  });
+  canvas.addEventListener("pointermove", event => {
+    const p=state.portrait; if(!p?.drag) return;
+    const [x,y]=point(event); p.crop=[...p.drag.crop];
+    if (p.drag.corner) {
+      const [right,bottom]=p.drag.corner, t=p.transform;
+      const ax=p.drag.crop[0]+(1-right)*p.drag.crop[2];
+      const ay=p.drag.crop[1]+(1-bottom)*p.drag.crop[3];
+      const ix=(x-t.ox)/t.scale, iy=(y-t.oy)/t.scale;
+      const maximum=Math.min(right?p.image.width-ax:ax,(bottom?p.image.height-ay:ay)*163/64,p.baseWidth);
+      const width=Math.max(Math.min(p.baseWidth/8,maximum),Math.min(maximum,Math.max(Math.abs(ix-ax),Math.abs(iy-ay)*163/64)));
+      const height=width*64/163;
+      p.crop=[right?ax:ax-width,bottom?ay:ay-height,width,height];
+      $("#portrait-zoom").value=String(Math.max(100,Math.min(800,p.baseWidth/width*100)));
+    } else {
+      p.crop[0]+=(x-p.drag.x)/p.transform.scale; p.crop[1]+=(y-p.drag.y)/p.transform.scale;
+    }
+    clampPortraitCrop(); portraitChanged();
+  });
+  const endDrag=()=>{const p=state.portrait;if(p?.drag){p.drag=null;portraitChanged();}};
+  canvas.addEventListener("pointerup",endDrag); canvas.addEventListener("pointercancel",endDrag);
+  $("#portrait-save").addEventListener("click",()=>savePortrait());
+  $("#portrait-reset").addEventListener("click",()=>savePortrait(true));
+  shadow.addEventListener("click",event=>{const b=event.target.closest("[data-edit-portrait]");if(b&&!b.disabled)openPortrait(Number(b.dataset.editPortrait));});
+}
+
 function bindEvents() {
+  bindPortraitEvents();
   $$(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       if (tab.dataset.kind === state.kind) return;
@@ -1059,5 +1314,5 @@ async function init() {
 }
 
 await init();
-
+return () => { if (state.portrait) clearTimeout(state.portrait.timer); clearTimeout(showToast.timer); };
 }

@@ -17,6 +17,8 @@
 
 namespace
 {
+    const char kProviderMarker[] = "SDGO_CAPSULE_REGISTRY_6TABLE_V2";
+
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
     capsule_catalog::Bundle g_bundle;
@@ -218,8 +220,9 @@ namespace
         uint32_t coin = 0;
         uint32_t custom = 0;
         uint32_t candidates = 0;
-        uint32_t newFixedMachine = 0;
-        uint32_t newFixedFirstUnit = 0;
+        uint32_t activity = 0;
+        uint32_t lastActivityGrid = 0;
+        uint32_t lastActivityMachine = 0;
         uint32_t firstCustomMachine = 0;
         uint32_t lastCandidateMachine = 0;
         uint32_t lastCandidateUnit = 0;
@@ -232,11 +235,13 @@ namespace
         result.coin = CountContinuous(grid, 135001, 0x16);
         result.custom = CountContinuous(grid, 3519001, 0x41);
         result.candidates = CountContinuous(grid, 3520001, 0x42);
+        result.activity = CountContinuous(grid, 145001, 0x3C);
 
         void* record = nullptr;
-        if (result.fixed > 78 && TryGridFind(grid, 155079, 0x17, &record)) {
-            result.newFixedMachine = RecordU32(record, 5);
-            result.newFixedFirstUnit = RecordU32(record, 27);
+        if (result.activity != 0) {
+            result.lastActivityGrid = 145000 + result.activity;
+            if (TryGridFind(grid, static_cast<int>(result.lastActivityGrid), 0x3C, &record))
+                result.lastActivityMachine = RecordU32(record, 5);
         }
         if (result.custom != 0 && TryGridFind(grid, 3519001, 0x41, &record))
             result.firstCustomMachine = RecordU32(record, 5);
@@ -251,7 +256,9 @@ namespace
     bool CountsMatch(const NativeCounts& counts)
     {
         return counts.fixed == g_bundle.fixedCount && counts.coin == g_bundle.coinCount &&
-               counts.custom == g_bundle.customCount && counts.candidates == g_bundle.candidateCount;
+               counts.custom == g_bundle.customCount &&
+               counts.candidates == g_bundle.candidateCount &&
+               counts.activity == g_bundle.activityCount;
     }
 
     void WriteReceipt(const NativeCounts& counts, bool match)
@@ -263,12 +270,14 @@ namespace
              << "\r\ncoin=" << g_bundle.coinCount
              << "\r\ncustom=" << g_bundle.customCount
              << "\r\ncandidates=" << g_bundle.candidateCount
+             << "\r\nactivity=" << g_bundle.activityCount
              << "\r\n\r\n[native]\r\nfixed=" << counts.fixed
              << "\r\ncoin=" << counts.coin
              << "\r\ncustom=" << counts.custom
              << "\r\ncandidates=" << counts.candidates
-             << "\r\n\r\n[samples]\r\nnew_fixed_grid=155079\r\nnew_fixed_machine="
-             << counts.newFixedMachine << "\r\nnew_fixed_first_unit=" << counts.newFixedFirstUnit
+             << "\r\nactivity=" << counts.activity
+             << "\r\n\r\n[samples]\r\nlast_activity_grid=" << counts.lastActivityGrid
+             << "\r\nlast_activity_machine=" << counts.lastActivityMachine
              << "\r\nfirst_custom_machine=" << counts.firstCustomMachine
              << "\r\nlast_candidate_machine=" << counts.lastCandidateMachine
              << "\r\nlast_candidate_unit=" << counts.lastCandidateUnit << "\r\n";
@@ -301,12 +310,13 @@ namespace
         bool match = CountsMatch(counts);
         WriteReceipt(counts, match);
         g_api->Log(g_mod, match ? SDGO_LOG_INFO : SDGO_LOG_ERROR,
-                   "capsule native registration %s: fixed %u/%u, coin %u/%u, custom %u/%u, candidates %u/%u; "
-                   "grid 155079 machine %u first unit %u; first custom %u; last candidate %u/%u",
+                   "capsule native registration %s: fixed %u/%u, coin %u/%u, custom %u/%u, candidates %u/%u, "
+                   "activity %u/%u; last activity grid %u machine %u; first custom %u; last candidate %u/%u",
                    match ? "verified" : "mismatch",
                    counts.fixed, g_bundle.fixedCount, counts.coin, g_bundle.coinCount,
                    counts.custom, g_bundle.customCount, counts.candidates, g_bundle.candidateCount,
-                   counts.newFixedMachine, counts.newFixedFirstUnit, counts.firstCustomMachine,
+                   counts.activity, g_bundle.activityCount,
+                   counts.lastActivityGrid, counts.lastActivityMachine, counts.firstCustomMachine,
                    counts.lastCandidateMachine, counts.lastCandidateUnit);
         return true;
     }
@@ -343,7 +353,8 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void**>(&g_gridLoadAll))) {
         return 0;
     }
-    api->Log(mod, SDGO_LOG_INFO, "capsule catalog %s ready: %u overlay resources",
-             g_bundle.catalogRevision.c_str(), static_cast<unsigned>(g_bundle.entries.size()));
+    api->Log(mod, SDGO_LOG_INFO, "%s capsule catalog %s ready: %u overlay resources",
+             kProviderMarker, g_bundle.catalogRevision.c_str(),
+             static_cast<unsigned>(g_bundle.entries.size()));
     return 1;
 }

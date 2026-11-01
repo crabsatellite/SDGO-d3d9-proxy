@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "battle_ai_server",
+  "title": "战斗 AI 资源规则",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用战斗 AI",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable",
+  "description": "配置原生战斗 AI 的难度与资源规则。高级调试字段位于开发信息。"
+}

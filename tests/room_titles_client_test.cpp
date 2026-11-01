@@ -1025,6 +1025,35 @@ void RunTests()
     TestNegotiatingDraft();
     TestMissionTitleEventRetry();
     TestAutoCreateCapability();
+    ResetRoot();
+    const uint32_t room = kBattleDomainForTest | 5;
+    const std::string full = "a descriptive title with its difficulty after byte twenty !ai3 hard";
+    Check(Ready(111, 9002, {Record(9002, room, 1, 1, full)}),
+          "AI title provider fixture confirms full metadata");
+    auto joined = NativePacket(ReceiveSize(kPvpRoom), kPvpRoom);
+    Put32(joined.data() + 6, 5);
+    OnReceive(111, joined.data(), joined.size(), nullptr, 0);
+    char copy[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+    InterlockedExchange(&g_currentTitleReady, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
+          "uninitialized title provider never supplies data");
+    InterlockedExchange(&g_currentTitleReady, 1);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == full.size() && copy == full,
+          "AI provider returns the confirmed current-room full title");
+    std::memset(copy, 'x', sizeof(copy));
+    Check(SdgoRoomTitleCurrentV1(copy, 8) == 0 && copy[0] == 'x' &&
+              SdgoRoomTitleCurrentV1(nullptr, sizeof(copy)) == 0,
+          "AI provider rejects short and null buffers without a partial title");
+    Put32(joined.data() + 6, 6);
+    OnReceive(111, joined.data(), joined.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
+          "another room never inherits the previous room difficulty");
+    Put32(joined.data() + 6, 5);
+    OnReceive(111, joined.data(), joined.size(), nullptr, 0);
+    auto left = NativePacket(2, 0x087A);
+    OnReceive(111, left.data(), left.size(), nullptr, 0);
+    Check(SdgoRoomTitleCurrentV1(copy, sizeof(copy)) == 0,
+          "leaving the room stops the AI title provider");
 }
 }  // namespace
 

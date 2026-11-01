@@ -35,6 +35,8 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "../battle_ai/difficulty.h"
+#include "battle_items.h"
 #include "sdgo/room_titles_lookup.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/pvp_ai_observer.h"
@@ -65,6 +67,9 @@ namespace
     constexpr size_t kPilotTagUnits = 0x1CA1;    // u8
     constexpr size_t kPilotUnits = 0x340;       // unit records, stride 0x658
     constexpr size_t kUnitStride = 0x658;
+    constexpr size_t kPilotEquippedItem = 0x64;
+    constexpr size_t kPilotItemCapacity = 0x6C;
+    constexpr size_t kPilotItemUsed = 0x70;
     // Death match lives (RespawnPilot 0x00487030, modes 3/14): the pilot's power (pilot +0x1E,
     // u16, 1000 at the start) pays each life the unit record's cost (+0x08, u16, unit data +9);
     // the life being played costs pilot +0x20 (u16), taken from the team power when it dies.
@@ -72,6 +77,8 @@ namespace
     constexpr size_t kPilotLifeCost = 0x20;
     constexpr size_t kUnitLifeCost = 0x08;
     constexpr size_t kUnitMaxHp = 0x04;
+    constexpr size_t kUnitHp = 0x34;
+
     constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
     constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
@@ -97,6 +104,22 @@ namespace
     using PilotStateRoomFn = void(__thiscall*)(uint8_t* part, uint8_t* room);
     using PilotStateModeFn = void(__thiscall*)(uint8_t* part, uint8_t a, uint8_t b);
     using SetupAiPilotFn = int(__thiscall*)(void* proc, uint8_t* info, uint8_t* pilot, uint8_t a, uint8_t b);
+    using WaitRoomTickFn = int(__thiscall*)(void* proc);
+    using DamageFn = uint32_t(__thiscall*)(uint8_t* room, uint32_t now, uint32_t attackerSlot,
+                                          uint8_t* attackerPilot, uint8_t* weapon, uint32_t targetState,
+                                          uint32_t targetPilotId, uint32_t proposedDamage, uint16_t stun,
+                                          uint8_t calculationFlag, uint32_t extra, uint8_t part,
+                                          uint32_t attackType);
+    using MapFindFn = int(__thiscall*)(void* map, const uint32_t* key, uint32_t* value);
+    using MapInsertFn = int(__thiscall*)(void* map, const uint32_t* key, const uint32_t* value);
+    using MapEraseFn = int(__thiscall*)(void* map, const uint32_t* key);
+    using LockRoomFn = uint8_t*(__thiscall*)(void* proc, uint32_t roomIndex, uint16_t tag);
+    using UnlockRoomFn = void(__thiscall*)(void* proc, uint32_t roomIndex);
+    using ItemLookupFn = uint8_t*(__thiscall*)(void* table, uint32_t itemId);
+    using SetItemFn = int(__thiscall*)(void* proc, const pvp_ai::battle_items::SetItemSource* source,
+                                      uint8_t* pilot);
+    using UseItemFn = int(__thiscall*)(void* proc, int socketIndex,
+                                      pvp_ai::battle_items::UseEquipItemPacket* packet);
 
     // The title of a PvP room is in the room itself (unlike a co-op mission room, whose
     // title is in the lobby room coop_ai reads): written by the room-settings (0x004BEC60)
@@ -121,6 +144,17 @@ namespace
     PilotStateRoomFn g_pilotStateRoom = nullptr;
     PilotStateModeFn g_pilotStateMode = nullptr;
     SetupAiPilotFn g_setupAiPilot = nullptr;
+    WaitRoomTickFn g_waitRoomTick = nullptr;
+    DamageFn g_damage = nullptr;
+    MapFindFn g_mapFind = nullptr;
+    MapInsertFn g_mapInsert = nullptr;
+    MapEraseFn g_mapErase = nullptr;
+    LockRoomFn g_lockRoom = nullptr;
+    UnlockRoomFn g_unlockRoom = nullptr;
+    ItemLookupFn g_itemLookup = nullptr;
+    void* g_itemTable = nullptr;
+    SetItemFn g_setItem = nullptr;
+    UseItemFn g_useItem = nullptr;
 
     struct Settings
     {
@@ -228,6 +262,7 @@ namespace
         int enemies = 0;
         int allies = 0;
         int level = 2;
+        battle_ai::Difficulty difficulty = battle_ai::Difficulty::Medium;
     };
 
     // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
@@ -241,6 +276,8 @@ namespace
         if (!commands::Find(g_api,title,SDGO_ROOM_TITLE_MAX_UTF8_BYTES,"ai",
                             SDGO_ROOM_COMMAND_ALLOW_COUNT,&command))
             return plan;
+        int difficulty = battle_ai::RoomDifficulty(std::string_view(title));
+        if (difficulty >= 0) plan.difficulty = static_cast<battle_ai::Difficulty>(difficulty);
         plan.enabled = true;
         const int count=command.has_count ? static_cast<int>((std::min)(command.count,uint32_t{kSlotsPerTeam})) : -1;
         int enemies = -1;
@@ -411,6 +448,273 @@ namespace
     // record there (it has no client to notify).
     constexpr size_t kPilotUserRecord = 0x50;
     alignas(16) uint8_t g_aiUserRecord[0x40] = {};
+    uint8_t* SlotUnit(uint8_t* room, int slot);
+
+    // ---- Hard battle items -----------------------------------------------------------
+    //
+    // Native player item requests first resolve pilot id -> battle-room index through
+    // CWaitRoomProc's map. The native AI modes populate that map before their pilots are
+    // created; PvP AI pilots are added later, so this mod registers and erases their exact
+    // entries. A caller-owned generation prevents a delayed cleanup from erasing a reused
+    // pilot id in a later battle.
+    namespace items = pvp_ai::battle_items;
+    constexpr size_t kWaitRoomMap = 0x1C;
+    constexpr size_t kWaitRoomMapLock = 0x40;
+    constexpr size_t kWaitRoomClock = 0x64;
+    constexpr size_t kRoomIndex = 0x00;
+    constexpr size_t kRoomBattleActive = 0x21;
+    constexpr size_t kItemFeature = 0x67;
+    constexpr size_t kItemMissionAllowed = 0x6E;
+    constexpr size_t kItemNormalAllowed = 0x6F;
+    constexpr size_t kItemDeathAllowed = 0x70;
+    constexpr size_t kItemLeaderAllowed = 0x73;
+    constexpr uint8_t kTeleportFeature = 7;
+    constexpr uint8_t kHidingFeature = 21;
+    constexpr int kTrackedRooms = 40;
+
+    struct RoomItems
+    {
+        bool active;
+        uint8_t* room;
+        uint32_t roomIndex;
+        uint32_t generation;
+        battle_ai::Difficulty difficulty;
+        bool botActive[kSlots];
+        items::BotKey bots[kSlots];
+    };
+
+    CRITICAL_SECTION g_itemsLock;
+    items::Controller<kTrackedRooms * kSlots> g_itemController;
+    items::NativeOps g_itemOps;
+    RoomItems g_itemRooms[kTrackedRooms] = {};
+    uint32_t g_roomGeneration = 0;
+    volatile LONG g_damageReceipt = 0;
+
+    void* PilotRoomMap()
+    {
+        return static_cast<uint8_t*>(g_waitRoomProc) + kWaitRoomMap;
+    }
+
+    CRITICAL_SECTION* PilotRoomMapLock()
+    {
+        return reinterpret_cast<CRITICAL_SECTION*>(
+            static_cast<uint8_t*>(g_waitRoomProc) + kWaitRoomMapLock);
+    }
+
+    RoomItems* FindRoomItems(uint8_t* room, uint32_t roomIndex)
+    {
+        for (RoomItems& state : g_itemRooms)
+            if (state.active && state.room == room && state.roomIndex == roomIndex)
+                return &state;
+        return nullptr;
+    }
+
+    RoomItems* FindRoomItems(const items::BotKey& key)
+    {
+        RoomItems* state = FindRoomItems(reinterpret_cast<uint8_t*>(key.room), key.roomIndex);
+        return state && state->generation == key.generation ? state : nullptr;
+    }
+
+    int FindPilotSlot(uint8_t* room, uint32_t pilotId)
+    {
+        for (int slot = 0; slot < kSlots; ++slot)
+            if (SlotPilotId(room, slot) == pilotId)
+                return slot;
+        return -1;
+    }
+
+    bool NativeMapMatches(void*, const items::BotKey& key)
+    {
+        if (!FindRoomItems(key))
+            return false;
+        uint32_t mappedRoom = 0;
+        EnterCriticalSection(PilotRoomMapLock());
+        int found = g_mapFind(PilotRoomMap(), &key.pilotId, &mappedRoom);
+        LeaveCriticalSection(PilotRoomMapLock());
+        return found != 0 && mappedRoom == key.roomIndex;
+    }
+
+    bool NativeMapInsert(void*, const items::BotKey& key)
+    {
+        if (!FindRoomItems(key))
+            return false;
+        uint32_t mappedRoom = 0;
+        EnterCriticalSection(PilotRoomMapLock());
+        int found = g_mapFind(PilotRoomMap(), &key.pilotId, &mappedRoom);
+        int inserted = found ? (mappedRoom == key.roomIndex)
+                             : g_mapInsert(PilotRoomMap(), &key.pilotId, &key.roomIndex);
+        if (inserted) {
+            mappedRoom = 0;
+            inserted = g_mapFind(PilotRoomMap(), &key.pilotId, &mappedRoom) &&
+                       mappedRoom == key.roomIndex;
+        }
+        LeaveCriticalSection(PilotRoomMapLock());
+        return inserted != 0;
+    }
+
+    bool NativeMapEraseIfExact(void*, const items::BotKey& key)
+    {
+        if (!FindRoomItems(key))
+            return false;
+        uint32_t mappedRoom = 0;
+        EnterCriticalSection(PilotRoomMapLock());
+        int found = g_mapFind(PilotRoomMap(), &key.pilotId, &mappedRoom);
+        int erased = !found;
+        if (found && mappedRoom == key.roomIndex)
+            erased = g_mapErase(PilotRoomMap(), &key.pilotId);
+        LeaveCriticalSection(PilotRoomMapLock());
+        return erased != 0;
+    }
+
+    bool ItemAllowedInMode(uint8_t mode, const uint8_t* item)
+    {
+        if (!item)
+            return false;
+        if (mode == 5 || mode == 8 || mode == 10)
+            return item[kItemMissionAllowed] != 0;
+        if (mode == 3 || mode == 14)
+            return item[kItemDeathAllowed] != 0;
+        if (mode == 1 || mode == 2 || mode == 13)
+            return item[kItemNormalAllowed] != 0;
+        if (mode == 9)
+            return item[kItemLeaderAllowed] != 0;
+        return true;
+    }
+
+    bool NativeSnapshot(void*, const items::BotKey& key, uint32_t selectedItemId,
+                        items::NativeSnapshot* out)
+    {
+        if (!out)
+            return false;
+        *out = {};
+        RoomItems* roomState = FindRoomItems(key);
+        out->generationCurrent = roomState != nullptr;
+        if (!roomState)
+            return true;
+        uint8_t* room = roomState->room;
+        int slot = FindPilotSlot(room, key.pilotId);
+        if (slot < 0)
+            return true;
+        uint8_t* pilot = room + kPilots + slot * kPilotStride;
+        out->pilotPresent = SlotTeam(room, slot) == key.team &&
+                            *reinterpret_cast<uint32_t*>(pilot) == key.pilotId;
+        out->mapMatches = NativeMapMatches(nullptr, key);
+        out->hardDifficulty = roomState->difficulty == battle_ai::Difficulty::Hard;
+        out->alive = *reinterpret_cast<uint32_t*>(SlotUnit(room, slot) + kUnitHp) != 0;
+        uint8_t* item = g_itemLookup(g_itemTable, selectedItemId);
+        out->modeAllowed = room[kRoomBattleActive] != 0 &&
+                           ItemAllowedInMode(room[kRoomMode], item);
+        uint8_t expectedFeature = selectedItemId == items::kTeleportItemId ? kTeleportFeature
+                                : selectedItemId == items::kHidingItemId ? kHidingFeature
+                                                                         : 0;
+        out->selectedItemPlayerLegal =
+            expectedFeature != 0 && item && item[kItemFeature] == expectedFeature;
+        out->equippedItemId =
+            *reinterpret_cast<uint32_t*>(pilot + kPilotEquippedItem);
+        out->capacity =
+            *reinterpret_cast<int32_t*>(pilot + kPilotItemCapacity);
+        out->used = *reinterpret_cast<int32_t*>(pilot + kPilotItemUsed);
+        return true;
+    }
+
+    bool NativeEquip(void*, const items::BotKey& key,
+                     const items::SetItemSource& source, int32_t* nativeCapacity)
+    {
+        if (!nativeCapacity || !FindRoomItems(key))
+            return false;
+        uint8_t* room = reinterpret_cast<uint8_t*>(key.room);
+        int slot = FindPilotSlot(room, key.pilotId);
+        if (slot < 0 || SlotTeam(room, slot) != key.team)
+            return false;
+        uint8_t* pilot = room + kPilots + slot * kPilotStride;
+        if (!g_setItem(g_waitRoomProc, &source, pilot))
+            return false;
+        *nativeCapacity =
+            *reinterpret_cast<int32_t*>(pilot + kPilotItemCapacity);
+        return *reinterpret_cast<uint32_t*>(pilot + kPilotEquippedItem) ==
+               source.itemId;
+    }
+
+    int NativeUse(void*, const items::BotKey& key,
+                  const items::UseEquipItemPacket& packet)
+    {
+        if (!FindRoomItems(key))
+            return 0x1393;
+        items::UseEquipItemPacket request = packet;
+        return g_useItem(g_waitRoomProc, 0, &request);
+    }
+
+    void ResetRoomItems(RoomItems& state)
+    {
+        for (int slot = 0; slot < kSlots; ++slot) {
+            if (!state.botActive[slot])
+                continue;
+            if (!g_itemController.EndMatch(state.bots[slot], g_itemOps))
+                g_api->Log(g_mod, SDGO_LOG_WARN,
+                           "AI pilot %08lX: exact item-map cleanup was not completed",
+                           static_cast<unsigned long>(state.bots[slot].pilotId));
+        }
+        state = {};
+    }
+
+    bool PrepareRoomItems(uint8_t* room, battle_ai::Difficulty difficulty)
+    {
+        uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* state = FindRoomItems(room, roomIndex);
+        if (state)
+            ResetRoomItems(*state);
+        if (!state) {
+            for (RoomItems& candidate : g_itemRooms)
+                if (!candidate.active) {
+                    state = &candidate;
+                    break;
+                }
+        }
+        if (!state) {
+            LeaveCriticalSection(&g_itemsLock);
+            return false;
+        }
+        uint32_t generation = ++g_roomGeneration;
+        if (generation == 0)
+            generation = ++g_roomGeneration;
+        *state = {};
+        state->active = true;
+        state->room = room;
+        state->roomIndex = roomIndex;
+        state->generation = generation;
+        state->difficulty = difficulty;
+        LeaveCriticalSection(&g_itemsLock);
+        return true;
+    }
+
+    bool RegisterItemPilot(uint8_t* room, int slot, uint32_t pilotId, uint8_t team)
+    {
+        uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* state = FindRoomItems(room, roomIndex);
+        bool registered = false;
+        if (state && slot >= 0 && slot < kSlots) {
+            items::BotKey key{reinterpret_cast<uintptr_t>(room), roomIndex,
+                              state->generation, pilotId, team};
+            registered = g_itemController.BeginMatch(key, g_itemOps);
+            if (registered) {
+                state->botActive[slot] = true;
+                state->bots[slot] = key;
+            }
+        }
+        LeaveCriticalSection(&g_itemsLock);
+        return registered;
+    }
+
+    void EndRoomItems(uint8_t* room)
+    {
+        uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        EnterCriticalSection(&g_itemsLock);
+        if (RoomItems* state = FindRoomItems(room, roomIndex))
+            ResetRoomItems(*state);
+        LeaveCriticalSection(&g_itemsLock);
+    }
 
     // Same steps as the AI battle mode (0x004B79D0) for an AI slot, with the given team.
     bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team, uint8_t colour)
@@ -433,7 +737,11 @@ namespace
         pilot[0x0D] = 0;
         pilot[0x04] = team;
         pilot[0x39] = colour;
-        *reinterpret_cast<uint32_t*>(pilot + 0x05) = 30000;
+        // Native AI identity normally starts full, while the player setup
+        // starts at zero. Medium/Hard earn SP through the same native damage
+        // rewards; respawn deliberately does not reset this match resource.
+        auto resourceProfile=ParseTitle(ViewRoom(room).title).difficulty;
+        *reinterpret_cast<uint32_t*>(pilot + 0x05) = resourceProfile==battle_ai::Difficulty::Easy?30000:0;
         info[kSlotInfoTeamA] = team;
         info[kSlotInfoColour] = colour;
         *reinterpret_cast<uint16_t*>(pilot + kPilotPower) = 1000;
@@ -462,6 +770,10 @@ namespace
         ApplyPlayerLifeCost(room, pilot, unit);
         if (room[kRoomMode] == 6 || room[kRoomMode] == 7)
             *reinterpret_cast<uint8_t**>(pilot + kPilotUserRecord) = g_aiUserRecord;
+        if (!RegisterItemPilot(room, slot, id, team))
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "slot %d: AI pilot %08lX was not registered in the native pilot-room map; Hard items are disabled",
+                       slot, static_cast<unsigned long>(id));
         g_api->Log(g_mod, SDGO_LOG_INFO,
                    "slot %d: AI pilot %08lX (NPC %lu) joined on team %u, colour %u; unit grade %u, life cost %u, max HP %lu, "
                    "power %u, life cost %u",
@@ -937,14 +1249,24 @@ namespace
                        plan.level, static_cast<unsigned>(available.size()));
             return;
         }
+        if (!PrepareRoomItems(room, plan.difficulty))
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "room %lu: no item lifecycle slot; AI players will join without Hard battle items",
+                       static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(room + kRoomIndex)));
 
         std::vector<uint8_t> poolPoints;
         if (PlaysDeck(room[kRoomMode]))
             poolPoints = PoolPoints(room, pool);
         int addedAllies = allies > 0 ? AddTeam(room, allyTeam, allies, pool, poolPoints) : 0;
         int addedEnemies = enemies > 0 ? AddTeam(room, enemyTeam, enemies, pool, poolPoints) : 0;
-        g_api->Log(g_mod, SDGO_LOG_INFO, "%d allies (team %u) and %d enemies (team %u) added, level %d",
-                   addedAllies, allyTeam, addedEnemies, enemyTeam, plan.level);
+        const char* difficulty =
+            plan.difficulty == battle_ai::Difficulty::Hard ? "Hard"
+            : plan.difficulty == battle_ai::Difficulty::Easy ? "Easy"
+                                                               : "Medium";
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "%d allies (team %u) and %d enemies (team %u) added, level %d, difficulty %s",
+                   addedAllies, allyTeam, addedEnemies, enemyTeam, plan.level,
+                   difficulty);
         if (addedAllies + addedEnemies > 0)
             RecountBattle(room);
     }
@@ -986,7 +1308,6 @@ namespace
     // once the unit is alive again the refresh and pilot-state calls.
 
     constexpr size_t kSlotInfoRespawnArg = 0x472; // passed to RespawnPilot by the tick
-    constexpr size_t kUnitHp = 0x34;              // unit record: current HP
 
     uint8_t* SlotUnit(uint8_t* room, int slot)
     {
@@ -1148,7 +1469,142 @@ namespace
         return result;
     }
 
-    // ---- 4. battle end: the AI pilots leave the room -------------------------------------
+    // ---- 4. accepted damage and deferred Hard item use -----------------------------------
+
+    bool RecordAcceptedDamage(uint8_t* room, int targetSlot, uint32_t now,
+                              uint8_t* attackerPilot, uint8_t* weapon,
+                              uint32_t hpBefore, uint32_t hpAfter)
+    {
+        if (!attackerPilot || !weapon || hpAfter >= hpBefore)
+            return false;
+        uint32_t attackerId = *reinterpret_cast<uint32_t*>(attackerPilot);
+        uint8_t attackerTeam = attackerPilot[0x04];
+        EnterCriticalSection(&g_itemsLock);
+        uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        RoomItems* state = FindRoomItems(room, roomIndex);
+        bool queued = false;
+        if (state && state->difficulty == battle_ai::Difficulty::Hard &&
+            targetSlot >= 0 && targetSlot < kSlots &&
+            state->botActive[targetSlot]) {
+            const items::BotKey& key = state->bots[targetSlot];
+            LONG sequence = InterlockedIncrement(&g_damageReceipt);
+            if (sequence == 0)
+                sequence = InterlockedIncrement(&g_damageReceipt);
+            items::DamageReceipt receipt{};
+            receipt.target = key;
+            receipt.receiptId =
+                (static_cast<uint64_t>(now) << 32) |
+                static_cast<uint32_t>(sequence);
+            receipt.nowSeconds = now;
+            receipt.attackerPilotId = attackerId;
+            receipt.attackerTeam = attackerTeam;
+            // The current server consumes byte +0x38 of its compact weapon
+            // record as RangeType; 1 and 5 are its melee categories.
+            receipt.weaponRangeType = weapon[0x38];
+            receipt.hpBefore = hpBefore;
+            receipt.hpAfter = hpAfter;
+            queued = g_itemController.OnAcceptedDamage(receipt);
+        }
+        LeaveCriticalSection(&g_itemsLock);
+        return queued;
+    }
+
+    uint32_t __fastcall AcceptedDamage(
+        uint8_t* room, void* /*edx*/, uint32_t now, uint32_t attackerSlot,
+        uint8_t* attackerPilot, uint8_t* weapon, uint32_t targetState,
+        uint32_t targetPilotId, uint32_t proposedDamage, uint16_t stun,
+        uint8_t calculationFlag, uint32_t extra, uint8_t part,
+        uint32_t attackType)
+    {
+        int targetSlot = -1;
+        uint32_t hpBefore = 0;
+        uint8_t* targetUnit = nullptr;
+        if (room && (targetPilotId & kAiPilotBit)) {
+            targetSlot = FindPilotSlot(room, targetPilotId);
+            if (targetSlot >= 0) {
+                targetUnit = SlotUnit(room, targetSlot);
+                hpBefore = *reinterpret_cast<uint32_t*>(targetUnit + kUnitHp);
+            }
+        }
+        uint32_t result =
+            g_damage(room, now, attackerSlot, attackerPilot, weapon, targetState,
+                     targetPilotId, proposedDamage, stun, calculationFlag,
+                     extra, part, attackType);
+        if (targetUnit) {
+            uint32_t hpAfter =
+                *reinterpret_cast<uint32_t*>(targetUnit + kUnitHp);
+            RecordAcceptedDamage(room, targetSlot, now, attackerPilot, weapon,
+                                 hpBefore, hpAfter);
+        }
+        return result;
+    }
+
+    struct DrainTarget
+    {
+        uint8_t* room;
+        uint32_t roomIndex;
+        uint32_t generation;
+    };
+
+    void DrainHardItems(void* proc)
+    {
+        DrainTarget targets[kTrackedRooms] = {};
+        int count = 0;
+        EnterCriticalSection(&g_itemsLock);
+        for (const RoomItems& state : g_itemRooms) {
+            if (!state.active ||
+                state.difficulty != battle_ai::Difficulty::Hard)
+                continue;
+            bool hasBot = false;
+            for (bool active : state.botActive)
+                hasBot = hasBot || active;
+            if (hasBot)
+                targets[count++] =
+                    {state.room, state.roomIndex, state.generation};
+        }
+        LeaveCriticalSection(&g_itemsLock);
+
+        uint32_t now =
+            *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(proc) +
+                                        kWaitRoomClock);
+        for (int i = 0; i < count; ++i) {
+            const DrainTarget& target = targets[i];
+            uint8_t* locked =
+                g_lockRoom(proc, target.roomIndex,
+                           items::kUseEquipItemOpcode);
+            if (!locked)
+                continue;
+            items::DrainReport report{};
+            if (locked == target.room) {
+                EnterCriticalSection(&g_itemsLock);
+                RoomItems* state =
+                    FindRoomItems(target.room, target.roomIndex);
+                if (state && state->generation == target.generation)
+                    report = g_itemController.DrainRoom(
+                        target.roomIndex, now, g_itemOps);
+                LeaveCriticalSection(&g_itemsLock);
+            }
+            g_unlockRoom(proc, target.roomIndex);
+            if (g_settings.logBattle &&
+                (report.succeeded || report.expired || report.rejected))
+                g_api->Log(
+                    g_mod, SDGO_LOG_INFO,
+                    "room %lu Hard items: %lu used, %lu expired, %lu rejected",
+                    static_cast<unsigned long>(target.roomIndex),
+                    static_cast<unsigned long>(report.succeeded),
+                    static_cast<unsigned long>(report.expired),
+                    static_cast<unsigned long>(report.rejected));
+        }
+    }
+
+    int __fastcall WaitRoomTick(void* proc, void* /*edx*/)
+    {
+        int result = g_waitRoomTick(proc);
+        DrainHardItems(proc);
+        return result;
+    }
+
+    // ---- 5. battle end: the AI pilots leave the room -------------------------------------
     //
     // The battle end (battle.end, 0x0047E4A0) sends the results (the mode's result routine),
     // sets the room back to waiting (0x004848D0) and releases every pilot's battle state
@@ -1162,6 +1618,7 @@ namespace
     {
         if (!IsPvpMode(room[kRoomMode]))
             return;
+        EndRoomItems(room);
         int removed = 0;
         for (int slot = 0; slot < kSlots; ++slot) {
             uint32_t id = SlotPilotId(room, slot);
@@ -1300,9 +1757,27 @@ SDGO_MOD_ENTRY
                  Bind(g_pilotStateRoom, "battle.pilot_state_room") && Bind(g_pilotStateMode, "battle.pilot_state_mode") &&
                  Bind(g_setupAiPilot, "battle.setup_ai_pilot") && Bind(g_respawnPilot, "battle.respawn_pilot") &&
                  Bind(g_respawnRefresh, "battle.respawn_refresh") &&
-                 Bind(g_pilotStateRespawn, "battle.pilot_state_respawn");
+                  Bind(g_pilotStateRespawn, "battle.pilot_state_respawn") &&
+                  Bind(g_waitRoomTick, "items.waitroom_tick") &&
+                  Bind(g_damage, "items.accepted_damage") &&
+                  Bind(g_mapFind, "items.pilot_map_find") &&
+                  Bind(g_mapInsert, "items.pilot_map_insert") &&
+                  Bind(g_mapErase, "items.pilot_map_erase") &&
+                  Bind(g_lockRoom, "items.lock_room") &&
+                  Bind(g_unlockRoom, "items.unlock_room") &&
+                  Bind(g_itemLookup, "items.item_lookup") &&
+                  Bind(g_itemTable, "items.item_table") &&
+                  Bind(g_setItem, "items.set_item") &&
+                  Bind(g_useItem, "items.use_item");
     if (!bound)
         return 0;
+    InitializeCriticalSection(&g_itemsLock);
+    g_itemOps.mapMatches = &NativeMapMatches;
+    g_itemOps.mapInsert = &NativeMapInsert;
+    g_itemOps.mapEraseIfExact = &NativeMapEraseIfExact;
+    g_itemOps.snapshot = &NativeSnapshot;
+    g_itemOps.equip = &NativeEquip;
+    g_itemOps.use = &NativeUse;
     LoadSettings();
     LARGE_INTEGER counter = {};
     QueryPerformanceCounter(&counter);
@@ -1322,6 +1797,15 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "battle.room_tick", reinterpret_cast<void*>(&RoomTick),
                        reinterpret_cast<void**>(&g_roomTick)))
         return 0;
-    api->Log(mod, SDGO_LOG_INFO, "ready: PvP rooms whose title has !ai get AI players");
+    if (!api->HookCode(mod, "items.accepted_damage",
+                       reinterpret_cast<void*>(&AcceptedDamage),
+                       reinterpret_cast<void**>(&g_damage)))
+        return 0;
+    if (!api->HookCode(mod, "items.waitroom_tick",
+                       reinterpret_cast<void*>(&WaitRoomTick),
+                       reinterpret_cast<void**>(&g_waitRoomTick)))
+        return 0;
+    api->Log(mod, SDGO_LOG_INFO,
+             "ready: PvP rooms whose title has !ai get AI players; default difficulty Medium, Hard enables native battle items");
     return 1;
 }

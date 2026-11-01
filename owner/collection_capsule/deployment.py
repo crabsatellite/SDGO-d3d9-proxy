@@ -1,4 +1,4 @@
-"""Local owner connection and history import. No credentials enter packages."""
+"""Local owner connection, catalog policy upgrades and form registration. No credentials enter packages."""
 from __future__ import annotations
 
 import configparser
@@ -45,54 +45,26 @@ def connection(server_ini: Path, section: str = "DB Game"):
         raise RuntimeError(f"Owner SQL connection failed (SQLSTATE {str(error.args[0])[:5]})") from None
 
 
-def registration_baseline(server_ini: Path) -> int:
-    """Read only the existing account-ID high water mark; never export accounts."""
-    with contextlib.closing(connection(server_ini, section="DB Member")) as member:
-        value = member.cursor().execute("SELECT ISNULL(MAX(f_idx),0) FROM dbo.tbl_Account").fetchone()[0]
-    if type(value) is not int or not 0 <= value <= 2147483647:
-        raise ValueError("Account registration baseline is invalid")
-    return value
-
-
-def import_history(db, payload: dict) -> dict:
-    """Import a complete prior collection export, not a current-inventory reset.
-
-    Completeness is an explicit assertion of the exporting system. Missing
-    pre-install history cannot be reconstructed from current ownership alone.
-    """
-    account, values = payload.get("account"), payload.get("units")
-    if (payload.get("schema_version") != 1 or payload.get("coverage") != "from-account-creation"
-            or payload.get("complete") is not True or not payload.get("source")
-            or type(account) is not int or not 0 < account <= 2147483647
-            or not isinstance(values, list) or len(values) > 100000
-            or any(type(uid) is not int or not 0 < uid <= 2147483647 for uid in values)):
-        raise ValueError("A complete, source-identified collection history export is required")
-    units = sorted(set(values))
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
-                                      separators=(",", ":")).encode()).hexdigest()
+def upgrade_catalog(db):
+    """Apply the owned, data-only catalog policy upgrade without a World restart."""
+    from .sql import catalog_upgrade
     cursor = db.cursor()
     try:
-        cursor.execute("SET XACT_ABORT ON;BEGIN TRANSACTION;")
-        cursor.execute("SELECT AccountNumber FROM sdgo_collection_capsule.Coverage WITH(UPDLOCK,HOLDLOCK) WHERE AccountNumber=?", account)
-        if cursor.fetchone() is None:
-            raise ValueError("Account profile is not registered in collection history")
-        known = {row[0] for row in cursor.execute("SELECT UnitID FROM sdgo_collection_capsule.Seen WHERE AccountNumber=?", account)}
-        if not known.issubset(units):
-            raise ValueError("History import omits units already known to have been acquired")
-        for uid in units:
-            cursor.execute("""IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen WHERE AccountNumber=? AND UnitID=?)
-INSERT sdgo_collection_capsule.Seen(AccountNumber,UnitID,FirstTransactionID,Source) VALUES(?,?,0,'imported_full_history')""",
-                           account, uid, account, uid)
-        cursor.execute("UPDATE sdgo_collection_capsule.Coverage SET Complete=1,Source='imported_full_history',ReceiptHash=? WHERE AccountNumber=?",
-                       digest, account)
-        cursor.execute("COMMIT TRANSACTION;")
-    except Exception:
-        with contextlib.suppress(Exception):
-            cursor.execute("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;")
-        raise
+        cursor.execute(catalog_upgrade())
+        while cursor.nextset():
+            pass
+        row = cursor.execute("SELECT SchemaVersion,MachineID,PriceGP,Enabled FROM sdgo_collection_capsule.State WHERE Singleton=1").fetchone()
+        if row is None or row[0] != 3 or row[2] != 100000:
+            raise RuntimeError("Catalog policy upgrade readback differs")
+        old = cursor.execute("SELECT COUNT(*) FROM sys.tables WHERE schema_id=SCHEMA_ID('sdgo_collection_capsule') AND name IN ('Seen','Coverage','DrawLog')").fetchone()[0]
+        if old:
+            raise RuntimeError("Obsolete history tables remain after catalog upgrade")
+        return {"applied": True, "schema_version": 3, "machine_id": row[1],
+                "price_gp": row[2], "enabled": bool(row[3]),
+                "collection_policy": "catalog_then_inventory", "history_tables_removed": True,
+                "world_restart_required": False}
     finally:
         cursor.close()
-    return {"account": account, "unit_count": len(units), "receipt_sha256": digest}
 
 
 def register_unit_family(db, manifest: dict, *, in_transaction: bool = False) -> dict:
@@ -179,7 +151,7 @@ def export_configuration(db, output: Path) -> dict:
 
     cursor = db.cursor()
     try:
-        for table in ("tbl_Units", "tbl_MachinePrice"):
+        for table in ("tbl_Units", "tbl_MachinePrice", "tbl_ItemMachinePrice", "tbl_ItemCategory"):
             cursor.execute("SELECT * FROM dbo.[" + table + "]")
             keys = [column[0] for column in cursor.description]
             rows = [dict(zip(keys, row)) for row in cursor.fetchall()]
@@ -192,6 +164,12 @@ FROM sdgo_collection_capsule.ImportedForms f JOIN sdgo_collection_capsule.UnitSo
             keys = [column[0] for column in cursor.description]
             imported = [dict(zip(keys, row)) for row in cursor.fetchall()]
         save("collection.imported-forms.json", imported)
+        owned = []
+        if cursor.execute("SELECT CASE WHEN OBJECT_ID(N'sdgo_collection_capsule.OwnedUnitItems',N'U') IS NULL THEN 0 ELSE 1 END").fetchone()[0]:
+            cursor.execute('SELECT UnitID,CategoryID,Name FROM sdgo_collection_capsule.OwnedUnitItems')
+            keys = [column[0] for column in cursor.description]
+            owned = [dict(zip(keys, row)) for row in cursor.fetchall()]
+        save('collection.unit-items.json', owned)
     finally:
         cursor.close()
     meta = {"schema_version": 1, "scope": "public unit and machine definitions only; no player data",

@@ -15,12 +15,15 @@ BEGIN
              @LockOwner='Transaction',@LockTimeout=5000;
         IF @lock<0 BEGIN RETURN 3002;END;
         IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WITH(HOLDLOCK)
-                      WHERE Singleton=1 AND Enabled=1 AND MachineID=@v_MachineID AND PriceGP=100000)
+                      WHERE Singleton=1 AND SchemaVersion=3 AND Enabled=1 AND MachineID=@v_MachineID AND PriceGP=100000)
         BEGIN RETURN 3002;END;
-        IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Coverage WITH(HOLDLOCK)
-                      WHERE AccountNumber=@v_AccountNum AND Complete=1)
+        -- Existing profiles can draw immediately; no complete-history proof.
+        IF NOT EXISTS(SELECT 1 FROM dbo.tbl_Users WITH(HOLDLOCK)
+                      WHERE AccountNumber=@v_AccountNum)
         BEGIN RETURN 3002;END;
-        -- Lock inventory before history, matching the acquisition triggers' order.
+        -- Native event rewards lock the gift box before inventory/history.
+        SELECT @dummy=COUNT(*) FROM dbo.tbl_UserDropItemBox WITH(UPDLOCK,HOLDLOCK)
+         WHERE AccountNumber=@v_AccountNum;
         SELECT @dummy=COUNT(*) FROM dbo.tbl_UserUnits WITH(UPDLOCK,HOLDLOCK)
          WHERE AccountNumber=@v_AccountNum;
         -- The current native catalog is the pool. Roots is form metadata, not
@@ -87,43 +90,77 @@ BEGIN
               AND (SELECT COUNT(*) FROM @bases chosen JOIN @reach members ON members.NodeID=chosen.UnitID
                    WHERE members.StartID=u.UnitID)<>1)
             RETURN 3008;
+        -- Catalog membership is persistent; inventory and pending gifts are
+        -- current possession. Prefer missing catalog families, then missing
+        -- inventory families only after the entire eligible catalog is unlocked.
+        DECLARE @unheld TABLE(UnitID int PRIMARY KEY,UnitRank tinyint);
+        INSERT @unheld(UnitID,UnitRank)
+        SELECT u.UnitID,u.UnitRank FROM @bases u
+        WHERE NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits owned JOIN @reach family ON family.NodeID=owned.UnitNumber
+                         WHERE owned.AccountNumber=@v_AccountNum AND owned.TimeLimit=0 AND owned.RunOut=0 AND family.StartID=u.UnitID)
+          AND NOT EXISTS(SELECT 1 FROM dbo.tbl_UserDropItemBox b JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=b.ItemCategory
+                         JOIN @reach family ON family.NodeID=c.RefIndex
+                         WHERE b.AccountNumber=@v_AccountNum AND c.CatalogueID/100000=11 AND c.TimeLimit=0 AND family.StartID=u.UnitID);
+        DECLARE @missingCatalog bit=CASE WHEN EXISTS(
+            SELECT 1 FROM @bases u WHERE NOT EXISTS(
+                SELECT 1 FROM sdgo_collection_capsule.CatalogUnlocks unlocked WITH(HOLDLOCK)
+                JOIN @reach family ON family.NodeID=unlocked.UnitID
+                WHERE unlocked.AccountNumber=@v_AccountNum AND family.StartID=u.UnitID)) THEN 1 ELSE 0 END;
         DECLARE @choices TABLE(Ordinal int IDENTITY(1,1),UnitID int,UnitRank tinyint);
         INSERT @choices(UnitID,UnitRank)
-        SELECT u.UnitID,u.UnitRank FROM @bases u
-        WHERE NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen s WITH(HOLDLOCK)
-                         JOIN @reach family ON family.NodeID=s.UnitID
-                         WHERE s.AccountNumber=@v_AccountNum AND family.StartID=u.UnitID)
-          AND NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits owned JOIN @reach family ON family.NodeID=owned.UnitNumber
-                         WHERE owned.AccountNumber=@v_AccountNum AND family.StartID=u.UnitID)
+        SELECT u.UnitID,u.UnitRank FROM @unheld u
+        WHERE @missingCatalog=0 OR NOT EXISTS(
+            SELECT 1 FROM sdgo_collection_capsule.CatalogUnlocks unlocked WITH(HOLDLOCK)
+            JOIN @reach family ON family.NodeID=unlocked.UnitID
+            WHERE unlocked.AccountNumber=@v_AccountNum AND family.StartID=u.UnitID)
         ORDER BY u.UnitID;
         DECLARE @count int,@random bigint,@ceiling bigint,@unit int,@rank tinyint;
         SELECT @count=COUNT(*) FROM @choices;
         IF @count=0 BEGIN RETURN 3002;END;
-        SET @ceiling=CONVERT(bigint,4294967296)-(CONVERT(bigint,4294967296)%@count);
+        IF EXISTS(SELECT 1 FROM @choices u WHERE NOT EXISTS(
+            SELECT 1 FROM dbo.tbl_ItemCategory c WHERE c.RefIndex=u.UnitID AND c.CatalogueID/100000=11
+              AND c.TimeLimit=0 AND c.Option1=1 AND c.Option2=2)) RETURN 3008;
+        IF EXISTS(SELECT 1 FROM sdgo_collection_capsule.OwnedUnitItems o LEFT JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=o.CategoryID
+            WHERE c.CatalogueID IS NULL OR c.RefIndex<>o.UnitID OR c.TimeLimit<>0 OR c.Option1<>1 OR c.Option2<>2) RETURN 3008;
+        IF EXISTS(SELECT 1 FROM @choices u JOIN sdgo_collection_capsule.UnitDelivery d ON d.UnitID=u.UnitID
+            LEFT JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=d.CategoryID
+            WHERE c.CatalogueID IS NULL OR c.RefIndex<>u.UnitID OR c.TimeLimit<>0 OR c.Option1<>1 OR c.Option2<>2) RETURN 3008;
+        -- Grade probabilities follow sp_DailyLoginReward: C35/B30/A20/S15.
+        -- Exhausted grades leave the lottery; unit counts never multiply rank odds.
+        DECLARE @grades TABLE(UnitRank tinyint PRIMARY KEY,Weight int);
+        INSERT @grades SELECT w.UnitRank,w.Weight FROM (VALUES(1,35),(2,30),(3,20),(4,15)) w(UnitRank,Weight)
+         WHERE EXISTS(SELECT 1 FROM @choices c WHERE c.UnitRank=w.UnitRank);
+        DECLARE @total int,@ticket int;
+        SELECT @total=SUM(Weight) FROM @grades;
+        SET @ceiling=CONVERT(bigint,4294967296)-(CONVERT(bigint,4294967296)%@total);
         WHILE 1=1
         BEGIN
             SET @random=CONVERT(bigint,CRYPT_GEN_RANDOM(4));
             IF @random<@ceiling BREAK;
         END;
-        SELECT @unit=UnitID,@rank=UnitRank FROM @choices
-         WHERE Ordinal=CONVERT(int,@random%@count)+1;
-
-        DECLARE @rc int,@slot int,@instance bigint,@serial bigint,@maxLevel tinyint,@end datetime;
-        EXEC @rc=dbo.sp_CreateUserUnit @v_AccountNum,'',0,0,@end,0,@unit,1,0,1,
-             @slot OUTPUT,@instance OUTPUT,@serial OUTPUT,@maxLevel OUTPUT;
-        IF @rc<>0 BEGIN RETURN @rc;END;
-        IF @instance IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits
-                    WHERE AccountNumber=@v_AccountNum AND UserUnitNumber=@instance AND UnitNumber=@unit)
+        SET @ticket=CONVERT(int,@random%@total);
+        SELECT TOP 1 @rank=g.UnitRank FROM @grades g
+         WHERE @ticket<(SELECT SUM(p.Weight) FROM @grades p WHERE p.UnitRank<=g.UnitRank) ORDER BY g.UnitRank;
+        SELECT TOP 1 @unit=UnitID FROM @choices WHERE UnitRank=@rank ORDER BY NEWID();
+        DECLARE @category int,@instance bigint;
+        SELECT @category=MIN(CatalogueID) FROM dbo.tbl_ItemCategory
+         WHERE RefIndex=@unit AND CatalogueID/100000=11 AND TimeLimit=0 AND Option1=1 AND Option2=2;
+        -- Prefer the category proven against both client and server at build.
+        -- A smaller server-only category must not override that proof.
+        SELECT @category=CategoryID FROM sdgo_collection_capsule.UnitDelivery WHERE UnitID=@unit;
+        IF @category IS NULL RETURN 3008;
+        INSERT dbo.tbl_UserDropItemBox(AccountNumber,ItemCategory,Amount,DropConditionID)
+        VALUES(@v_AccountNum,@category,1,@v_MachineID);
+        SET @instance=CONVERT(bigint,SCOPE_IDENTITY());
+        IF @instance IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.tbl_UserDropItemBox
+                    WHERE AccountNumber=@v_AccountNum AND UserDropItemIdx=@instance AND ItemCategory=@category AND Amount=1)
         BEGIN RETURN 3002;END;
-        IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen
+        IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.CatalogUnlocks
                       WHERE AccountNumber=@v_AccountNum AND UnitID=@unit)
         BEGIN RETURN 3002;END;
         INSERT dbo.tbl_CapsulePicked(AccountID,MachineID,UnitGradeNumber,UnitID)
         VALUES(@v_AccountNum,@v_MachineID,@rank,@unit);
-        INSERT sdgo_collection_capsule.DrawLog(AccountNumber,UnitID,UserUnitNumber,MachineID)
-        VALUES(@v_AccountNum,@unit,@instance,@v_MachineID);
-        SELECT @instance AS UserUnitNum,@unit AS UnitID,@slot AS SlotIndex,
-               @serial AS SerialNum,@maxLevel AS nCustomLvMax;
+        SELECT @instance AS DropBoxSerial,@category AS ItemCategory,CONVERT(int,1) AS Amount;
         RETURN 0;
     END TRY
     BEGIN CATCH

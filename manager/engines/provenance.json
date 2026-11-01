@@ -4,43 +4,91 @@
   "sources": [
     {
       "module": "manager/engines/capsules/capsule_catalog.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "3b9b7a945842a1e449358948a8979f49c3c1e98616b858e75bbe747477df7e6e"
+      "source_branch": "master",
+      "original_sha256": "218e31e40030c83890e2ec463656b451da712886e47f974ab231c414ba30866f",
+      "source_commit": "d7817d2",
+      "current_sha256": "ff00096d48c39a171ea6da524289b52bb3d81bc9a680ff0361d1f1d3de05e8bf",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/capsule_assets.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "53956f970d761d16417da9738d312e6609cb327d87f8a1382fca42ec52b4e654"
+      "source_branch": "master",
+      "original_sha256": "99587f8af46ddc896d28d75d2c9633576797354d3ae293bcbe9c2731e6928b58",
+      "source_commit": "d7817d2",
+      "current_sha256": "77185cc9c22644e279374c4285205d4260af83ca79cc248b34cee1f36e5ce3df",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/capsule_client_compile.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "29c2451334cc95081053c7e13b1b1b450c856c607697cb4c34454116f65a4a6c"
+      "source_branch": "master",
+      "original_sha256": "a3b3a8f2184613638778648908ce3e3ab9d3d13751a64af13b1fdf222fdf48a8",
+      "source_commit": "d7817d2",
+      "current_sha256": "de0927d63120a953a085415c0a40c02b8647130183e7d90a2ca2711e4dc12cdb",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/capsule_deployment.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "d14ee817a61b911d3176008b6d3982666e710059ed533f2d3c8aa15760f2ab39"
+      "source_branch": "master",
+      "original_sha256": "9d6007fe332b306198f5bc5aaba6dcc53c030351a1af520460cddae228225f99",
+      "source_commit": "d7817d2",
+      "current_sha256": "a9b75142af5fe75b55da02256a3ed54ffc568b4b4ab75775e9c06eb48166a721",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/capsule_server_runtime.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "7f176311a6571395d8afa074000eb58a81b58fe89694a0782e9fa9ff116e8c97"
+      "source_branch": "master",
+      "original_sha256": "7f176311a6571395d8afa074000eb58a81b58fe89694a0782e9fa9ff116e8c97",
+      "source_commit": "d7817d2",
+      "current_sha256": "4f04e18457a4a261d5cdebec8b3608d206e8aa783c9d9247c2a1120b3b6e5477",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/init_capsules.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "149d4b666ee6d6d0565d73f15e8db67e1ec8dc1712e594ab85cdb66e307b8937"
+      "source_branch": "master",
+      "original_sha256": "149d4b666ee6d6d0565d73f15e8db67e1ec8dc1712e594ab85cdb66e307b8937",
+      "source_commit": "d7817d2",
+      "current_sha256": "481515fbcc295362a2cb23ee1bb1d00aea2fb824eb0c0aa297032fc1f5aaf7a5",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/capsule_ui.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "b71f71c16cd69a2331c262f0dc2fdc3cb7f12006c0ddf113ea4b988bb2c10dc0"
+      "source_branch": "master",
+      "original_sha256": "8fcccb27f5fb64f84e901a28bde59cced8bc3084cf16e80900dd1e91861024e6",
+      "source_commit": "d7817d2",
+      "current_sha256": "a15fbf6f40c386eb1ccea0bbf393b3a9d951089f9d519e164203cddff94d8a1b",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/capsules/install_capsule_client.ps1",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "2b52b73a626f2cbcc08f4e54880842ec309900cc283280364d7968b1b80f0488"
+      "source_branch": "master",
+      "original_sha256": "52ce3d7cb32be06904765d68f4d579765869b0dc0e59885ce8fc1ba8c8c708d9",
+      "source_commit": "d7817d2",
+      "current_sha256": "a3c9b7a7d622e54146f49d8c428f6e92728470757834caa8b38c7e609b26484d",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     },
     {
       "module": "manager/engines/operators/assets.py",
@@ -104,8 +152,25 @@
     },
     {
       "module": "manager/engines/capsules/capsule_ui_layout.py",
-      "source_branch": "investigate/capsule-machines",
-      "original_sha256": "fbab735fbf9bc3401ef13fb945ee147407eaa889f39efc26584d173db8d5ce10"
+      "source_branch": "master",
+      "original_sha256": "fbab735fbf9bc3401ef13fb945ee147407eaa889f39efc26584d173db8d5ce10",
+      "source_commit": "d7817d2",
+      "current_sha256": "17d21ac56190c59c5d71f2320f2fed269d3d25f207f02e4cd3456c445f4855be",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
+    },
+    {
+      "module": "manager/engines/capsules/capsule_portraits.py",
+      "source_branch": "master",
+      "original_sha256": "5e89e7fe79af2df53e24cc8169e637ea37e7af4431e663dd368efa3838d246ca",
+      "source_commit": "d7817d2",
+      "current_sha256": "068359cb628e9e1c46bfa858aee07dfcc8dafbff4adcbf11f671e7c0f884e882",
+      "integration_commits": [
+        "d7817d2",
+        "13f2d9b"
+      ]
     }
   ]
 }

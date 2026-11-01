@@ -4,7 +4,8 @@
 
 .DESCRIPTION
   The package controls only files listed in package-manifest.json. Existing
-  sdgo.ini, unrelated mods and unrelated symbol sections are retained.
+  sdgo.ini settings, unrelated mods and unrelated symbol sections are retained.
+  Installing a capsule catalog activates its own global and manifest switches.
 
   Expected package layout:
 
@@ -905,6 +906,9 @@ foreach ($entry in $files | Where-Object { $_.Relative.EndsWith('\mod.ini', [Str
 }
 
 $planned = New-Object Collections.Generic.List[object]
+$activateCapsule = @($files | Where-Object {
+    $_.Relative.Equals('sdgo\mods\capsule_catalog\mod.ini', [StringComparison]::OrdinalIgnoreCase)
+}).Count -eq 1
 foreach ($entry in $files) {
     if ($entry.Relative.Equals($SymbolRelative, [StringComparison]::OrdinalIgnoreCase)) {
         continue
@@ -952,6 +956,9 @@ try {
         Add-JournalEntry $journal $game $backupRoot $entry.Destination
     }
     Add-JournalEntry $journal $game $backupRoot $symbolPath
+    if ($activateCapsule) {
+        Add-JournalEntry $journal $game $backupRoot $targetIni
+    }
     if ($chainRequired) {
         Add-JournalEntry $journal $game $backupRoot $chainPath
         Add-JournalEntry $journal $game $backupRoot $targetIni
@@ -1024,6 +1031,25 @@ try {
             throw "Installed mod did not enable: $($entry.Relative)"
         }
         $installedFiles.Add($entry.Relative)
+    }
+
+    if ($activateCapsule) {
+        if (Test-Path -LiteralPath $targetIni -PathType Leaf) {
+            $activationDocument = Read-TextDocument $targetIni
+            $activationText = $activationDocument.Text
+            $activationEncoding = $activationDocument.Encoding
+        } else {
+            $activationText = ''
+            $activationEncoding = New-Object Text.UTF8Encoding($false)
+        }
+        $activationText = Set-IniSettingText $activationText 'mods' 'capsule_catalog' '1'
+        Write-AtomicText $targetIni $activationText $activationEncoding
+        if ((Get-IniSetting (Read-TextDocument $targetIni).Text 'mods' 'capsule_catalog') -ne '1') {
+            throw 'Installed capsule catalog global switch did not enable'
+        }
+        if (-not $installedFiles.Contains($GlobalIniRelative)) {
+            $installedFiles.Add($GlobalIniRelative)
+        }
     }
 
     foreach ($entry in $rootLoaders) {

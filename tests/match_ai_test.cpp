@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include "MinHook.h"
 
 namespace fixture {
 using ai_test::Put;
@@ -13,6 +14,13 @@ std::array<uint8_t, 0x400> camera{};
 std::array<uint8_t, 0x40> hud{}, start{};
 std::array<uint8_t, 12 * kRecordSize> humans{}, ais{};
 std::array<std::array<uint8_t, 0x3400>, 12> units{};
+std::array<std::array<uint8_t, 0x3400>, 2> searchHumans{};
+bool searchHumanLookup = false, throwLockSearch = false;
+uint32_t selectedSearchTarget = 0;
+char seenSearchP2 = -1, seenSearchP3 = -1;
+void* fixtureTeamTrampoline = nullptr;
+uint32_t gateFrameFlags = 0, gateFrameEbx = 0, gateFrameEsi = 0, gateFrameEdi = 0, gateFrameEcx = 0;
+uint32_t gateFrameFallback = 0;
 std::array<std::array<uint8_t, 0xA0>, 12> nodes{};
 std::array<std::array<uint8_t, 0x200>, 12> npcs{};
 std::array<std::array<uint8_t, 0x70>, 12> slots{};
@@ -77,11 +85,87 @@ void __fastcall Gauge(uint8_t*, void*, int value) { hudGauge = value; ++hudCalls
 void* __fastcall Find(void*, void*, uint32_t id) {
     for (int i = 0; i < created; ++i)
         if (Get<uint32_t>(units[i].data(), kUnitObjectId) == id) return units[i].data();
+    if (searchHumanLookup && id >= 1 && id <= searchHumans.size()) return searchHumans[id - 1].data();
     return nullptr;
 }
 uint32_t __fastcall Lookup(void*, void*, uint32_t) { ++originalLookups; return 42; }
 bool __fastcall IsPlayer(void*, void*, uint32_t id) { return id >= 1 && id <= 12; }
-void* __fastcall FindHuman(void*, void*, uint32_t) { return nullptr; }
+void* __fastcall FindHuman(void*, void*, uint32_t id) {
+    return searchHumanLookup && id >= 1 && id <= searchHumans.size() ? searchHumans[id - 1].data() : nullptr;
+}
+__declspec(naked) int NativeParticipantContinuation() { __asm { mov eax, 1 } __asm { ret } }
+__declspec(naked) int NativeTeamOnlyGate() {
+    __asm {
+        cmp dword ptr [ecx+20h], 1
+        jne use_participants
+        xor eax, eax
+        ret
+    use_participants:
+        mov eax, 1
+        ret
+    }
+}
+__declspec(naked) int InvokeTeamGate(uint8_t*) {
+    __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 40h
+        push ebx
+        push esi
+        push edi
+        mov ecx, [ebp+8]
+        mov dword ptr [ebp-3Ch], 12345678h
+        mov ebx, 11223344h
+        mov esi, 55667788h
+        mov edi, 22334455h
+        stc
+        call NativeTeamOnlyGate
+        pushfd
+        pop edx
+        mov gateFrameFlags, edx
+        mov gateFrameEbx, ebx
+        mov gateFrameEsi, esi
+        mov gateFrameEdi, edi
+        mov gateFrameEcx, ecx
+        mov edx, [ebp-3Ch]
+        mov gateFrameFallback, edx
+        pop edi
+        pop esi
+        pop ebx
+        mov esp, ebp
+        pop ebp
+        ret
+    }
+}
+int __fastcall NativeLockSearch(void*, void*, uint32_t sourceId, char p2, char p3) {
+    seenSearchP2 = p2; seenSearchP3 = p3;
+    if (throwLockSearch) RaiseException(0xE0000003, 0, 0, nullptr);
+    auto source = static_cast<uint8_t*>(Find(um, nullptr, sourceId));
+    selectedSearchTarget = 0;
+    double distance = std::numeric_limits<double>::infinity();
+    if (!source) return 0;
+    if (!InvokeTeamGate(source)) return 0; // the native team-1 NPC-only exit
+    CHECK(gateFrameEbx == 0x11223344 && gateFrameEsi == 0x55667788 && gateFrameEdi == 0x22334455);
+    CHECK(gateFrameEcx == reinterpret_cast<uint32_t>(source));
+    if (g_targetSearchUm) {
+        CHECK((gateFrameFlags & 1) != 0);
+        CHECK(gateFrameFallback == 0);
+    } else CHECK(gateFrameFallback == 0x12345678);
+    // The pinned native function enumerates compact 1..playerCount, then uses
+    // the returned unit's real +4 id. Model that seam, not the game's combat.
+    for (int index = 1; index <= playerCount; ++index) {
+        auto candidate = static_cast<uint8_t*>(FindPlayer(um, nullptr, index));
+        // The real native eligibility and visibility helpers repeat the lookup
+        // through FindObject with the compact index. Both must agree.
+        if (candidate != FindObjectForSearch(um, nullptr, index)) continue;
+        if (candidate && Get<int>(candidate, 0xEC4) == 0) continue;
+        if (!candidate || candidate == source || Get<int>(candidate, 0x38) <= 0 ||
+            Get<int>(candidate, 0x20) == Get<int>(source, 0x20)) continue;
+        const double next = std::abs(Get<float>(candidate, 0x40) - Get<float>(source, 0x40));
+        if (next < distance) { distance = next; selectedSearchTarget = Get<uint32_t>(candidate, 4); }
+    }
+    return selectedSearchTarget ? 1 : 0;
+}
 void __fastcall Colour(void*, void*, int index, int colour) { slotColourIndex = index; slotColourValue = colour; }
 void* __cdecl Grid() { return &manager; }
 int __fastcall GridFind(void*, void*, const uint8_t** record, uint32_t id, int, char) {
@@ -163,6 +247,7 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_setPlayerCount = reinterpret_cast<SetPlayerCountFn>(&Count);
     g_originalPlayerSlot = reinterpret_cast<PlayerSlotFn>(&Slot);
     g_findObject = reinterpret_cast<FindObjectFn>(&Find);
+    g_originalFindObject = reinterpret_cast<FindObjectFn>(&Find);
     g_originalObjectIdFromPilot = reinterpret_cast<ObjectIdFromPilotFn>(&Lookup);
     g_originalIsPlayerObject = reinterpret_cast<IsPlayerObjectFn>(&IsPlayer);
     g_originalFindPlayer = reinterpret_cast<FindPlayerFn>(&FindHuman);
@@ -178,6 +263,10 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     switchCalls = udpCalls = natCalls = originalPlayback = originalLookups = nativeSlotCalls = 0;
     switchedForm = slotColourIndex = slotColourValue = -1;
     g_aiEnabled = false; g_logDiagnostics = false; g_viewStateLogs = g_deadViewLogs = 0;
+    searchHumanLookup = throwLockSearch = false; searchHumans = {}; selectedSearchTarget = 0;
+    g_targetSearchUm = nullptr; g_lockFaults = 0;
+    g_targetTeamOriginal = fixtureTeamTrampoline ? fixtureTeamTrampoline : reinterpret_cast<void*>(&NativeTeamOnlyGate);
+    g_targetParticipants = reinterpret_cast<void*>(&NativeParticipantContinuation);
     network = true; observer = failAppend = throwCamera = throwUdp = false; starts.clear();
 }
 void StartEntry(int slot, uint32_t id, int count, std::initializer_list<uint32_t> ids) {
@@ -196,6 +285,9 @@ bool Near(float a, float b) { return std::fabs(a - b) < 0.0001f; }
 
 int main() {
     using namespace fixture;
+    CHECK(MH_Initialize() == MH_OK);
+    CHECK(MH_CreateHook(reinterpret_cast<void*>(&NativeTeamOnlyGate), reinterpret_cast<void*>(&TargetTeamGate), &fixtureTeamTrampoline) == MH_OK);
+    CHECK(MH_EnableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
     SCENARIO("master, remote, slot cap and AI enable once");
     Spawn(); CHECK(g_botTable.size() == 2 && playerCount == 3 && calculated == 1);
     CHECK(g_soloAiMode == mode.data());
@@ -233,6 +325,54 @@ int main() {
     CHECK(PlayerSlot(um, nullptr, 9999) == g_scratchSlot);
     CHECK(nativeSlotCalls <= slotCalls + static_cast<int>(g_botTable.size()));
     SetSlotColour(um, nullptr, 9999, 2); CHECK(slotColourIndex == -1);
+
+    SCENARIO("native search sees real human and AI ids through a scoped participant adapter");
+    Spawn(0, 1, 2, 2); searchHumanLookup = true;
+    auto searchSource = g_botTable[0].unit; auto searchAi = g_botTable[1].unit;
+    Put<int>(searchSource, 0x20, 2); Put<int>(searchSource, 0x38, 100); Put<float>(searchSource, 0x40, 0);
+    Put<int>(searchAi, 0x20, 1); Put<int>(searchAi, 0x38, 100); Put<float>(searchAi, 0x40, 200);
+    Put<int>(searchAi, 0xEC4, 1);
+    for (int i = 0; i < 2; ++i) {
+        Put<uint32_t>(searchHumans[i].data(), 4, i + 1); Put<int>(searchHumans[i].data(), 0x20, 1);
+        Put<int>(searchHumans[i].data(), 0x38, 100); Put<float>(searchHumans[i].data(), 0x40, 1000.0f - i * 300);
+        Put<int>(searchHumans[i].data(), 0xEC4, 1);
+    }
+    g_lockTarget = reinterpret_cast<LockTargetFn>(&NativeLockSearch);
+    CHECK(NativeLockSearch(nullptr, nullptr, g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == 2);
+    CHECK(FindPlayer(um, nullptr, g_botTable[1].slot + 1) == nullptr);
+    CHECK(FindObjectForSearch(um, nullptr, g_botTable[1].slot + 1) == nullptr);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == g_botTable[1].objectId);
+    CHECK(seenSearchP2 == 1 && seenSearchP3 == 0 && g_targetSearchUm == nullptr);
+    Put<int>(searchAi, 0xEC4, 0);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == 2);
+    Put<int>(searchAi, 0xEC4, 1);
+    Put<int>(searchAi, 0x38, 0);
+    CHECK(LockTarget(g_botTable[0].objectId, 0, 2) == 1 && selectedSearchTarget == 2);
+    CHECK(seenSearchP2 == 0 && seenSearchP3 == 2);
+    Put<int>(searchHumans[1].data(), 0x38, 0);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == 1);
+    Put<int>(searchSource, 0x20, 1); Put<int>(searchAi, 0x20, 2); Put<int>(searchAi, 0x38, 100);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == g_botTable[1].objectId);
+    Put<int>(searchAi, 0x38, 0);
+    Put<int>(searchHumans[0].data(), 0x20, 2); Put<int>(searchHumans[1].data(), 0x20, 2);
+    Put<int>(searchHumans[1].data(), 0x38, 100);
+    CHECK(NativeLockSearch(nullptr, nullptr, g_botTable[0].objectId, 1, 0) == 0);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 1 && selectedSearchTarget == 2);
+    Put<int>(searchHumans[1].data(), 0x38, 0);
+    CHECK(LockTarget(g_botTable[0].objectId, 0, 2) == 1 && selectedSearchTarget == 1);
+    CHECK(Get<int>(searchSource, 0x20) == 1 && g_targetSearchUm == nullptr);
+    const Bot registeredSource = g_botTable[0];
+    g_botTable.erase(g_botTable.begin());
+    CHECK(LockTarget(registeredSource.objectId, 1, 0) == 0);
+    CHECK(gateFrameFallback == 0x12345678 && g_targetSearchUm == nullptr);
+    g_botTable.insert(g_botTable.begin(), registeredSource);
+    Put<int>(searchHumans[0].data(), 0x20, 1); Put<int>(searchHumans[1].data(), 0x20, 1);
+    Put<int>(searchAi, 0x38, 100);
+    Put<uint32_t>(slots[g_botTable[1].slot].data(), kSlotObjectId, 9999);
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 0);
+    CHECK(FindPlayer(um, nullptr, g_botTable[1].slot + 1) == nullptr);
+    throwLockSearch = true;
+    CHECK(LockTarget(g_botTable[0].objectId, 1, 0) == 0 && g_targetSearchUm == nullptr);
 
     SCENARIO("grid HUD gauge includes human and AI teams");
     const int expected[] = {0, 80, 80, 60, 80, 120, 160};
@@ -383,6 +523,8 @@ int main() {
     CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 0);
     g_gameApp = savedApp;
 
+    CHECK(MH_DisableHook(reinterpret_cast<void*>(&NativeTeamOnlyGate)) == MH_OK);
+    CHECK(MH_Uninitialize() == MH_OK);
     for (void* p : allocations) std::free(p); allocations.clear();
     return ai_test::Finish();
 }

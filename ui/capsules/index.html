@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{CSRF_TOKEN}}">
+  <title>SDGO 扭蛋机配置台</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">CAPSULE RUNTIME CONFIG</p>
+      <h1>SDGO 扭蛋机配置台</h1>
+    </div>
+    <div class="topbar-status">
+      <span id="save-state" class="status-pill clean">已同步</span>
+      <span id="revision" class="mono muted">revision —</span>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-actions">
+        <button id="new-machine" class="primary">＋ 新建机台</button>
+        <button id="import-button">导入配置</button>
+        <input id="import-file" type="file" accept="application/json,.json" hidden>
+        <a class="button-link" href="/api/catalog/download">下载目录 JSON</a>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="机台类型">
+        <button class="tab active" data-kind="fixed_machines" role="tab">固定扭蛋</button>
+        <button class="tab" data-kind="custom_machines" role="tab">自定义扭蛋</button>
+      </div>
+
+      <label class="search-box">
+        <span>搜索</span>
+        <input id="machine-search" type="search" placeholder="名称或 Machine ID">
+      </label>
+
+      <div class="filter-row">
+        <label><input type="radio" name="machine-filter" value="all" checked> 全部</label>
+        <label><input type="radio" name="machine-filter" value="enabled"> 启用</label>
+        <label><input type="radio" name="machine-filter" value="retired"> 下架</label>
+      </div>
+
+      <div id="machine-count" class="list-caption">正在读取…</div>
+      <nav id="machine-list" class="machine-list" aria-label="机台列表"></nav>
+    </aside>
+
+    <main class="main-panel">
+      <section id="empty-state" class="empty-state">
+        <div class="empty-mark">◉</div>
+        <h2>选择一台扭蛋机</h2>
+        <p>可以修改价格、机体、权重与显示位置，也可以从原生 Pattern 或现有机台复制新建。</p>
+      </section>
+
+      <form id="editor" class="editor hidden">
+        <div class="editor-heading">
+          <div>
+            <div class="editor-badges">
+              <span id="editor-kind" class="badge"></span>
+              <span id="editor-location" class="badge accent"></span>
+              <span id="editor-owner" class="badge"></span>
+            </div>
+            <h2 id="editor-title">机台</h2>
+            <p id="editor-subtitle" class="muted"></p>
+          </div>
+          <div class="editor-actions">
+            <button id="restore-machine" type="button" class="success hidden">恢复上架</button>
+            <button id="retire-machine" type="button" class="danger">下架并保留 ID</button>
+            <button id="save-machine" type="submit" class="primary">保存配置</button>
+          </div>
+        </div>
+
+        <div id="editor-error" class="notice error hidden" role="alert"></div>
+
+        <section class="panel">
+          <div class="form-grid">
+            <label>
+              <span>Machine ID</span>
+              <input id="field-id" type="number" min="1" required>
+            </label>
+            <label>
+              <span>配置顺序</span>
+              <input id="field-position" type="number" min="1" required>
+              <small id="position-help">固定机在游戏中倒序显示；上方显示实际页码和格位。</small>
+            </label>
+            <label class="span-2">
+              <span>显示名称</span>
+              <input id="field-name" type="text" maxlength="100" required>
+            </label>
+            <label>
+              <span>价格</span>
+              <input id="field-price" type="number" min="0" required>
+            </label>
+            <label>
+              <span>货币</span>
+              <select id="field-currency"></select>
+            </label>
+            <div class="read-only-field">
+              <span>来源</span>
+              <strong id="field-owner-label">—</strong>
+            </div>
+            <div class="read-only-field">
+              <span>抽取方式</span>
+              <strong id="field-policy-label">—</strong>
+            </div>
+            <label class="check-field">
+              <input id="field-enabled" type="checkbox">
+              <span>启用机台</span>
+            </label>
+          </div>
+        </section>
+
+        <section id="fixed-editor" class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">FIXED CAPSULE</p>
+              <h3>六格机体与权重</h3>
+            </div>
+            <div id="weight-total" class="weight-total">合计 0 / 1000</div>
+          </div>
+          <p class="section-note">固定机当前运行时仅支持 GP。Machine ID 与显示位置分开保存；每页 8 台。</p>
+          <div id="fixed-slots" class="entry-table"></div>
+        </section>
+
+        <section id="custom-editor" class="panel hidden">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CUSTOM CAPSULE</p>
+              <h3>候选机体</h3>
+            </div>
+            <button id="add-candidate" type="button">＋ 添加候选</button>
+          </div>
+          <p class="section-note">原生规则是 6 个基础格与 2 个扩展格。候选 SR 数量不等于槽位数量；每个候选保留自己的权重、累积、加价和重置参数。</p>
+          <p class="section-note">保留原生基础候选。新增候选只允许 SR，或完全没有设计图的 SS；有设计图的 SS 不加入自定义池。</p>
+          <div id="custom-candidates" class="entry-table"></div>
+
+          <div class="section-heading rules-heading">
+            <div>
+              <p class="eyebrow">SLOT RULES</p>
+              <h3>八格选择限制</h3>
+            </div>
+          </div>
+          <div id="slot-rules" class="rules-grid"></div>
+        </section>
+      </form>
+    </main>
+  </div>
+
+  <footer class="footerbar">
+    <div>
+      <span id="catalog-path" class="mono muted"></span>
+    </div>
+    <div class="footer-actions">
+      <button id="initialize-button">初始化缺失取得路线</button>
+      <button id="compile-button">编译客户端 Overlay</button>
+      <button id="export-button" class="primary">导出客户端 / 服务端配置</button>
+      <button id="apply-button" class="success">导入到游戏</button>
+    </div>
+  </footer>
+
+  <dialog id="new-dialog">
+    <div class="dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">NEW MACHINE</p>
+          <h2>从模板新建机台</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="new-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body form-stack">
+        <label>
+          <span>创建方式</span>
+          <select id="new-method"></select>
+        </label>
+        <label>
+          <span>Pattern / 来源机台</span>
+          <select id="new-template"></select>
+        </label>
+        <div id="new-template-note" class="notice"></div>
+        <div class="form-grid">
+          <label>
+            <span>新 Machine ID</span>
+            <input id="new-id" type="number" min="1" required>
+          </label>
+          <label>
+            <span>插入位置</span>
+            <input id="new-position" type="number" min="1" required>
+          </label>
+          <label class="span-2">
+            <span>显示名称</span>
+            <input id="new-name" type="text" maxlength="100" required>
+          </label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" data-close-dialog="new-dialog">取消</button>
+        <button id="create-draft" type="button" class="primary">打开新机台草稿</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="unit-dialog">
+    <div class="dialog-card unit-dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">UNIT PICKER</p>
+          <h2>选择机体</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="unit-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <label class="search-box large">
+          <span>搜索机体</span>
+          <input id="unit-search" type="search" placeholder="机体名称、ID 或等级">
+        </label>
+        <div id="unit-result-count" class="list-caption"></div>
+        <div id="unit-grid" class="unit-grid"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="portrait-dialog">
+    <div class="dialog-card portrait-dialog-card">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">PORTRAIT</p><h2 id="portrait-title">头像 PNG 与取景</h2></div>
+        <button id="portrait-close" class="icon-button" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <p class="notice">上传处理好的 PNG，拖动取景框并调整缩放。原生边框、等级条和稀有剪影自动合成；保存后此机体在所有机台同步使用。</p>
+        <div class="portrait-toolbar">
+          <label>图片姿态 <select id="portrait-variant"><option value="0">姿态 1</option><option value="1">姿态 2</option></select></label>
+          <label class="portrait-upload-label">上传 PNG <input id="portrait-file" type="file" accept="image/png,.png"></label>
+          <button id="portrait-fit" type="button">重置取景</button>
+        </div>
+        <div class="portrait-workspace">
+          <div>
+            <canvas id="portrait-canvas" width="720" height="440" aria-label="拖动头像取景框"></canvas>
+            <label class="portrait-zoom-label">放大取景 <input id="portrait-zoom" type="range" min="100" max="800" step="1" value="100"><output id="portrait-zoom-value">1.00×</output></label>
+            <p id="portrait-source-info" class="list-caption">选择 PNG 后开始取景</p>
+          </div>
+          <aside class="portrait-preview-panel">
+            <h3>游戏内卡片预览</h3>
+            <img id="portrait-preview" alt="原生扭蛋卡预览" width="366" height="214" class="hidden">
+            <p id="portrait-preview-status" class="list-caption">配置客户端素材后可预览完整原生卡片。</p>
+            <label class="inline-check"><input id="portrait-both" type="checkbox"> 两个姿态使用此 PNG 和取景</label>
+            <p class="list-caption">仅替换机体图片，价格和抽取概率不变。恢复原图只作用于当前姿态。</p>
+          </aside>
+        </div>
+        <div id="portrait-error" class="notice error hidden" role="alert"></div>
+      </div>
+      <div class="dialog-actions">
+        <button id="portrait-reset" type="button">恢复原图</button>
+        <button id="portrait-save" type="button" class="primary">保存头像与取景</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="result-dialog">
+    <div class="dialog-card result-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">RESULT</p>
+          <h2 id="result-title">操作完成</h2>
+        </div>
+        <button class="icon-button" type="button" data-close-dialog="result-dialog" aria-label="关闭">×</button>
+      </div>
+      <div id="result-content" class="dialog-body result-content"></div>
+      <div class="dialog-actions">
+        <button type="button" class="primary" data-close-dialog="result-dialog">知道了</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -50,6 +50,8 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "../battle_ai/difficulty.h"
+#include "sdgo/room_titles_current.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/pvp_ai_client_observer.h"
 
@@ -127,6 +129,7 @@ namespace
     using AddDeckUnitFn = void(__thiscall*)(uint8_t* unit, uint32_t unitDataId);
     using SwitchDeckFn = void(__thiscall*)(uint8_t* unit, int index, char flag);
     using PlaybackUnitFn = int(__thiscall*)(void* self, uint8_t* packet);
+    using BattleAiInitializeUnitFn = void(__cdecl*)(uint8_t* unit, int roomDifficulty, uint32_t generation);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -184,6 +187,7 @@ namespace
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
+    FindObjectFn g_originalFindObject = nullptr;
     GameNewFn g_gameNew = nullptr;
     CameraUpdateFn g_originalTrackingUpdate = nullptr;
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
@@ -195,6 +199,8 @@ namespace
     AddDeckUnitFn g_addDeckUnit = nullptr;
     SwitchDeckFn g_switchDeck = nullptr;
     PlaybackUnitFn g_originalPlaybackUnit = nullptr;
+    HMODULE g_battleAiModule = nullptr;
+    BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -216,8 +222,12 @@ namespace
         const uint8_t* deckNpcData[4] = {};
         int form = 0;
         int pendingForm = -1;
+        uint32_t generation = 0;
+        bool pendingInitialize = false;
     };
     std::vector<Bot> g_botTable;
+    int g_roomDifficulty = 1;
+    uint32_t g_nextUnitGeneration = 0;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
@@ -244,6 +254,80 @@ namespace
             if (g_vtables[i] && vtable == g_vtables[i])
                 return i;
         return -1;
+    }
+
+    // The client battle room begins with its native std::wstring title.  A missing or
+    // malformed title keeps the requested default, Medium.  This is deliberately the same
+    // parser battle_ai uses, so "!ai easy/medium/hard" has one meaning in both mods.
+    int BattleDifficulty(const uint8_t* room)
+    {
+        char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
+        const auto n=g_api&&g_api->ModDirectory?sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod),full,sizeof(full)):0;
+        if(n&&n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[n]==0) {
+            int value=battle_ai::RoomDifficulty(std::string_view(full,n));return value<0?1:value;
+        }
+        wchar_t title[21] = {};
+        size_t length = 0;
+        __try {
+            if (!room)
+                return 1;
+            length = *reinterpret_cast<const uint32_t*>(room + 0x10);
+            size_t capacity = *reinterpret_cast<const uint32_t*>(room + 0x14);
+            if (length > 20 || capacity < 7 || capacity < length || capacity > 0x1000)
+                return 1;
+            const wchar_t* text =
+                capacity < 8 ? reinterpret_cast<const wchar_t*>(room)
+                             : *reinterpret_cast<const wchar_t* const*>(room);
+            if (!text || text[length] != L'\0')
+                return 1;
+            memcpy(title, text, length * sizeof(wchar_t));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 1;
+        }
+        int difficulty = battle_ai::RoomDifficulty(std::wstring_view(title, length));
+        return difficulty >= 0 && difficulty <= 2 ? difficulty : 1;
+    }
+
+    uint32_t NextUnitGeneration()
+    {
+        ++g_nextUnitGeneration;
+        if (g_nextUnitGeneration == 0)
+            ++g_nextUnitGeneration;
+        return g_nextUnitGeneration;
+    }
+
+    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    {
+        HMODULE module = GetModuleHandleW(L"battle_ai.dll");
+        if (!module) {
+            g_battleAiModule = nullptr;
+            g_battleAiInitializeUnit = nullptr;
+            return nullptr;
+        }
+        if (module != g_battleAiModule || !g_battleAiInitializeUnit) {
+            g_battleAiModule = module;
+            g_battleAiInitializeUnit = reinterpret_cast<BattleAiInitializeUnitFn>(
+                GetProcAddress(module, "SdgoBattleAiInitializeUnit"));
+        }
+        return g_battleAiInitializeUnit;
+    }
+
+    void InitializeBattleAiUnit(Bot& bot, bool initialMatchSpawn = false)
+    {
+        BattleAiInitializeUnitFn initialize = OptionalBattleAiInitializer();
+        if (!initialize || !bot.unit || bot.generation == 0)
+            return;
+        // The low byte is the public room difficulty.  0x100 marks only the first
+        // completed spawn in this match; respawns and deck changes must retain SP.
+        int difficultyAndFlags = g_roomDifficulty | (initialMatchSpawn ? 0x100 : 0);
+        __try {
+            initialize(bot.unit, difficultyAndFlags, bot.generation);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "battle_ai initialization fault %08lX for AI player %08lX generation %lu; initialization aborted",
+                       GetExceptionCode(), static_cast<unsigned long>(bot.pilotId),
+                       static_cast<unsigned long>(bot.generation));
+        }
     }
 
     // What each PvP Init sets in a player's slot (+0x48, the score the HUD sums per team)
@@ -588,6 +672,8 @@ namespace
             BuildAiDeck(bot, npcData);
             g_creatingAiUnit = false;
         }
+        bot.generation = NextUnitGeneration();
+        InitializeBattleAiUnit(bot, true);
         g_botTable.push_back(bot);
         g_logPackets = true;
         ++c.spawned;
@@ -623,6 +709,8 @@ namespace
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
+        g_roomDifficulty = BattleDifficulty(room);
+
         InterlockedExchange(
             &g_receivedBattleStartMode,
             static_cast<LONG>(*reinterpret_cast<uint16_t*>(room + kModeRoomMode)));
@@ -868,6 +956,35 @@ namespace
 
     alignas(16) uint8_t g_scriptModeStandIn[0x620] = {};
     int g_lockFaults = 0;
+    thread_local void* g_targetSearchUm = nullptr;
+    constexpr uint32_t kSearchParticipantLimit = 12;
+    const Bot* BotByObject(void* um, uint32_t objectId);
+    void* g_targetTeamOriginal = nullptr;
+    void* g_targetParticipants = nullptr;
+
+    // Integer/TLS-only helper: the site detour preserves integer registers and
+    // flags, and this function does not touch x87 or SIMD state.
+    int __cdecl ParticipantSearchActive() { return g_targetSearchUm != nullptr; }
+    __declspec(naked) void TargetTeamGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            call ParticipantSearchActive
+            test eax, eax
+            jz native_team_path
+            popad
+            popfd
+            // The earlier NPC-only pass stored its weaker fallback here.
+            // Do not retain it when every real participant fails eligibility.
+            mov dword ptr [ebp-3Ch], 0
+            jmp dword ptr [g_targetParticipants]
+        native_team_path:
+            popad
+            popfd
+            jmp dword ptr [g_targetTeamOriginal]
+        }
+    }
 
     bool IsPvpMode(uint8_t* mode)
     {
@@ -916,7 +1033,14 @@ namespace
     int LockTarget(uint32_t objectId, char p2, char p3)
     {
         __try {
-            return g_lockTarget(g_scriptModeStandIn, objectId, p2, p3);
+            void* previous = g_targetSearchUm;
+            void* um = g_game.unitManager ? *g_game.unitManager : nullptr;
+            g_targetSearchUm = um && BotByObject(um, objectId) ? um : nullptr;
+            __try {
+                return g_lockTarget(g_scriptModeStandIn, objectId, p2, p3);
+            } __finally {
+                g_targetSearchUm = previous;
+            }
         } __except (LockFault(GetExceptionCode(), (GetExceptionInformation())->ExceptionRecord->ExceptionAddress)) {
             return 0;
         }
@@ -1081,11 +1205,36 @@ namespace
         return g_originalPlayerSlot(um, index);
     }
 
+    uint8_t* SearchParticipant(void* um, uint32_t compactId)
+    {
+        if (!um || um != g_targetSearchUm || compactId < 1 || compactId > kSearchParticipantLimit)
+            return nullptr;
+        for (const Bot& bot : g_botTable) {
+            if (bot.slot >= 0 && static_cast<uint32_t>(bot.slot + 1) == compactId && SlotHolds(um, bot))
+                return static_cast<uint8_t*>(g_originalFindObject(um, bot.objectId));
+        }
+        return nullptr;
+    }
+
+    void* __fastcall FindObjectForSearch(void* um, void* /*edx*/, uint32_t objectId)
+    {
+        void* unit = g_originalFindObject(um, objectId);
+        // Native eligibility/visibility helpers repeat FindObject using the
+        // same compact loop index. They must resolve the same real participant.
+        return unit ? unit : SearchParticipant(um, objectId);
+    }
+
     void* __fastcall FindPlayer(void* um, void* /*edx*/, uint32_t objectId)
     {
         void* unit = g_originalFindPlayer(um, objectId);
         if (!unit && BotByObject(um, objectId))
             unit = g_findObject(um, objectId);
+        // Native LockTarget enumerates 1..playerCount, but AddObject assigns
+        // these AI participants ids 1001+. Supply the missing compact *search
+        // index* only inside that call. Native filtering and SetAttackTarget
+        // still use candidate+4, its real object id. HUD/packet lookups outside
+        // this scope must retain exact-id semantics, including missing humans.
+        if (!unit) unit = SearchParticipant(um, objectId);
         return unit;
     }
 
@@ -1094,21 +1243,32 @@ namespace
     void SwitchPendingDecks()
     {
         for (Bot& bot : g_botTable) {
-            if (bot.pendingForm < 0)
+            if (bot.pendingForm < 0 && !bot.pendingInitialize)
                 continue;
             int form = bot.pendingForm;
             bot.pendingForm = -1;
-            int size = DeckSize(bot.unit);
-            if (size < 2 || form >= size) {
-                g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: deck index %d, but the unit deck has %d entries",
-                           static_cast<unsigned long>(bot.pilotId), form, size);
-                continue;
+            if (form >= 0) {
+                int size = DeckSize(bot.unit);
+                if (size < 2 || form >= size) {
+                    g_api->Log(g_mod, SDGO_LOG_WARN,
+                               "AI player %08lX: deck index %d, but the unit deck has %d entries",
+                               static_cast<unsigned long>(bot.pilotId), form, size);
+                    bot.pendingInitialize = false;
+                    continue;
+                } else {
+                    g_switchDeck(bot.unit, form, 0);
+                    *reinterpret_cast<int*>(bot.unit + kUnitDeckIndex) = form;
+                    bot.form = form;
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: now deck unit %d (NPC %lu)",
+                               static_cast<unsigned long>(bot.pilotId), form,
+                               static_cast<unsigned long>(bot.deckNpc[form]));
+                }
             }
-            g_switchDeck(bot.unit, form, 0);
-            *reinterpret_cast<int*>(bot.unit + kUnitDeckIndex) = form;
-            bot.form = form;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: now deck unit %d (NPC %lu)",
-                       static_cast<unsigned long>(bot.pilotId), form, static_cast<unsigned long>(bot.deckNpc[form]));
+            if (bot.pendingInitialize) {
+                bot.pendingInitialize = false;
+                bot.generation = NextUnitGeneration();
+                InitializeBattleAiUnit(bot);
+            }
         }
     }
 
@@ -1395,6 +1555,10 @@ namespace
                     *reinterpret_cast<uint32_t*>(bot->unit + kUnitNpcDataId) = bot->deckNpc[colour];
                     bot->pendingForm = colour;
                 }
+                // PlaybackUnit completes the native respawn (and any pending deck switch).
+                // Reapply only after that point, with a fresh generation even when the same
+                // deck entry respawns.
+                bot->pendingInitialize = true;
                 g_originalSetSlotColour(um, bot->slot, colour);
                 return;
             }
@@ -1748,10 +1912,14 @@ SDGO_MOD_ENTRY
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
+                 Bind(g_targetParticipants, "ainormal.target_participants") &&
                  Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count") &&
                  Bind(g_gridData, "grid.data") && Bind(g_gridFind, "grid.find") &&
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
+        return 0;
+    if (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite ||
+        !api->HookSite(mod, "ainormal.target_team_gate", reinterpret_cast<void*>(&TargetTeamGate), &g_targetTeamOriginal))
         return 0;
     // The profile pointer is only used by the optional read-only GameTest
     // observer. Older supported symbol maps must still load the production AI
@@ -1782,7 +1950,9 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "um.player_slot", reinterpret_cast<void*>(&PlayerSlot),
                        reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
-                       reinterpret_cast<void**>(&g_originalFindPlayer)))
+                       reinterpret_cast<void**>(&g_originalFindPlayer)) ||
+        !api->HookCode(mod, "um.find_object", reinterpret_cast<void*>(&FindObjectForSearch),
+                       reinterpret_cast<void**>(&g_originalFindObject)))
         return 0;
     // Without this an AI player keeps its first unit for every life in modes 6 and 7.
     if (!api->HookCode(mod, "game.playback_unit", reinterpret_cast<void*>(&PlaybackUnit),

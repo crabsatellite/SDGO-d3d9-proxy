@@ -82,6 +82,14 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(self.call('POST','/api/settings',{'host':host,'mod':'findwindow_fix','values':{'trace':True},'revisions':{}})[0],400)
         self.assertEqual(self.call('GET','/api/developer?host='+host+'&mod=findwindow_fix')[0],403)
 
+    def test_ui_library_is_served_and_art_needs_a_client_texture(self):
+        for path in ('/ui.css','/ui.js','/ui-kit.html','/style.css','/app.js'):
+            self.assertEqual(self.call('GET',path)[0],200,path)
+        self.assertIn(b"from '/ui.js'",self.call('GET','/app.js')[1])
+        # The fixture client has no GPackData, and unknown keys are never read.
+        self.assertEqual(self.call('GET','/api/art/hangar')[0],404)
+        self.assertEqual(self.call('GET','/api/art/..%2Fmods')[0],404)
+
     def test_mode_downgrade_hides_developer_info_but_keeps_owner_tools(self):
         self.advanced();host=self.workspace.settings['hosts'][0]['id']
         url='/api/developer?host='+host+'&mod=findwindow_fix'
@@ -141,6 +149,33 @@ class ManagerTests(unittest.TestCase):
         for url in ('/operators','/rewards','/api/operators','/api/bootstrap','/app.exe','/panels/../workspace.json'):
             self.assertNotEqual(self.call('GET',url)[0],200)
 
+    def test_capsule_png_routes_use_the_manager_session_and_portable_catalog(self):
+        from manager_capsule_fixture import fixture_catalog
+        from PIL import Image
+        path=self.root/'capsules.json';storage.atomic(path,storage.json_bytes(fixture_catalog()))
+        provider=self.workspace.providers['capsules'];provider.configure({'catalog':str(path)})
+        status,state=self.call('GET','/api/providers/capsules/api/bootstrap')
+        self.assertEqual(status,200)
+        before=state['catalog_revision']
+        output=io.BytesIO();Image.new('RGBA',(326,128),(50,100,160,255)).save(output,'PNG')
+        payload={'unit_id':1,'variant':0,'png_base64':base64.b64encode(output.getvalue()).decode('ascii'),
+                 'crop':[0,0,326,128],'expected_revision':before,'apply_to_both':True}
+        status,_=self.call('POST','/api/providers/capsules/api/portraits/save',payload,{'X-ModManager-Token':'wrong'})
+        self.assertEqual(status,403)
+        status,saved=self.call('POST','/api/providers/capsules/api/portraits/save',payload)
+        self.assertEqual(status,200);self.assertNotEqual(saved['catalog_revision'],before)
+        status,portrait=self.call('GET','/api/providers/capsules/api/portraits?unit_id=1&variant=1')
+        self.assertEqual(status,200);self.assertTrue(portrait['overridden'])
+        self.assertTrue(portrait['image_data_url'].startswith('data:image/png;base64,'))
+        status,_=self.call('POST','/api/providers/capsules/api/portraits/reset',
+            {'unit_id':1,'variant':0,'expected_revision':before})
+        self.assertEqual(status,409)
+        status,reset=self.call('POST','/api/providers/capsules/api/portraits/reset',
+            {'unit_id':1,'variant':0,'expected_revision':saved['catalog_revision']})
+        self.assertEqual(status,200)
+        self.assertNotIn('0',json.loads(path.read_text())['portrait_overrides']['1'])
+        self.assertNotEqual(self.call('GET','/api/portraits?unit_id=1&variant=0')[0],200)
+
     def test_config_preserves_unknown_keys_comments_and_newlines(self):
         self.advanced();host=self.workspace.settings['hosts'][0]['id'];details=self.workspace.details(host,'findwindow_fix')
         self.workspace.configure(host,'findwindow_fix',{'trace':True},details['revisions'])
@@ -175,17 +210,28 @@ class ManagerTests(unittest.TestCase):
 
     def test_hangar_overlay_imports_rules_registration_and_native_symbols(self):
         host=self.workspace.settings['hosts'][0]['id'];buffer=io.BytesIO()
+        manifest=storage.ini_values((ROOT/'mods/hangar_manager/mod.ini').read_bytes())
+        required=manifest['mod']['requires'].split(',')
+        symbols=storage.ini_values((ROOT/'symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        fragment=configparser.ConfigParser(interpolation=None)
+        for section in ['host']+required:fragment[section]=dict(symbols[section])
+        fragment_text=io.StringIO();fragment.write(fragment_text,space_around_delimiters=False)
         with zipfile.ZipFile(buffer,'w') as archive:
             for name in ('mod.ini','manager.json','units.tsv'):
                 archive.writestr('client/sdgo/mods/hangar_manager/'+name,(ROOT/'mods/hangar_manager'/name).read_bytes())
             archive.writestr('client/sdgo/mods/hangar_manager/hangar_manager.dll',b'synthetic DLL')
-            archive.writestr('symbols.fragment.ini','[host]\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n[hangar.init]\nkind=code\nrva=0x202EA0\nexpect=55 8B EC\n')
+            archive.writestr('symbols.fragment.ini',fragment_text.getvalue())
         status,result=self.call('POST','/api/import',{'host':host,'package':base64.b64encode(buffer.getvalue()).decode()})
         self.assertEqual(status,200);self.assertEqual(result['installed_files'],5)
         root=self.client/'sdgo/mods/hangar_manager'
         self.assertEqual((root/'units.tsv').read_bytes(),(ROOT/'mods/hangar_manager/units.tsv').read_bytes())
         self.assertTrue((root/'manager.json').is_file());self.assertTrue((self.mod/'mod.ini').is_file())
         self.assertIn('[hangar.init]',(self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_text())
+        installed=storage.ini_values((root/'mod.ini').read_bytes())
+        installed_symbols=storage.ini_values((self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        self.assertEqual(installed['mod']['version'],manifest['mod']['version'])
+        self.assertIn('hangar.ui_add_skin',required)
+        for name in required:self.assertEqual(dict(installed_symbols[name]),dict(symbols[name]))
 
     def test_hangar_overlay_rejects_scripts_before_writing_any_files(self):
         buffer=io.BytesIO()

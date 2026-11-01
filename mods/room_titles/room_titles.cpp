@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_titles.h"
 #include "client_state.h"
 #include "native_transport.h"
 #include "native_ui.h"
@@ -543,6 +544,16 @@ template <typename T> bool Bind(const SdgoApi* api, SdgoMod* mod, T* output, con
 }
 } // namespace
 
+static LONG g_currentTitleReady=0;
+extern "C" __declspec(dllexport) uint32_t __cdecl SdgoRoomTitleCurrentV1(char* output,uint32_t capacity)
+{
+    if(!output||capacity<2||!InterlockedCompareExchange(&g_currentTitleReady,0,0)) return 0;
+    Lock lock;
+    const auto record=g_state.Query(g_activeConnection,g_activeRoom);
+    if(!record||record->title.empty()||record->title.size()>SDGO_ROOM_TITLE_MAX_UTF8_BYTES||record->title.size()+1>capacity) return 0;
+    std::memcpy(output,record->title.c_str(),record->title.size()+1);
+    return static_cast<uint32_t>(record->title.size());
+}
 SDGO_MOD_ENTRY
 {
     if (!ui::Bind(api, mod) || !Bind(api, mod, &g_nativeWide, "room_titles.ui_legacy_to_wide") ||
@@ -561,6 +572,7 @@ SDGO_MOD_ENTRY
     const transport::Callbacks callbacks{&BeforeSend, &AfterSend, &ReceiveSize, &OnReceive};
     if (!transport::Install(api, mod, callbacks))
         return 0;
+    InterlockedExchange(&g_currentTitleReady,1);
     api->Log(mod, SDGO_LOG_INFO, "ready: bounded full room titles over the native game connection");
     return 1;
 }

@@ -192,6 +192,7 @@ class Capsules(Provider):
             if path == '/api/bootstrap': return engine.bootstrap()
             if path == '/api/machine': return engine.machine(one('kind'), int(one('id')))
             if path == '/api/units': return engine.units(one('q'), int(one('limit', '100')))
+            if path == '/api/portraits': return engine.store.portrait_get(int(one('unit_id')), int(one('variant', '0')))
             if path == '/api/catalog/download': return Binary(storage.json_bytes(engine.store.read()[0]), 'application/json', 'capsule-catalog.json')
             match = re.fullmatch(r'/assets/unit/([0-9]+)\.png', path)
             if match: return Binary(engine.store.asset(int(match[1])).read_bytes(), 'image/png')

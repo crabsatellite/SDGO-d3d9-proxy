@@ -43,6 +43,14 @@ int main()
     plan = ParseTitle(u8"一起练习对战，一起练习对战 !ai e2 a2 lv4");
     Check(plan.enabled && plan.enemies == 2 && plan.allies == 2 && plan.level == 4,
           "UTF-8 title retains ASCII rule suffix");
+    plan = ParseTitle(u8"一起练习对战，一起练习对战 !AI e2 a1 lv4 HARD !rand easy");
+    Check(plan.enabled && plan.enemies == 2 && plan.allies == 1 && plan.level == 4 &&
+              plan.difficulty == battle_ai::Difficulty::Hard,
+          "full UTF-8 difficulty composes with pool rules without reading the next command");
+    Check(ParseTitle("!ai !rand hard").difficulty == battle_ai::Difficulty::Medium,
+          "random-loadout arguments cannot set AI difficulty");
+    Check(ParseTitle("!ai easy !ai hard").difficulty == battle_ai::Difficulty::Easy,
+          "the first AI command owns its difficulty");
     plan = ParseTitle((std::string("!ai e") + std::string(100, '9') + " a0 lv3").c_str());
     Check(plan.enabled && plan.enemies == kSlotsPerTeam && plan.allies == 0 && plan.level == 3,
           "long numeric fields saturate without integer overflow");

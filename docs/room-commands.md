@@ -16,6 +16,11 @@ before the next `!command`. In `!ai !rand lv4`, `lv4` belongs to `!rand` and doe
 not change the AI level. Unknown `!commands` also end the preceding argument span.
 The first valid occurrence wins. `!aim`, `room!ai3`, `!ai3x` and `!rand!ai3` are not `!ai`.
 
+With [Battle AI](battle-ai.md), PvP also accepts `easy`, `medium` or `hard` in the
+`!ai` argument span, for example `!ai3 hard`. The default is Medium. `lv1`–`lv5`
+select the existing NPC pool; Medium's actual unit level is 12 and Hard's is EX13.
+In `!ai !rand hard`, `hard` does not select AI difficulty.
+
 ## Longer descriptive names
 
 With [extended room titles](room-titles.md), these complete names also work:
@@ -24,10 +29,12 @@ With [extended room titles](room-titles.md), these complete names also work:
 |---|---|
 | Mission | `Weekend mission with friends !ai3 lv4 !rand` |
 | PvP | `Friendly practice for newcomers !ai e2 a1 lv4 !rand` |
+| PvP with Hard Battle AI | `Friends practicing together !ai e2 a1 lv4 hard !rand` |
 
 Enable `room_titles` on every client, `room_titles_agent` on the serving Agents
 and `room_titles_server` on the Battle servers. These three Mods default to off.
 Update the consuming `coop_ai`, `pvp_ai` and `room_random` DLLs with the same framework build.
+When using Battle AI, update `battle_ai`, `match_ai` and `battle_ai_server` too.
 The limit becomes 128 Unicode scalars / 512 UTF-8 bytes; commands after byte 20 are read too.
 Without the extension, native titles retain the 20-byte limit.
 

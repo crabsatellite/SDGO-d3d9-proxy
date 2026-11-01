@@ -1,20 +1,32 @@
 # Collection capsule (Beta)
 
 Collection capsule is an independently installable and disableable gameplay Mod.
-It adds one machine to the ordinary capsule list:
+It adds one machine to the native activity capsule page:
 
 - default machine ID `990001`;
 - a fixed price of **100,000 GP** per draw, with no other accepted currency;
-- uniform selection among the account's currently eligible unit families;
-- a permanent, independently ownable base/initial form that the account has never acquired;
-- sold, consumed, or exchanged units remain acquired and cannot be drawn again;
+- rank-first selection with **C 35% / B 30% / A 20% / S 15%**;
+- tier 1 selects an eligible permanent base/initial form that the account has not
+  unlocked in this Mod's catalog;
+- after every eligible family is unlocked, tier 2 selects an unlocked family that
+  is absent from both the current permanent hangar and pending prize box;
 - no owned unit is consumed, and non-ownable post-transform forms are not prizes.
 
+The active tier is chosen before rank selection. Ranks with no candidate in that
+tier leave the lottery and the remaining weights are renormalized; the number of
+units in a rank does not multiply its total probability.
+
+Native activity draws deliver to the **prize box**. The awarded item represents a
+permanent level-1 initial-form unit, created when the player claims it. The family
+is unlocked when its pending prize is created, and a pending permanent prize also
+counts as present, so it cannot be selected again before claim. A full hangar or
+failed claim leaves the already-awarded prize available for later claim.
+
 The stock World path prepays the registered GP price. The Mod selects and delivers
-the unit and never charges a second time. Exhaustion, incomplete history, inventory
-delivery failure, database failure, or result-validation failure returns through
-the native failure path, which should refund the complete prepayment and leave a
-net charge of zero.
+the prize and never charges a second time. If every eligible family is unlocked
+and all are currently held or pending, or if delivery metadata, database work, or
+result validation fails, the native failure path should refund the complete
+prepayment and leave a net charge of zero.
 
 ## Runtime and distribution boundary
 
@@ -23,9 +35,9 @@ price. The client uses the shared `capsule_catalog` for machine registration and
 resources. The owner must take `server-package\` and `player\` from the same
 `build-kit` output so both sides use matching machine data, resources, and framework.
 
-The player package contains no server INI, database connection, account, collection
-history, or FRP credential. The owner distributes only `player\`; players close
-their client and run its installer.
+The player package contains no server INI, database connection, account, catalog
+unlock rows, or FRP credential. The owner distributes only `player\`; players
+close their client and run its installer.
 
 This feature requires the current framework/core. Retaining an old core instead
 of installing the matched current build is an update failure, not a supported
@@ -35,7 +47,7 @@ compatibility mode.
 
 Use **SDGO Mod Manager → Collection capsule (Beta)** for everyday configuration.
 Select the target WorldServer INI, matching client, and full framework or owner
-toolkit directory. An optional cover must be a 182×108 PNG.
+toolkit directory. An optional activity poster must be a **361×322 PNG**.
 
 1. Generate matched resources. Only public configuration is exported; existing
    shared client machines are preserved.
@@ -43,15 +55,19 @@ toolkit directory. An optional cover must be a 182×108 PNG.
    WorldServer, then install its server package and the matching local client.
    Manager does not control game processes.
 3. Restart that WorldServer, export the player package and distribute it to friends.
-4. Import trusted complete acquisition history for legacy accounts. Current hangar
-   contents alone are insufficient. Register reciprocal imported-family metadata
-   before building when needed.
+   Manager and the player notes report the current activity page and slot. Players
+   draw there and claim the resulting unit through the game's native prize box.
+4. Register reciprocal imported-family metadata before building when needed.
+   Installation creates the catalog baseline from current permanent units and
+   pending permanent unit prizes; no complete-history import is required.
 
-After separately updating the ordinary capsule catalog, regenerate and install
-the composed client resources here before exporting a new player package.
+Ordinary capsule updates preserve activity posters, generated resources and unit
+gift categories. Publishing requires the current six-table shared provider; an
+older four-table provider is rejected. Regenerate and distribute matched resources
+after changing the collection poster or importing new content.
 Enable or disable the gameplay Mod on its World feature card and restart that
-World; acquisition history is retained. Price is fixed at 100,000 GP. The internal
-machine ID is developer information and must match SQL and client resources.
+World; the minimal catalog unlock set is retained. Price is fixed at 100,000 GP.
+The internal machine ID is developer information and must match SQL and client resources.
 All paths remain in the owner's local workspace. There is no additional UI,
 server or game launcher.
 
@@ -98,11 +114,12 @@ The output directory must not already exist. This command exports only the publi
 configuration needed to build the pool:
 
 - `dbo.tbl_Units` unit definitions;
-- `dbo.tbl_MachinePrice` machine definitions;
+- `dbo.tbl_MachinePrice` / `dbo.tbl_ItemMachinePrice` machine definitions;
+- `dbo.tbl_ItemCategory` prize definitions and this Mod's retained owned unit-gift categories;
 - published imported-family metadata;
 - row counts, file hashes, and an export-time receipt.
 
-It exports no database credential, account, inventory, player acquisition history,
+It exports no database credential, account, inventory, catalog unlock membership,
 or other private row. The snapshot can be moved to a separate build computer; the
 server INI itself must not be distributed.
 
@@ -140,7 +157,13 @@ Standalone, unambiguous base units need no declaration. `--unit-family` supplies
 inventory-root metadata; it is not a frozen prize allowlist.
 
 The default placeholder cover is `mods\collection_capsule\assets\cover.png`.
-A replacement must be an exact **182×108 PNG**:
+A replacement must be an exact **361×322 PNG**. Author a larger image at the same
+aspect ratio and downsample it for installation:
+
+Poster copy must describe both tiers. The recommended short footer is
+**“Complete the catalog · Then refill the hangar”**. Do not publish artwork that
+promises every draw is a never-before-acquired unit, because tier 2 intentionally
+returns an unlocked unit that is no longer held or pending.
 
 ```powershell
 python tools/collection_capsule.py build-kit `
@@ -158,7 +181,7 @@ The output contains:
 - `build-receipt.json`: matched server, registry, and player revisions and file receipts.
 
 Distribute only `player\`. Do not distribute `server-package\`, the server INI,
-or history-import files.
+or server-side catalog unlock data.
 
 ### 4. Check and install the server package
 
@@ -210,7 +233,8 @@ Each player receives the `player\` directory:
 1. Close the client being updated.
 2. Double-click `Install-Client.cmd`.
 3. Select the game directory containing `GOnline.exe`.
-4. Start normally and use Collection capsule in the ordinary capsule list.
+4. Start normally, use Collection capsule in the activity capsule list, then claim
+   the permanent unit from the native prize box.
 
 The installer validates the client build, every package hash, and the required
 symbols, then writes an installation receipt. It preserves the existing `sdgo.ini`,
@@ -227,60 +251,53 @@ framework/core, global settings, symbols, and unrelated Mods. If another tool
 changed a controlled file after installation, uninstall refuses to overwrite
 that newer content.
 
-The ordinary machine screen still contains six preview tiles. They are presentation
-anchors, not a prize whitelist. The server result may be any eligible, previously
-unacquired base unit and need not appear among those six previews.
+The activity entry uses one complete poster. It is no longer an ordinary six-tile
+machine. Migration removes only the feature-owned ordinary entry and price while
+retaining imported-family declarations. The legacy feature-owned `Coverage`,
+`Seen`, and `DrawLog` data and complete-history import workflow are retired.
+Ordinary capsule tables and native capsule records are outside this migration.
+Distribute the new player package; the retired ordinary entry is no longer usable.
 
-## Complete history for existing accounts
+Unit gift categories are delivery metadata, not a frozen prize list. The builder
+reuses safe permanent level-1 categories and creates missing owned definitions.
+Retained categories survive disable/update so pending prizes remain claimable.
+Claim these prizes before fully uninstalling the player resources. Unclaimed rows
+are not deleted; reinstalling the matching resources restores their presentation.
 
-Installation treats existing registrations as incomplete history (`Coverage=0`). It seeds `Seen` with
-facts from current inventory, native capsule records, and any recognized native
-deletion/recovery records, but it does not label those partial facts as complete
-from account creation. Such accounts cannot use Collection capsule until a trusted
-source proves complete coverage. A failed attempt should receive native compensation
-and have a net charge of zero.
+## Catalog unlock state and the two selection tiers
 
-The installer reads only the account-ID high water mark through the host INI's
-`[DB Member]` connection; it does not export account rows. Updates retain this
-original baseline. An old registration creating or recreating a profile is still
-an old account. New registrations after installation are tracked from their first
-profile and unit-acquisition transactions.
+The native client catalog is inventory-derived. Its collection progress scans the
+current permanent unit list; selling or deleting a unit makes that unit appear
+unowned again. It does not expose an account-level, ever-acquired bit for each unit.
 
-The Game identity needs the feature's schema/module/trigger and read/write
-permissions. Unit writers also need transaction-ID access: `VIEW SERVER STATE`
-on SQL Server 2014, or `VIEW SERVER PERFORMANCE STATE` on SQL Server 2022+.
-See [Microsoft's permission reference](https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/sys-dm-tran-current-transaction-transact-sql).
-The tool checks capabilities without granting existing identities broader rights.
-The Member identity must be able to read the aggregate of `tbl_Account.f_idx`.
+This Mod therefore stores one minimal account-to-UnitID unlock membership set.
+It contains no timestamp, source, draw event, coverage attestation, or audit
+history. The SQL implementation may carry an internal native-transaction guard
+to prevent rolled-back inventory writes from leaving phantom unlocks; that guard
+does not become acquisition history. Installation or legacy-schema migration
+seeds the set from:
 
-Only an upstream system that can attest to every acquisition since account creation
-may produce an old-account history file:
+- current permanent units with `TimeLimit=0` and `RunOut=0`;
+- pending permanent unit prizes already present in the native prize box.
 
-```powershell
-python tools/collection_capsule.py import-history `
-  --server-ini D:\SDGO\Server\World\WorldServer.ini `
-  --history D:\SDGO\CollectionCapsuleWork\complete-history.json
-```
+Legacy `Seen`, `Coverage`, history-import payloads, and draw logs are not migrated
+into the new baseline. Creating a pending prize and adding its family to
+`CatalogUnlocks` occur in the same draw transaction. Permanent inventory and gift
+writers also maintain this minimal set, so successful acquisitions remain
+unlocked after claim, sale, or deletion.
 
-Each file represents one account and must contain:
+Each draw then uses exactly one tier:
 
-| Field | Required value or type |
-|---|---|
-| `schema_version` | integer `1` |
-| `coverage` | string `from-account-creation` |
-| `complete` | boolean `true` |
-| `source` | non-empty exporting-system or receipt identity |
-| `account` | the target account's positive SQL `INT` |
-| `units` | every UnitID acquired since account creation, as an integer list |
+1. **Complete the catalog:** choose from eligible base families not present in
+   `CatalogUnlocks`.
+2. **Refill the hangar:** only after all eligible families are unlocked, choose
+   from unlocked families absent from both the current permanent hangar and
+   pending prize box.
 
-The importer rejects missing completeness/source attestations, invalid accounts,
-invalid lists, and any payload that omits a unit already recorded in `Seen`. It
-adds history and records the payload hash; it never clears or resets collection
-history.
-
-**Current inventory alone cannot prove complete history.** A sold, deleted,
-consumed, or exchanged unit may no longer be present. Do not reset `Seen` from
-the current inventory or treat unavailable old events as events that never happened.
+Rank weights are renormalized within the active tier. If tier 2 has no candidate
+because every eligible family is held or pending, the draw fails through the
+native refund path. This state belongs to the server and is never included in a
+player package or public snapshot.
 
 ## Future imported unit families
 
@@ -288,6 +305,12 @@ Each draw derives eligible inventory roots from the live `tbl_Units` catalog.
 Registration resolves only the initial-form identity of an ambiguous multi-form
 family. It does not freeze a prize-ID list and does not require a DLL rebuild for
 each new unit.
+
+Imported content must also publish matching native permanent level-1 unit gift
+metadata to server and client. Once published, new units participate dynamically.
+A raw unit row without delivery metadata rejects the draw through the refund path
+instead of being silently excluded. A new build automatically supplies missing
+categories, and its matching client resources must be distributed to players.
 
 For existing native units, the builder resolves reciprocal forms from enabled
 entries in the client's `0220.gdt`, checked against all six unit tables and the
@@ -342,7 +365,7 @@ If the build client does not have the current shared registry installed, pass th
 previous build's `client-registry\` as `--current-registry` so unrelated machines
 remain in the new package.
 
-Disable the server machine while preserving collection history:
+Disable the server machine while preserving catalog unlock state:
 
 ```powershell
 python tools/collection_capsule.py disable `
@@ -352,8 +375,8 @@ python tools/collection_capsule.py disable `
 
 Restart the selected WorldServer after disabling, and have players run the matched
 `Uninstall-Client.cmd`. Disabling the server machine or removing client resources
-does not erase `Coverage`, `Seen`, or draw records. A later reinstall can continue
-from the same history.
+does not erase `CatalogUnlocks` or pending native prize-box rows. A later reinstall
+can continue from the same minimal unlock state.
 
 ## Verification status and manual acceptance
 
@@ -361,10 +384,9 @@ Automated evidence has three distinct scopes:
 
 - Python/offline tests cover form resolution, the dynamic pool, preservation of
   the shared registry, the player package, and receipt-based install/uninstall;
-- isolated SQL tests cover existing-account coverage, complete-history import,
-  concurrent non-repetition, dynamic imported families, transaction rollback,
-  installation and import with database collations different from `tempdb`,
-  and a failure-compensation model;
+- isolated SQL tests cover catalog baseline seeding, both selection tiers,
+  pending-prize reservation, concurrent non-repetition, dynamic imported families,
+  transaction rollback, cross-collation installation, and a failure-compensation model;
 - a native fixture has exercised the actual `core.dll`, `collection_capsule.dll`,
   and OLE DB sessions for the ABI, separate sessions, publish-after-commit, and
   malformed-result rollback.
@@ -385,10 +407,25 @@ ctest --test-dir build -C Release -R "^collection_capsule_offline$" --output-on-
 
 Manual acceptance should confirm:
 
-1. the ordinary list shows Collection capsule at the fixed 100,000 GP price;
-2. a successful draw grants an independently ownable base form never acquired by that account;
-3. selling it and drawing again cannot repeat the same unit family;
+1. the activity page/slot reported by the build shows the poster and fixed 100,000 GP price;
+2. a draw awards a permanent level-1 initial-form prize, which appears in inventory after native prize-box claim;
+3. tier 1 unlocks missing catalog families, and a pending prize cannot be selected again before claim;
 4. success produces exactly one net 100,000 GP charge;
-5. exhaustion, incomplete history, delivery failure, and backend failure leave a net charge of zero;
-6. unit, history, and machine state survive client and WorldServer restarts;
-7. player uninstall leaves unrelated Mods, shared machines, and the current framework/core working.
+5. after the catalog is complete, selling or deleting a claimed unit makes that family eligible in tier 2, while currently held and pending families stay excluded;
+6. all-families-held exhaustion, incomplete metadata, and failed draws leave a net charge of zero; failed claims keep the prize and do not charge again;
+7. unit, catalog unlock, pending-prize, and machine state survive client and WorldServer restarts;
+8. disabling keeps pending prizes claimable; after claiming them, player uninstall leaves unrelated Mods, shared machines, and the current framework/core working.
+
+## Automatic setup and imported content
+
+Manager installation/update automatically runs the validated schema migration,
+catalog initialization and machine setup. Players receive client resources and
+never run server SQL. The catalog-policy update action can update an existing
+World database without stopping the World process.
+
+The live database defines eligible inventory roots; the original catalog is not
+a whitelist. A complete imported unit with no stock catalog entry participates
+automatically once its permanent native gift delivery metadata is installed.
+Training, unready, placeholder and independently unownable post-transform rows
+are excluded. Incomplete delivery definitions fail with refund rather than charge
+for an undeliverable unit.

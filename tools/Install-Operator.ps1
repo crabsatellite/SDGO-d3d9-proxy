@@ -31,7 +31,7 @@ foreach ($line in ($fragment -split '\r?\n')) {
     if ($line -match '^\[(.+)\]$') { $current=$Matches[1]; if ($current -like 'operator.*') { $sections[$current]=@($line) } }
     elseif ($current -like 'operator.*') { $sections[$current]+=$line }
 }
-if ($sections.Count -ne 7) { throw 'The operator symbol fragment is incomplete.' }
+if ($sections.Count -ne 8) { throw 'The operator symbol fragment is incomplete.' }
 $old=[IO.File]::ReadAllText($symbolFile)
 $lines=New-Object 'System.Collections.Generic.List[string]'
 $skip=$false

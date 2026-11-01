@@ -5,6 +5,16 @@ int main() {
     using namespace page_fixture;
     PageUi ui;Setup();assert(ui.Attach(service.data(),Bind()));
     assert(Shown(L"ModHangarSort") && Shown(L"ModHangarOpen"));
+    assert(children.at(L"ModHangarSort")->text==L"一键整理" && children.at(L"ModHangarSort")->align==2);
+    for(const auto* name:{L"ModHangarSort",L"ModHangarOpen",L"ModHangarGB",L"ModHangarItem",L"ModHangarConfirm",L"ModHangarCancel"}) {
+        const auto& c=*children.at(name);assert(c.skins.size()==3);
+        for(size_t i=0;i<3;++i) {
+            const auto& source=*children.at(L"UnitDeleteBtn")->skins[i];
+            assert(c.skins[i]->memory.data()!=source.memory.data() && c.skins[i]->path==source.path);
+        }
+        assert(Get<int>(c.memory.data(),0x154)==128 && Get<int>(c.memory.data(),0x158)==24);
+    }
+    assert(children.at(L"ModHangarSort")->color==0xFF9CB8C8);
     assert(!Shown(L"ModHangarConfirm") && Shown(L"UnitDeleteBtn") && !Shown(L"HiddenNativeIcon"));
     const auto count=creates;assert(ui.Attach(service.data()) && creates==count);
     ui.Open();assert(!Shown(L"ModHangarSort") && !Shown(L"UnitDeleteBtn") && Shown(L"ModHangarGB"));
@@ -15,6 +25,9 @@ int main() {
     assert(children.at(L"ModHangarPage")->text.find(L"3 / 3")!=std::wstring::npos);
     ui.Arm(true);assert(ui.Armed() && children.at(L"ModHangarConfirm")->text.find(L"再次确认")!=std::wstring::npos);
     ui.State(true,false);assert(!ui.Armed() && !Enabled(L"ModHangarGB") && Enabled(L"ModHangarCancel"));
+    assert(children.at(L"ModHangarGB")->color==0xFF70808A);
+    Put<uint16_t>(Pointer(L"ModHangarGB"),0x21C,0x101);Put<uint32_t>(Pointer(L"ModHangarGB"),0x18C,2);
+    ui.AfterNativeRefresh();assert(Get<uint16_t>(Pointer(L"ModHangarGB"),0x21C)==0 && Get<uint32_t>(Pointer(L"ModHangarGB"),0x18C)==0);
     ui.BeforeNativeRefresh();assert(Shown(L"UnitDeleteBtn") && !Shown(L"HiddenNativeIcon"));
     Put<uint8_t>(Pointer(L"HiddenNativeIcon"),0x162,1); // native refresh legitimately changes a child
     ui.AfterNativeRefresh();assert(!Shown(L"HiddenNativeIcon"));
@@ -26,9 +39,19 @@ int main() {
         assert(Get<float>(p,0x148)>=0 && Get<float>(p,0x148)+Get<int>(p,0x154)<=600);
         assert(Get<float>(p,0x14C)>=0 && Get<float>(p,0x14C)+Get<int>(p,0x158)<=700);
         assert(Get<void*>(p,0x15C)==dialog.data());
+        assert(Get<uint8_t>(p,0x168)==0); // no constructor debug rectangles
     }
     Put(service.data(),0,reinterpret_cast<void*>(0xBAD));ui.Close();assert(!ui.Ready());
     Setup();failAdd=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready());
+    Setup();failSkin=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready() && !Shown(L"ModHangarSort"));
+    // Match Init's exception path after the first button was fully constructed.
+    // A later skin failure must never publish either partial button.
+    Setup();throwSkinAt=4;bool threw=false;
+    try {ui.Attach(service.data(),Bind());}catch(const std::exception&){threw=true;ui.Detach();}
+    assert(threw && !ui.Ready() && !Shown(L"ModHangarSort") && !Shown(L"ModHangarOpen"));
+    assert(Shown(L"UnitDeleteBtn"));
+    Setup();auto& source=*children.at(L"UnitDeleteBtn");source.skins.pop_back();SetSkins(source);
+    assert(!ui.Attach(service.data(),Bind()) && creates==0);
     Setup();Put(dialog.data(),0x154,400);assert(!ui.Attach(service.data(),Bind()) && creates==0);
     std::cout<<"HANGAR IN-GAME PAGE FIXTURE PASSED (host children, placement, pagination, two-step confirmation, original visibility, lifecycle, fail-closed layout)\n";
 }
