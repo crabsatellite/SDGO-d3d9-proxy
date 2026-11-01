@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 from pathlib import Path
-from assistant_modules.operators import model, server
+from manager.engines.operators import model, server
 
 
 def export(server_ini, output):

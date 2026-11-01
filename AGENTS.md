@@ -1,0 +1,13 @@
+# Parallel development and Mod Manager integration
+
+- Start new work from current `origin/master` in an isolated branch/worktree. Preserve other worktrees, running game services and real player/configuration data.
+- All user-facing Mod configuration belongs in **SDGO Mod Manager**. Do not add another configuration EXE, HTTP server, per-Mod launcher or process-owning script.
+- Every Mod must ship `manager.json`. Register readable labels, storage keys, validation and activation rules. Everyday player/server-owner operations use `audience=user`; only raw identifiers and diagnostics use `audience=developer`.
+- Automatic bug fixes use `presentation=automatic_fix` and appear in the archive. Configurable starter/gameplay/server features stay in normal management.
+- Register persistent background work with `workspace.services.register(id, title, controller, start)`. The Manager owns start/stop, health, retry and persisted enablement. Use `/api/services/<id>`; do not add module-specific worker lifecycle endpoints or restore old launcher ownership.
+- Obtain internal IPC resources through `workspace.services.resource(id, factory)`. Manager shutdown releases them. Native in-game hooks/packet bridges remain Mod runtime code; do not move game processes into the service supervisor.
+- Reuse the Manager's session, revision, path, panel and export contracts. Preserve authored workspaces and do not publish credentials, real account data or game assets.
+- Keep each feature's AI configuration/debug and bug-report handoff accurate. Repair PR bodies must include actual `AI models:` names/versions (explicit Unknown if undisclosed), AI scope, human verification and remaining uncertainty.
+- Commits are authored solely by the user. NEVER add `Co-Authored-By` lines.
+
+See `docs/mod-manager.zh-CN.md`, `docs/mod-manager-design.zh-CN.md` and `docs/contributing.zh-CN.md`.

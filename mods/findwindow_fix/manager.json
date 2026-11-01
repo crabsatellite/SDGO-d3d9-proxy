@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "findwindow_fix",
+  "title": "输入法兼容修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "description": "改善输入法与已有插件共同使用时的兼容性。",
+  "settings": [
+    {
+      "id": "trace",
+      "key": "Trace",
+      "label": "诊断日志",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "automatic_fix",
+  "mechanism": "通过框架的系统导出 Hook 修复指定宿主/插件调用的窗口查找行为，保留已有钩子链及其他调用者。"
+}

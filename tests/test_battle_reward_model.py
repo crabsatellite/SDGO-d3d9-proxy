@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 from owner.rewards import model
 from owner.rewards.workspace import Workspace
-from assistant_modules.rewards import attach
 
 
 def pvp(**changes):
@@ -161,40 +160,6 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(ValueError): workspace.multiplier("5", initial["revision"])
 
 
-class HttpModuleTests(unittest.TestCase):
-    def test_same_port_existing_module_and_protected_updates(self):
-        class Existing(BaseHTTPRequestHandler):
-            def log_message(self, *args): pass
-            def json_response(self, status, value):
-                body = json.dumps(value).encode(); self.send_response(status)
-                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-            def do_GET(self):
-                self.json_response(200, {"modules": [{"id": "existing"}]} if self.path == "/api/modules" else {"existing": True})
-            def do_POST(self): self.json_response(200, {"existing_post": True})
-        with tempfile.TemporaryDirectory() as root:
-            server = attach(ThreadingHTTPServer(("127.0.0.1", 0), Existing), Workspace(root))
-            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-            origin = f"http://127.0.0.1:{server.server_port}"
-            try:
-                def read(path):
-                    with urlopen(origin + path, timeout=3) as response: return json.load(response)
-                self.assertEqual([x["id"] for x in read("/api/modules")["modules"]], ["existing", "rewards"])
-                self.assertTrue(read("/existing")["existing"])
-                state = read("/api/rewards")
-                payload = json.dumps({"base_multiplier": "20"}).encode()
-                headers = {"Content-Type": "application/json", "Origin": origin,
-                           "X-Assistant-Token": state["session_token"], "X-Reward-Revision": state["revision"]}
-                with urlopen(Request(origin + "/api/rewards/multiplier", data=payload, headers=headers), timeout=3) as response:
-                    self.assertEqual(json.load(response)["policy"]["base_multiplier"], "20")
-                headers["Origin"] = "https://unrelated.invalid"
-                with self.assertRaises(HTTPError) as rejected:
-                    urlopen(Request(origin + "/api/rewards/multiplier", data=payload, headers=headers), timeout=3)
-                self.assertEqual(rejected.exception.code, 403)
-                rejected.exception.close()
-                with urlopen(origin + "/rewards", timeout=3) as response:
-                    self.assertIn("未连接游戏结算", response.read().decode())
-            finally:
-                server.shutdown(); server.server_close(); thread.join(timeout=3)
 
 
 if __name__ == "__main__": unittest.main()

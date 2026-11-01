@@ -102,7 +102,7 @@ function(sdgo_add_mod id)
     # Copy on every target build: this refreshes changed source data and also
     # repairs a stale/corrupted staged file whose timestamp is newer than source.
     set(mod_data_commands COMMAND "${CMAKE_COMMAND}" -E make_directory "${SDGO_STAGE}/${root}/mods/${id}")
-    foreach(file mod.ini ${MOD_FILES})
+    foreach(file mod.ini manager.json ${MOD_FILES})
         list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
@@ -200,6 +200,10 @@ foreach(role client server)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
             "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/manager.json"
+            "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/manager.json")
 endforeach()
 add_custom_target(ai_catalog_data ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"
@@ -229,6 +233,34 @@ add_custom_target(sdgo_catalog ALL
         --output "${SDGO_STAGE}/server/sdgo/catalog.json"
     COMMENT "Validating and staging the categorized mod catalog"
 )
+
+# One self-contained user entry. Individual mods only contribute contracts/panels.
+option(SDGO_BUILD_MANAGER "Build the unified Mod Manager EXE" ON)
+if(SDGO_BUILD_MANAGER)
+    find_program(SDGO_MANAGER_POWERSHELL NAMES powershell pwsh REQUIRED)
+    file(GLOB_RECURSE SDGO_MANAGER_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.html" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/shop/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mods/*/manager.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.sql" "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.ps1")
+    set(SDGO_MANAGER_EXE "${CMAKE_BINARY_DIR}/manager/SDGO Mod Manager.exe")
+    add_custom_command(OUTPUT "${SDGO_MANAGER_EXE}"
+        COMMAND "${SDGO_MANAGER_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
+            -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}"
+        DEPENDS ${SDGO_MANAGER_INPUTS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/manager/SDGOModManager.spec"
+        VERBATIM)
+    add_custom_target(mod_manager ALL DEPENDS "${SDGO_MANAGER_EXE}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/manager"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDGO_MANAGER_EXE}" "${SDGO_STAGE}/manager/")
+endif()
 
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
@@ -273,14 +305,22 @@ sdgo_strict(daily_rewards_runtime_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
-find_program(SDGO_SHOP_POWERSHELL NAMES powershell pwsh)
-if(SDGO_SHOP_POWERSHELL)
-    add_custom_target(shop_owner_ui ALL
-        COMMAND "${SDGO_SHOP_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_shop_ui.ps1"
-            -OutDirectory "${CMAKE_BINARY_DIR}/shop-ui" -Tests
-        COMMENT "Building native Windows owner shop manager")
-endif()
 if(BUILD_TESTING)
+    if(SDGO_BUILD_MANAGER)
+        add_test(NAME shop_owner_domain_service COMMAND "${CMAKE_BINARY_DIR}/manager-services/ShopUiTests.exe")
+        set_tests_properties(shop_owner_domain_service PROPERTIES TIMEOUT 60)
+    endif()
+    if(SDGO_BUILD_MANAGER)
+        add_test(NAME mod_manager_frozen COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/mod_manager_frozen_test.py" --exe "${SDGO_MANAGER_EXE}")
+        set_tests_properties(mod_manager_frozen PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    endif()
+    add_test(NAME mod_manager_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_manager*.py" -v)
+    set_tests_properties(mod_manager_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
+    add_test(NAME pr_ai_disclosure_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_pr_ai_disclosure.py" -v)
+    set_tests_properties(pr_ai_disclosure_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_executable(hangar_model_test tests/hangar_model_test.cpp)
     target_link_libraries(hangar_model_test PRIVATE sdgo_api)
     sdgo_strict(hangar_model_test)
@@ -294,10 +334,6 @@ if(BUILD_TESTING)
     add_executable(hangar_ui_preview tests/hangar_ui_preview.cpp)
     target_link_libraries(hangar_ui_preview PRIVATE sdgo_api user32 gdi32)
     sdgo_strict(hangar_ui_preview)
-    if(SDGO_SHOP_POWERSHELL)
-        add_test(NAME shop_owner_ui_service COMMAND "${CMAKE_BINARY_DIR}/shop-ui/ShopUiTests.exe")
-        set_tests_properties(shop_owner_ui_service PROPERTIES TIMEOUT 30)
-    endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
     sdgo_strict(shop_labels_test)
@@ -502,7 +538,8 @@ if(BUILD_TESTING)
         add_test(NAME package_catalog_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+        # Eight editions plus packaged PowerShell installer/update readbacks.
+        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
         foreach(check loader findwindow_fix)
             add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
                 -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"

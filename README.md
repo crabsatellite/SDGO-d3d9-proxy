@@ -4,9 +4,14 @@ Core fixes and optional extensions for SD Gundam Online clients and private serv
 All mods share one framework for build verification, loading, configuration and updates.
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
+**One entry: [SDGO Mod Manager](docs/mod-manager.md).** Daily management includes clients,
+servers, shop/operators/capsules, rewards and networking. Automatic fixes live in the
+archive; developer details expand separately. Each feature can copy an AI debugging
+or GitHub issue handoff. [Repair PRs must disclose the actual AI models used](docs/contributing.zh-CN.md).
+
 **Start with core fixes, then choose your extensions.** Beta is a release channel, independent of category.
 
-[Install and configure](docs/setup.md) · [Latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [Developer API](docs/framework.md)
+[Install and configure](docs/setup.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest) · [Developer API](docs/framework.md)
 
 ## Core fixes
 

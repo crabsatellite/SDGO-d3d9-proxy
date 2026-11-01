@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "id": "pvp_ai",
+  "title": "对战 AI · 服务端",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "description": "为对战房间添加 AI 队友和对手。",
+  "settings": [
+    {
+      "id": "default_level",
+      "key": "DefaultLevel",
+      "label": "默认 AI 等级",
+      "type": "integer",
+      "default": 2,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "fill_team_size",
+      "key": "FillTeamSize",
+      "label": "每队目标人数",
+      "type": "integer",
+      "default": 3,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 6
+    },
+    {
+      "id": "life_cost_grade1",
+      "key": "LifeCostGrade1",
+      "label": "C 级机体的对战生命消耗",
+      "type": "integer",
+      "default": 250,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    {
+      "id": "life_cost_grade2",
+      "key": "LifeCostGrade2",
+      "label": "B 级机体的对战生命消耗",
+      "type": "integer",
+      "default": 334,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    {
+      "id": "life_cost_grade3",
+      "key": "LifeCostGrade3",
+      "label": "A 级机体的对战生命消耗",
+      "type": "integer",
+      "default": 455,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    {
+      "id": "life_cost_grade4",
+      "key": "LifeCostGrade4",
+      "label": "S 级机体的对战生命消耗",
+      "type": "integer",
+      "default": 556,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    {
+      "id": "log_room",
+      "key": "LogRoom",
+      "label": "记录房间日志",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "log_battle",
+      "key": "LogBattle",
+      "label": "记录战斗日志",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "level1",
+      "key": "Level1",
+      "label": "等级 1 机体池",
+      "type": "integer_list",
+      "default": "3604020,3604007,3604010,3604012,3604023,3604026,3604011,3604028,3604029,3604030",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "level2",
+      "key": "Level2",
+      "label": "等级 2 机体池",
+      "type": "integer_list",
+      "default": "3604022,3604024,3604004,3604005,3604006,3604002",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "level3",
+      "key": "Level3",
+      "label": "等级 3 机体池",
+      "type": "integer_list",
+      "default": "3604015,3604016,3604017,3604018",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "level4",
+      "key": "Level4",
+      "label": "等级 4 机体池",
+      "type": "integer_list",
+      "default": "3604001,3604003,3604008,3604009,3604019,3604021,3604027,3604025,3604014,3604013",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "level5",
+      "key": "Level5",
+      "label": "等级 5 机体池",
+      "type": "integer_list",
+      "default": "3604001,3604003,3604008,3604009,3604019,3604021,3604027,3604025,3604014,3604013",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "对战服务器按 !ai 指令创建 AI 队友/对手、使用已验证的原生机体构建和生命周期流程，保留比赛与结算规则。"
+}

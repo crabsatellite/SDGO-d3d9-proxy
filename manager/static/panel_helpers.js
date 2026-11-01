@@ -1,0 +1,4 @@
+export function e(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+export function button(text,fn,ctx,cls=''){const n=e('button',text,cls);n.onclick=async()=>{n.disabled=true;try{await fn();}catch(error){ctx.message(error.message,true);}finally{n.disabled=false;}};return n;}
+export function field(label,value,type='text'){const box=e('label',label),input=document.createElement('input');input.type=type;if(type==='checkbox')input.checked=!!value;else input.value=value??'';box.append(input);return {box,input};}
+export async function download(response,name){const blob=await response.blob(),url=URL.createObjectURL(blob),link=e('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}

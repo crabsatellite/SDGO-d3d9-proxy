@@ -12,8 +12,8 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
-from assistant_modules.operators import model,server,presets
-from assistant_modules.operators.assets import Assets
+from manager.engines.operators import model,server,presets
+from manager.engines.operators.assets import Assets
 
 
 def last_row(cur):

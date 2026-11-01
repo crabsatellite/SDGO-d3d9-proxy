@@ -13,10 +13,12 @@ from urllib.error import HTTPError
 from urllib.request import Request,urlopen
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
-from assistant_modules.operators import model,server,presets
-from assistant_modules.operators.assets import validate_png,sprite_binary,put_wchar
-from assistant_modules.operators.workspace import Workspace
-from mod_assistant import make_server
+from manager.engines.operators import model,server,presets
+from manager.engines.operators.assets import validate_png,sprite_binary,put_wchar
+from manager.engines.operators.workspace import Workspace
+from manager.workspace import Workspace as ManagerWorkspace
+from manager.providers import attach
+from manager.server import make_server
 
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=')
 
@@ -224,10 +226,11 @@ class HTTPTests(unittest.TestCase):
         self.ws.root=Path(self.temp.name);self.ws.path=self.ws.root/'operators.json'
         self.ws.assets=FakeAssets();self.ws.baseline=fixture();self.ws.server_ini=None;self.ws.module_binary=None
         model.save(self.ws.path,fixture())
-        self.http=make_server(self.ws)
+        mgr=ManagerWorkspace(self.ws.root/'manager',Path(__file__).resolve().parents[1]/'mods');attach(mgr);mgr.providers['operators'].engine=self.ws
+        self.http=make_server(mgr)
         self.thread=threading.Thread(target=self.http.serve_forever,daemon=True);self.thread.start()
         self.origin=f'http://127.0.0.1:{self.http.server_port}'
-        self.initial=json.load(urlopen(self.origin+'/api/operators'))
+        self.initial=json.load(urlopen(self.origin+'/api/providers/operators/api/operators'))
 
     def tearDown(self):
         self.http.shutdown();self.http.server_close();self.thread.join();self.temp.cleanup()
@@ -235,9 +238,9 @@ class HTTPTests(unittest.TestCase):
     def put(self,payload,token=True,origin=None,revision=None,host=None):
         headers={'Content-Type':'application/json','Origin':origin or self.origin,
                  'X-Catalog-Revision':revision or self.initial['revision']}
-        if token:headers['X-Assistant-Token']=self.initial['session_token']
+        if token:headers['X-ModManager-Token']=self.initial['session_token']
         if host:headers['Host']=host
-        return urlopen(Request(self.origin+'/api/operators/60003',json.dumps(payload).encode(),headers,method='PUT'))
+        return urlopen(Request(self.origin+'/api/providers/operators/api/operators/60003',json.dumps(payload).encode(),headers,method='PUT'))
 
     def test_save_free_registration_and_reload(self):
         result=json.load(self.put({'name':'免费补给','delivery':'all_players'}))

@@ -68,6 +68,8 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         if len(targets) != 1:
             raise ValueError(f"A bundled mod needs exactly one install target: {path}")
         files = [safe_file(name) for name in list_value(cfg.get("files", ""))]
+        if (path.parent / "manager.json").is_file() and "manager.json" not in files:
+            files.append("manager.json")
         runtime_files = [safe_file(name) for name in list_value(cfg.get("runtime_files", ""))]
         if (len(set(runtime_files)) != len(runtime_files) or set(runtime_files) & set(files)
                 or any(Path(name).suffix.lower() != ".exe" for name in runtime_files)):
