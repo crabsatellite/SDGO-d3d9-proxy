@@ -96,6 +96,9 @@ void Reset(int mode = 1) {
 
 int main() {
     using namespace fixture;
+    // The production ModLoad initializes the new item lifecycle lock. This
+    // fixture calls the included implementation directly instead of ModLoad.
+    InitializeCriticalSection(&g_itemsLock);
     Reset();
     SCENARIO("room commands and bounded numbers");
     CHECK(!ParseTitle("normal room").enabled);
@@ -302,5 +305,6 @@ int main() {
     for (auto& thread : threads) thread.join();
     CHECK(std::set<unsigned>(draws.begin(), draws.end()).size() == draws.size());
     CHECK(std::find(draws.begin(), draws.end(), 0u) == draws.end());
+    DeleteCriticalSection(&g_itemsLock);
     return ai_test::Finish();
 }
