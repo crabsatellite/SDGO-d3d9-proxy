@@ -118,6 +118,9 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
+             SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
+             LIBS odbc32 bcrypt FILES config.example.ini)
 
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
@@ -172,6 +175,17 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(room_random_test tests/room_random_test.cpp)
+    target_link_libraries(room_random_test PRIVATE sdgo_api bcrypt)
+    sdgo_strict(room_random_test)
+    add_test(NAME room_random_offline COMMAND room_random_test)
+    set_tests_properties(room_random_offline PROPERTIES TIMEOUT 30)
+
+    # Explicitly invoked read-only host probe; not a CTest or staged executable.
+    add_executable(room_random_inventory_probe tests/room_random_inventory_probe.cpp mods/room_random/inventory.cpp)
+    target_link_libraries(room_random_inventory_probe PRIVATE sdgo_api odbc32)
+    sdgo_strict(room_random_inventory_probe)
+
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
