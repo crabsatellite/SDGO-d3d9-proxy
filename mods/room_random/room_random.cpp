@@ -207,7 +207,7 @@ std::atomic<uint64_t> g_token{0};
 
 struct Attempt {
     uint64_t token=0;
-    bool checked=false,enabled=false,prepared=false,applied=false,failed=false,synchronized=false;
+    bool checked=false,enabled=false,prepared=false,applied=false,failed=false,synchronized=false,cleanupChecked=false;
     uint8_t* preview=nullptr;
     uint8_t* actual=nullptr;
     Signature signature;
@@ -335,6 +335,56 @@ bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned human
                                         static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.active);
     return Broadcast(room,active,humans);
 }
+bool FreshNativePilots(uint8_t* room,const Signature& signature) {
+    // The native setup zeroes all twelve battle-pilot records before building
+    // the first human. A new start can reuse the same pooled room without ever
+    // calling the resource-release routine hooked below (disconnect/abort).
+    __try {
+        for(size_t slot=0;slot<signature.owners.size();++slot) {
+            const auto owner=signature.owners[slot];
+            if(!owner || (owner&kAiBit)) continue;
+            const auto* pilot=room+0x3CE4+slot*0x1F54;
+            const auto nativeOwner=Get<uint32_t>(pilot,0);
+            if(nativeOwner && nativeOwner!=owner) return false;
+            for(size_t unit=0;unit<4;++unit)
+                if(Get<uint32_t>(pilot,0x340+unit*0x658)) return false;
+        }
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+bool RetirePreviousRound(Attempt& a,uint8_t* room) {
+    if(a.cleanupChecked) return true;
+    SavedRoom previous;
+    {
+        std::lock_guard<std::mutex> lock(g_state);
+        auto found=g_saved.find(room);
+        if(found==g_saved.end()) {a.cleanupChecked=true;return true;}
+        if(found->second.token>=a.token || !FreshNativePilots(room,a.signature)) {
+            Fail(a,"previous battle still has live native loadouts");return false;
+        }
+        previous=std::move(found->second);g_saved.erase(found);
+    }
+    // Never restore an old snapshot over a newly populated native room. Its
+    // current records are authoritative, including changed players/selections.
+    // A non-random start still needs to undo the previous temporary client view.
+    if(!a.enabled && previous.clientsTouched) {
+        unsigned humans=0;
+        for(auto owner:a.signature.owners) if(owner && !(owner&kAiBit)) ++humans;
+        for(size_t slot=0;slot<a.signature.owners.size();++slot) {
+            const auto owner=a.signature.owners[slot];
+            if(!owner || (owner&kAiBit)) continue;
+            Source current;
+            if(!Capture(room+kSlotBase+slot*kSlotStride,&current) || current.owner!=owner ||
+               !Notify(room,static_cast<int>(slot),current,UsesDeck(a.signature.mode),humans)) {
+                std::lock_guard<std::mutex> lock(g_state);
+                g_saved.emplace(room,std::move(previous));
+                Fail(a,"cannot restore current client selections for a non-random start");return false;
+            }
+        }
+    }
+    g_api->Log(g_mod,SDGO_LOG_INFO,"retired round %llu after verified native pilot reset; fresh room records retained",previous.token);
+    a.cleanupChecked=true;return true;
+}
 bool Synchronize(Attempt& a,uint8_t* room) {
     if(a.synchronized) return true;
     if(!std::all_of(a.players.begin(),a.players.end(),[](const Player& p){return p.built;})) return true;
@@ -408,6 +458,7 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
     if(g_attempt) {
         Attempt& a=*g_attempt;
         if(!Prepare(a,room)) return 0;
+        if(!RetirePreviousRound(a,room)) return 0;
         if(a.enabled) {
             if(UsesDeck(mode)!=UsesDeck(a.signature.mode)) { Fail(a,"native mode/deck contract mismatch"); return 0; }
             if(!ApplyActual(a,room)) return 0;

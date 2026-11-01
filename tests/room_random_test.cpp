@@ -28,6 +28,7 @@ bool readFailure=false,changeOwner=false;
 bool changeReady=false;
 bool addAiAfterValidation=false;
 bool nativeOverrideSecond=false;
+bool freshNativeSetup=true;
 std::string fullTitle;
 uint32_t __cdecl FullTitle(uint32_t owner,char* out,uint32_t capacity) {
     if(owner!=1001 || fullTitle.empty() || capacity<=fullTitle.size()) return 0;
@@ -74,7 +75,7 @@ int __fastcall ValidateNative(void*,void*,uint8_t* snapshot,int slot) {
     }
     return 0;
 }
-int __fastcall BuildNative(void*,void*,uint8_t*,uint8_t* info,uint8_t*,uint8_t,uint8_t mode) {
+int __fastcall BuildNative(void*,void*,uint8_t*,uint8_t* info,uint8_t* pilot,uint8_t,uint8_t mode) {
     ++builds;
     const uint32_t owner=Get<uint32_t>(info,kOwner);
     std::vector<uint32_t> ids;
@@ -94,6 +95,8 @@ int __fastcall BuildNative(void*,void*,uint8_t*,uint8_t* info,uint8_t*,uint8_t,u
     for(uint32_t id:ids)
         CHECK(std::any_of(inventory.begin(),inventory.end(),[&](const auto& u){return u.owner==owner && u.unit==id;}));
     built[owner]=ids;
+    Put<uint32_t>(pilot,0,owner);
+    for(size_t i=0;i<ids.size();++i) Put<uint32_t>(pilot,0x340+i*0x658,ids[i]);
     return 1;
 }
 int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t length,uint32_t* sent) {
@@ -127,6 +130,7 @@ int __fastcall DispatchNative(void* proc,void*,int,void*,uint32_t*,uint32_t*) {
         if(valid) return valid;
     }
     if(addAiAfterValidation) Put<uint32_t>(room.data(),kSlotBase+2*kSlotStride+kOwner,kAiBit|123);
+    if(freshNativeSetup) std::memset(room.data()+0x3CE4,0,0x2B138);
     for(int slot=0;slot<12;++slot) {
         const uint32_t owner=Get<uint32_t>(Info(slot),kOwner);
         if(!owner || (owner&kAiBit)) continue;
@@ -152,6 +156,7 @@ void Reset(uint8_t mode=1,const char* title="!rand") {
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
     notices.clear();noticeCalls=failNotice=0;
+    freshNativeSetup=true;
     std::fill(client.begin(),client.end(),uint8_t{0xCC});
     reads=builds=releases=failAfter=validationError=0;readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
     Put<uint32_t>(room.data(),0,0x10077); room[4]=1;room[5]=mode;
@@ -407,6 +412,36 @@ int wmain(int argc,wchar_t** argv) {
     Reset(5,"!ai !rand");Put<uint32_t>(Info(0),0x450,21025);
     CHECK(Start()==0);CHECK(Get<uint32_t>(Info(0),0x450)==21025);
     Release(room.data(),nullptr);
+
+    SCENARIO("aborted battles can reuse the native room without a resource-release callback");
+    for(uint8_t mode=1;mode<=14;++mode) {
+        Reset(mode,"!ai !rand");const auto lobbySnapshot=room;
+        CHECK(Start()==0);const auto first=built;CHECK(g_saved.size()==1);
+        // Native re-entry copies fresh lobby records, then clears pilots. The
+        // old Mod bookkeeping intentionally remains, reproducing the live bug.
+        std::memcpy(room.data(),lobbySnapshot.data(),0x3CE4);
+        CHECK(Start()==0);CHECK(g_saved.size()==1);
+        for(const auto& p:built) CHECK(p.second!=first.at(p.first));
+        Release(room.data(),nullptr);
+        CHECK(Get<uint32_t>(Info(0),kActive)==880);
+    }
+
+    SCENARIO("a stale round cannot restore old choices over a fresh non-random start");
+    Reset(8,"!ai !rand");CHECK(Start()==0);
+    Put<uint32_t>(Info(0),kActive,101);Put<uint64_t>(Info(0),kActive+8,10077);
+    Put<float>(Info(0),kActive+74,2000.0f);
+    Put<uint32_t>(Info(1),kActive,201);Put<float>(Info(1),kActive+74,2000.0f);
+    Title(room,"!ai");
+    CHECK(Start()==0);CHECK(g_saved.empty());
+    CHECK(Get<uint32_t>(client.data(),0x5D7+kActive)==101);
+    CHECK(Get<uint64_t>(client.data(),0x5D7+kActive+8)==10077);
+
+    SCENARIO("an unexpected second start with live native pilots is still rejected");
+    Reset();const auto lobbyOriginal=room;CHECK(Start()==0);
+    std::memcpy(room.data(),lobbyOriginal.data(),0x3CE4);freshNativeSetup=false;
+    const auto liveSource=Sources();const auto oldToken=g_saved.at(room.data()).token;
+    CHECK(Start()==kStartError);CHECK(Sources()==liveSource);
+    CHECK(g_saved.at(room.data()).token==oldToken);
 
     SCENARIO("repeated battles in the same room change both humans without rejoining");
     Reset(3);std::map<uint32_t,std::vector<uint32_t>> last;

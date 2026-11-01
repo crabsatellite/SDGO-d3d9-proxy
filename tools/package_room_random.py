@@ -16,7 +16,7 @@ def main():
     server_version=config['mod']['version']
     client_config=configparser.ConfigParser(interpolation=None)
     client_config.read(repo/'mods/room_random_client/mod.ini',encoding='utf-8')
-    version=client_config['mod']['version']+'-beta'
+    version=max((server_version,client_config['mod']['version']),key=lambda v:tuple(map(int,v.split('.'))))+'-beta'
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binaries',type=Path,default=repo/'build/Release')
     parser.add_argument('--out',type=Path,default=repo/f'dist/SDGO-RoomRandom-{version}.zip')

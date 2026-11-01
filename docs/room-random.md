@@ -27,6 +27,12 @@ commands. The 0.1.6 client companion applies complete records before that queue,
 then refreshes them at the start boundary. It also records native human-factory
 observations for manual acceptance. Failed starts and teardown restore originals.
 
+Server 0.1.7 also retires stale bookkeeping when a disconnect/abort skipped the
+resource-release callback. It requires the native setup's cleared human pilot
+records before accepting the next round, preserves newly populated selections
+and rejects overwriting genuinely live loadouts. This prevents a stale round
+from causing `ERR_BATTLE_START_FAIL` on re-entry.
+
 Close the client, select it in Mod Manager and import the supplied
 `SDGO-RoomRandomClient-0.1.6-beta.zip`, then use the normal launcher. No new settings
 are needed. Distribute this overlay to every participant. It contains no game files

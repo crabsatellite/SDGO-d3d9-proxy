@@ -41,6 +41,16 @@ the companion disabled, and checks fresh construction with it enabled while the
 original queued handler is still blocked by starting state. A pass-through native
 factory observer records the model used by the real client for manual testing.
 
+The subsequent re-entry test exposed a separate server lifecycle failure:
+`previous battle has not released its loadouts`. Resource release is not a
+universal disconnect/abort callback. Native human setup clears its battle-pilot
+region before a valid new constructor call; server 0.1.7 uses this verified reset
+boundary to retire older bookkeeping without restoring an old snapshot over the
+fresh room. A non-random new start synchronizes its current authoritative choices.
+Live native unit records continue to prevent replacement. Regression cases retain
+old bookkeeping across all fourteen mode values, omit release callbacks, and test
+changed selections plus re-entry without `!rand`.
+
 The full ship leader and four inventory UIDs match the chosen unit records.
 Partial notification or later start failure restores original records; native
 pilot release restores them at teardown. Notices are queued only once per start,
