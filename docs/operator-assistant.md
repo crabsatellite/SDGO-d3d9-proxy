@@ -28,9 +28,14 @@ short ASCII identity tokens and a completed-name flag; the matching client Mod
 renders their configured names without changing other operators' naming flow.
 Existing holdings of the five defaults are backed up and upgraded in place to
 permanent use; user-operator IDs, slots and equipped references stay.
+All five support mission parts through paired native client/server flags, preserving
+skills and drops. The host backs up the original flag and restores it when the
+default override is disabled. Existing players need the matching client DLL update.
 
 Validation includes 22 Python tests, 4 DLL/native fixtures, actual UI operation,
 and a fresh SQL fixture database using synthetic accounts. Live gameplay and
 in-game presentation remain manual acceptance gates. The default pack also has
 isolated SQL tests of permanent grants, legacy alias migration, typed pools and
 all 289 current deduplicated blueprints through the native inventory procedure.
+Each default also passes the native mission-parts equipment procedure; unrelated
+operators retain their existing restrictions.
