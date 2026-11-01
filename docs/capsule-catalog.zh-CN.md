@@ -19,10 +19,16 @@ A/B/C 机体可上传处理好的 PNG，拖动取景框、拉角或滑杆缩放�
 
 安装前关闭目标游戏。服主向朋友分发生成的整个 `player` 目录，玩家运行其中的
 `Install-Client.cmd -GameDir "D:\Game"`，以后照常用原启动器进入游戏，无需额外的“开始联机”按钮。
+每次修改奖池都要重新生成并分发配套玩家包；只更新框架 DLL 不会同步奖池图片和槽位。
+服主核对玩家包 manifest、客户端 `runtime.ini` 和服务端
+`sdgo_mod_CapsuleRuntimeState.CatalogRevision` 的 `catalog_revision` 完全一致，
+Manager 工作区也应指向同一份目录配置。
 
 固定新池六格权重必须是正整数且合计 1000；使用原生模板时继承等级排列、概率和价格。
 既有未修改奖池继续走原生序列，新池使用独立权重抽样。自定义机保留原生候选白名单，新增高等级候选只接受
 SR，或没有任何设计图配方记录的 SS；普通 S 与有配方 SS 不进入。增加候选不增加 SR 可选槽位。
+独立抽样没有前期压低、保底或连续同机体保护；原生序列包含防连续重复处理。
+权重一致不代表出奖顺序与原版完全一致，见[分布核对记录](investigations/capsule-weighted-distribution.zh-CN.md)。
 
 其他 Mod 请参考[共用接口与资源边界](capsule-integration.md)，通过同一目录编译两端，避免重复覆盖同一份资源。
 显示修复见[修订记录](capsule-display-fix.zh-CN.md)。自动测试与安装读回不能代替实际账号扣费、发货的游戏内手动验收。

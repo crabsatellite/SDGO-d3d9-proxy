@@ -41,7 +41,12 @@ catalog has no uploaded overrides and uses original local client artwork. No
 restored game artwork, game archives or AI models are published by this feature.
 
 Give players the complete generated `player` directory, including its manifest
-and `Install-Client.cmd`. Check first, then install:
+and `Install-Client.cmd`. Every catalog change requires a matching new player
+package; updating only the framework DLL does not update prize pictures or slots.
+Read back the generated package, installed client `runtime.ini` and server
+`sdgo_mod_CapsuleRuntimeState.CatalogRevision`: all must have the same
+`catalog_revision`. Keep the owner workspace on that catalog too. Check first,
+then install:
 
 ```powershell
 .\Install-Client.cmd -GameDir "D:\Game" -CheckOnly
@@ -52,6 +57,10 @@ New fixed pools use independent weighted selection with six positive integer
 weights totaling 1000. Existing unedited pools retain native sequence behavior.
 Native templates carry both their grade order and price; an all-A machine is not
 priced as a cheap mixed pool merely because it was newly generated.
+Independent selection has no early-draw penalty, pity counter or consecutive
+duplicate suppression. Native sequence behavior includes duplicate suppression;
+copying its weights does not reproduce its draw order. See the
+[distribution investigation](investigations/capsule-weighted-distribution.zh-CN.md).
 
 Custom candidates preserve the source-bound native whitelist. Additional high-rank
 candidates may be SR, or SS with no blueprint recipe record. Ordinary S and
