@@ -3,6 +3,10 @@
 Client Mod `storage_claim` adds **一键领取** beside the two native storage tabs.
 [简体中文](storage-claim.zh-CN.md)
 
+Version 0.1.1 fixes the menu-state guard and keeps the first confirmation armed
+across native hover/leave events. The Mod logs page attachment and received
+clicks separately from successful loading.
+
 Select the items or gifts tab, click the new button, then **确认领取** once for
 the entire batch. Timed rewards may begin their validity period when claimed.
 The Mod processes every page in that tab, with progress at the bottom. Click

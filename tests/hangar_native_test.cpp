@@ -45,7 +45,7 @@ void Setup(){
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
     pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
-    Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,static_cast<void*>(nullptr));
+    Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,reinterpret_cast<void*>(0xBAADF00D));
     Put(grid.data(),0,reinterpret_cast<void*>(0x12345678));Put(grid.data(),0x44,panel.data());panel[0x162]=1;
     Put(session.data(),0x14,7);Put(session.data(),0x58,uint32_t{0});Put(session.data(),0x5C,uint32_t{0});
     g_info=&infoPointer;g_profile=&profilePointer;g_grid=grid.data();g_gridVtable=Read<void*>(grid.data());
@@ -101,7 +101,17 @@ int main(){
     const auto epoch=g_epoch;::Clear(fixture::info.data(),nullptr);assert(g_epoch!=epoch);
     fixture::Setup();fixture::panel[0x162]=0;Snapshot invalid;assert(!GetSnapshot(invalid));
     fixture::Setup();fixture::info[0x20]=0;assert(!GetSnapshot(invalid) && fixture::sends==0);
-    fixture::Setup();fixture::Put(fixture::mode.data(),0x0C,reinterpret_cast<void*>(1));assert(!Visible() && !GetSnapshot(invalid));
+    fixture::Setup();fixture::Put(fixture::app.data(),0x4A0,uint32_t{22});assert(!Visible() && !GetSnapshot(invalid));
+    // The real lobby's service object has no game-mode member at +0C. Both
+    // nonzero neighboring heap bytes and an unreadable service must be ignored.
+    fixture::Setup();fixture::Put(fixture::app.data(),0x4A4,reinterpret_cast<void*>(1));assert(Visible() && GetSnapshot(invalid));
+    auto* guarded=static_cast<uint8_t*>(VirtualAlloc(nullptr,8192,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));assert(guarded);
+    DWORD oldProtection=0;assert(VirtualProtect(guarded+4096,4096,PAGE_NOACCESS,&oldProtection));
+    fixture::Put(fixture::app.data(),0x4A4,guarded+4096-8);assert(Visible() && GetSnapshot(invalid));
+    assert(VirtualFree(guarded,0,MEM_RELEASE));
+    for(uint32_t state:{0u,4u,21u,22u,23u,24u,25u,30u,UINT32_MAX}){
+        fixture::Put(fixture::app.data(),0x4A0,state);assert(!Visible() && !GetSnapshot(invalid));
+    }
     fixture::Setup();fixture::owned[1].lock=1;s=fixture::Capture();assert(ById(s,102)->lock==1);fixture::Run(sdgo::hangar::Sort(s,g_rules));assert(ById(fixture::Capture(),102)->slot==3);
     // Failed Mod initialization leaves the original unit-management actions usable.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());page_fixture::failSkin=true;

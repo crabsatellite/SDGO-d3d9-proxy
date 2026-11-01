@@ -40,11 +40,11 @@ Beta and Experimental labels indicate release channels.
 | Per-round random loadouts (Beta) <!-- catalog: `room_random` --> | Randomized match loadouts | [Use](docs/room-random.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Room title extensions | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Combat AI behavior | [Use](docs/battle-ai.md) |
-| Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Unit inventory management | [Use](docs/hangar-manager.md) |
+| Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Sort and exchange duplicates on the native unit-management page; 0.2.3 fixes lobby clicks | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Operator content management | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Capsule content management | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Scheduled reward events | [Use](docs/daily-rewards.md) |
-| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection | [Use](docs/storage-claim.md) |
+| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection; 0.1.1 fixes lobby clicks and hover between confirmation clicks | [Use](docs/storage-claim.md) |
 
 <!-- /mod-category:gameplay -->
 

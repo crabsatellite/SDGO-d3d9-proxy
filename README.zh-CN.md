@@ -40,11 +40,11 @@ Beta、Experimental 表示发布阶段。
 | 每局随机机体（Beta） <!-- catalog: `room_random` --> | 随机对战配置 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 房间标题扩展 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 战斗 AI 行为 | [使用说明](docs/battle-ai.md) |
-| 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 机体库存管理 | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 在机体管理页整理、兑换重复机体；0.2.3 修复大厅按钮点击被拦截 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 副官内容管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 扭蛋内容管理 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 定时奖励活动 | [使用说明](docs/daily-rewards.zh-CN.md) |
-| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 自动分页领取奖品 | [使用说明](docs/storage-claim.zh-CN.md) |
+| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 自动分页领取奖品；0.1.1 修复大厅点击及鼠标经过取消确认 | [使用说明](docs/storage-claim.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 

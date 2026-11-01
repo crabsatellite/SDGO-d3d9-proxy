@@ -35,7 +35,8 @@ void Setup(Tab tab=Tab::Items) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_ui.Detach();storage_fixture::Setup();
     rewards.clear();for(uint64_t i=1;i<=12;++i)rewards.push_back({{i+(tab==Tab::Items?0x100000000ULL:0),tab==Tab::Gifts?i*1234567890123ULL:0},false});
     total=12;pending.clear();sends=grants=nativeChecks=manual=appCalls=0;rejected=selection=false;g_retiredChecks.clear();
-    app={};connection={};Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
+    app={};connection={};Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,reinterpret_cast<void*>(1));
+    Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
     g_event=reinterpret_cast<NativeUI>(&Event);g_packet=reinterpret_cast<NativePacket>(&Original);
     api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=g_nextSend=0;g_interval=200;
@@ -90,6 +91,12 @@ int main() {
     storage_fixture::Put(service.data(),0x180,reinterpret_cast<uint8_t*>(1));storage_fixture::Put(service.data(),0x184,reinterpret_cast<uint8_t*>(29));
     g_nextSend=0;Timer(nullptr,WM_TIMER,0,0);assert(!g_ui.Owns(service.data()) && storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimAll"),0x162)==0 && sends==1);
     fixture::Setup();g_ui.Detach();UIEvent(nullptr,nullptr,service.data(),0x101,0,Pointer(L"CloseBtn1"));assert(manual==1 && !sends);
+    fixture::Setup();Click();assert(g_armed);
+    for(uint32_t event:{0x102u,0x103u})UIEvent(nullptr,nullptr,service.data(),event,0,Pointer(L"ModStorageClaimAll"));
+    assert(g_armed && !g_batch.Busy() && !sends);Click();assert(g_batch.Busy());
+    fixture::Setup();for(uint32_t state:{0u,4u,21u,22u,23u,24u,25u,30u,UINT32_MAX}) {
+        storage_fixture::Put(app.data(),0x4A0,state);assert(!Available());Click();assert(!g_armed && !sends);
+    }
     fixture::Setup();g_ui.Detach();storage_fixture::Setup();failSkinAt=2;bool failed=false;try{g_ui.Attach(service.data(),Bind());}catch(const std::exception&){failed=true;g_ui.Detach();}
     assert(failed && storage_fixture::Get<uint8_t>(Pointer(L"ModStorageClaimAll"),0x162)==0);
     // Real Win32 thread timers are delivered by the normal message pump, with

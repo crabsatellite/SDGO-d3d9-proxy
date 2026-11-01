@@ -6,6 +6,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/storage_claim_model.h"
+#include "sdgo/inventory_app_state.h"
 #include "native_ui.h"
 
 namespace {
@@ -21,6 +22,7 @@ NativeInit g_init=nullptr;NativeUI g_event=nullptr;NativePacket g_packet=nullptr
 NativeSession g_session=nullptr,g_app=nullptr;NativeSend g_send=nullptr;NativeBusy g_busy=nullptr;
 ui::Page g_ui;Batch g_batch;void* g_service=nullptr;void* g_owner=nullptr;
 UINT_PTR g_timer=0;DWORD g_thread=0;bool g_armed=false,g_pumping=false;
+bool g_timerObserved=false;
 Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_nextSend=0,g_observedSession=0;
 uint32_t g_interval=200,g_timeout=10000,g_limit=5000;uint16_t g_error=0;
 struct RetiredCheck {Tab tab;Key key;};
@@ -35,8 +37,7 @@ uint64_t SessionUnsafe() {
 uint64_t Session(){__try{return SessionUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){return 0;}}
 bool AvailableUnsafe() {
     if(!g_ui.Owns(g_service) || !g_ui.Visible())return false;
-    auto* app=g_app();if(!app)return false;auto* game=Read<uint8_t*>(app,0x4A4);
-    return !game || !Read<void*>(game,0x0C);
+    return sdgo::inventory::MenuAvailable(g_app());
 }
 bool Available(){__try{return AvailableUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){return false;}}
 Tab CurrentTab(){const auto tab=Read<int>(g_service,0x15C);if(tab<0 || tab>1)throw std::runtime_error("unknown storage tab");return static_cast<Tab>(tab);}
@@ -126,22 +127,33 @@ void DisableUI() {
     g_ui.Detach();
 }
 void CALLBACK Timer(HWND,UINT,UINT_PTR,DWORD) {
-    __try{PumpUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){g_pumping=false;g_batch.Disconnect();DisableUI();}
+    __try{
+        if(!g_timerObserved){g_timerObserved=true;g_api->Log(g_mod,SDGO_LOG_INFO,"native storage UI timer active on attached thread");}
+        PumpUnsafe();
+    }__except(EXCEPTION_EXECUTE_HANDLER){g_pumping=false;g_batch.Disconnect();DisableUI();}
 }
 bool AttachUnsafe(void* self){return g_ui.Attach(self);}
 bool Attach(void* self){__try{return AttachUnsafe(self);}__except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();return false;}}
 void __fastcall Init(void* self,void*) {
-    if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}
+    if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_timerObserved=false;
     if(g_batch.Busy())g_batch.Stop(Reason::Changed);g_armed=false;g_ui.Detach();
     g_init(self);g_service=self;g_thread=GetCurrentThreadId();
     try {
         if(Attach(self))g_timer=SetTimer(nullptr,0,75,&Timer);
         if(!g_timer){g_ui.Unpublish();g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"storage UI unavailable; native controls preserved");}
+        else g_api->Log(g_mod,SDGO_LOG_INFO,"native storage UI attached; app state %u",sdgo::inventory::AppState(g_app()));
     }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"storage UI initialization failed; native controls preserved");}
 }
 uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void* control) {
+    if(self!=g_service && event==0x101 && g_ui.Click(control))g_api->Log(g_mod,SDGO_LOG_WARN,"storage button receiver does not match attached page");
+    if(self==g_service && event==0x101 && g_ui.Click(control) && !Available()) {
+        g_ui.Display(L"一键领取",L"当前不是可操作的大厅状态，请返回大厅后重试。");
+        g_api->Log(g_mod,SDGO_LOG_WARN,"storage claim click ignored: native menu state unavailable");
+        return 0;
+    }
     if(self==g_service && Available()) {
         if(event==0x101 && g_ui.Click(control)) {
+            g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim button received; app state %u, armed %d",sdgo::inventory::AppState(g_app()),g_armed?1:0);
             if(g_batch.Busy()){g_batch.Stop(Reason::Cancelled);DisplayState();return 0;}
             if(g_batch.Outstanding()){DisplayState();return 0;}
             const auto session=Session();const auto tab=CurrentTab();
@@ -160,7 +172,9 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
             if(!close)return 0;
             g_batch.Stop(Reason::Cancelled);
         }
-        g_armed=false;
+        // Native hover/leave events also arrive here between the two clicks.
+        // They must not disarm the confirmation the player just requested.
+        if(event==0x101 || event==0x301)g_armed=false;
     }
     return g_event(handler,self,event,second,control);
 }
