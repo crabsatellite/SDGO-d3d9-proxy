@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -14,12 +15,31 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 
 
 HOST_KEY = "BattleServer-548A891D-0046C000"
 HOST_EXECUTABLE: Path | None = None
+
+
+@contextmanager
+def temporary_host_directory(**kwargs):
+    root = Path(tempfile.mkdtemp(**kwargs)).resolve()
+    try:
+        yield str(root)
+    finally:
+        # The child has already exited and been waited for. Windows may still
+        # hold its image briefly while releasing executable mappings/scanning.
+        for attempt in range(21):
+            try:
+                shutil.rmtree(root)
+                break
+            except PermissionError as error:
+                if error.winerror not in (5, 32) or attempt == 20:
+                    raise
+                time.sleep(0.1)
 SCENARIOS = {
     "valid": {
         "exit": 0,
@@ -92,7 +112,7 @@ class NativeControllerAbiTests(unittest.TestCase):
         *,
         required_cases: str | None = None,
     ) -> tuple[subprocess.CompletedProcess, str, list[dict]]:
-        with tempfile.TemporaryDirectory(prefix=f"sdgo-gametest-{scenario}-") as temporary:
+        with temporary_host_directory(prefix=f"sdgo-gametest-{scenario}-") as temporary:
             root = Path(temporary)
             host = root / self.host.name
             shutil.copy2(self.host, host)
@@ -232,7 +252,7 @@ class NativeControllerAbiTests(unittest.TestCase):
         self.assertEqual(events[-1]["status"], "fail")
 
     def test_ordinary_environment_does_not_run(self):
-        with tempfile.TemporaryDirectory(prefix="sdgo-gametest-disabled-") as temporary:
+        with temporary_host_directory(prefix="sdgo-gametest-disabled-") as temporary:
             root = Path(temporary)
             host = root / self.host.name
             shutil.copy2(self.host, host)

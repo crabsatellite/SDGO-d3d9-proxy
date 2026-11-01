@@ -115,6 +115,8 @@ def main():
         symbol_path = target / "sdgo/symbols/GOnline-54BE1568-00C97000.ini"
         if role == "Labels": symbol_path.write_bytes(original_symbols)
         settings = (mod / "mod.ini").read_text(encoding="utf-16")
+        if not ini(mod / "mod.ini").has_section("settings"):
+            settings += "\n[settings]\n"
         (mod / "mod.ini").write_text(settings + "\nUserSetting=42\n", encoding="utf-16")
         preserved = {f: f.read_bytes() for f in [target / loader, target / "sdgo/core.dll", global_ini, target / "sdgo/mods/other/keep.txt"]}
         profile = work / (role + "-profile.ini")
