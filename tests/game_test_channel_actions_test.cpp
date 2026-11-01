@@ -916,7 +916,7 @@ void TestSemanticChannelType(ChannelActions& channels)
 {
     ResetFixture(channels);
     Check(channels.EnsureVsType(2)==ChannelActions::kRequestSent && g_lobbyRequestedChannel==400 && channels.State().target_group==3,
-        "ship mode skips the second normal VS group and chooses native channel type2 in group3");
+        "explicit special type skips the second normal VS group and chooses native type2 in group3");
     uint8_t* reply=AllocateGuardedReply(400,0);
     Check(reply!=nullptr,"semantic channel reply allocated");
     if (reply) {
@@ -935,7 +935,7 @@ void TestSemanticChannelType(ChannelActions& channels)
     ResetFixture(channels);
     *reinterpret_cast<uint32_t*>(GroupChannel(3,0)+0x06)=1;
     Check(channels.EnsureVsType(2)==ChannelActions::kNoAvailableChannel && g_networkOriginalCalls==0,
-        "no ship channel cannot silently fall back to a normal VS channel");
+        "missing requested special type cannot silently fall back to a normal VS channel");
     ResetFixture(channels);
     Check(channels.EnsureVsType(1)==ChannelActions::kAlreadySelected && g_networkOriginalCalls==0,
         "an already selected normal VS channel needs no native request");

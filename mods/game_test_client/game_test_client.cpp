@@ -256,7 +256,9 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         const auto state = actions.OnboardingState();
         if (!state.profile_pilot_id || actions.AppState() == 4 || actions.AppState() == 25) return SDGO_GAME_TEST_WAIT;
         {
-            const uint32_t requiredType = RequestedMode() == 6 || RequestedMode() == 7 ? 2 : 1;
+            // Grid/Tag are room rules on a regular battle channel. Native
+            // channel type2 is the time-gated clan channel, not a ship mode.
+            const uint32_t requiredType = 1;
             const ChannelActions::Result result = channels.EnsureVsType(requiredType);
             const auto channel = channels.State();
             static uint32_t lastResult = UINT32_MAX;
