@@ -23,6 +23,6 @@ foreach($mode in @('enabled','disabled')) {
     if($code -ne 0){throw ($output -join "`n")}
     $output|Write-Host
     $log=[IO.File]::ReadAllText((Join-Path $root 'sdgo/logs/sdgo.log'))
-    if($mode -eq 'enabled' -and (-not $log.Contains('human factory type 15 model 11032: matches server') -or -not $log.Contains('2 of 2 mods active'))){throw 'Interior/entry hook coexistence or native model observation failed'}
+    if($mode -eq 'enabled' -and (-not $log.Contains('human factory type 15 model 11032: matches server') -or -not $log.Contains('cache source 2') -or -not $log.Contains('2 of 2 mods active'))){throw 'Interior/entry hook coexistence, 3D context or native model observation failed'}
 }
 Write-Host 'ALL CLIENT START-STATE RUNTIME CASES PASSED'

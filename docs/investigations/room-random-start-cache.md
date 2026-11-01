@@ -41,6 +41,17 @@ the companion disabled, and checks fresh construction with it enabled while the
 original queued handler is still blocked by starting state. A pass-through native
 factory observer records the model used by the real client for manual testing.
 
+The next live readback identified the actual context error: the 3D path leaves
+the legacy `CAccountData+0xEC` pointer null. Profile unit data had changed while
+the constructed battle participant still carried the old template. Client 0.1.8
+resolves app-state 18's 3D manager, its model at manager+0x38 and the verified
+native room-info getter at vtable+0x1C (`0x00713830`). It validates and uses the
+model's virtual owner/unit/ship getters and setters. Normal and mission models
+have different slot locations (`0x00533` vs `0x005C6` relative to packed header);
+native interfaces, rather than either fixed offset, select the current layout.
+The fixture covers null legacy publication and independent mission storage;
+existing legacy room data remains supported as a distinct native UI path.
+
 The subsequent re-entry test exposed a separate server lifecycle failure:
 `previous battle has not released its loadouts`. Resource release is not a
 universal disconnect/abort callback. Native human setup clears its battle-pilot

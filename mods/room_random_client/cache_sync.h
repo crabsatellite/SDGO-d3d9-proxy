@@ -6,8 +6,19 @@
 namespace room_random_client {
 constexpr size_t kSlots=12,kStride=0x48E,kSlotBase=0x533,kOwner=0x429;
 template<class T> T Read(const uint8_t* p,size_t at) {T v;std::memcpy(&v,p+at,sizeof(v));return v;}
-struct Context {uint8_t* profile=nullptr;uint8_t* room=nullptr;uint32_t local=0;};
-struct Result {unsigned applied=0,mismatched=0,reason=0;uint32_t owner=0,model=0,cached=0;};
+struct SlotAccess {
+    using Owner=uint32_t(__thiscall*)(uint8_t*,int);
+    using Get=uint8_t*(__thiscall*)(uint8_t*,int);
+    using Set=void(__thiscall*)(uint8_t*,int,const uint8_t*);
+    Owner owner=nullptr;Get active=nullptr,ship=nullptr;Set setActive=nullptr,setShip=nullptr;
+};
+struct Context {
+    uint8_t* profile=nullptr;uint8_t* room=nullptr;uint32_t local=0;unsigned source=0;
+    uint8_t* model=nullptr;SlotAccess slots;
+    uint32_t Owner(size_t slot) const {return model ? slots.owner(model,static_cast<int>(slot)) : Read<uint32_t>(room,kSlotBase+slot*kStride+kOwner);}
+    uint8_t* Active(size_t slot) const {return model ? slots.active(model,static_cast<int>(slot)) : room+kSlotBase+slot*kStride+0x49;}
+};
+struct Result {unsigned applied=0,mismatched=0,reason=0,source=0;uint32_t owner=0,model=0,cached=0;};
 class CacheSync {
     struct Pending {
         uint32_t owner=0,oldModel=0;
@@ -20,16 +31,18 @@ class CacheSync {
     std::array<Pending,kSlots> pending_{};
     std::array<uint32_t,kSlots> expected_{},previous_{};
     void Unit(const Context& c,size_t slot,Pending& p) {
-        std::memcpy(c.room+kSlotBase+slot*kStride+0x49,p.active.data(),p.active.size());
+        if(c.model) c.slots.setActive(c.model,static_cast<int>(slot),p.active.data());
+        else std::memcpy(c.room+kSlotBase+slot*kStride+0x49,p.active.data(),p.active.size());
         if(p.owner==c.local) std::memcpy(c.profile+0x1A9,p.active.data(),p.active.size());
     }
     void Ship(const Context& c,size_t slot,Pending& p) {
-        std::memcpy(c.room+kSlotBase+slot*kStride+0x146,p.deck.data(),p.deck.size());
+        if(c.model) c.slots.setShip(c.model,static_cast<int>(slot),p.deck.data());
+        else std::memcpy(c.room+kSlotBase+slot*kStride+0x146,p.deck.data(),p.deck.size());
         if(p.owner==c.local) std::memcpy(c.profile+0x2A6,p.deck.data(),p.deck.size());
     }
 public:
     Result Process(const Context& c,uint16_t opcode,const uint8_t* packet) {
-        Result result;
+        Result result;result.source=c.source;
         if(!c.profile || !c.room || !c.local || !packet) {result.reason=1;return result;}
         if(Read<uint16_t>(packet,0)!=opcode) {result.reason=2;return result;}
         const uint32_t key=Read<uint32_t>(c.room,0);
@@ -37,12 +50,12 @@ public:
         if(opcode==0x0861 || opcode==0x098B) {
             const uint32_t slot=Read<uint32_t>(packet,10),owner=Read<uint32_t>(packet,6);
             if(slot>=kSlots || !owner || (owner&0x80000000u)) {result.reason=3;return result;}
-            if(Read<uint32_t>(c.room,kSlotBase+slot*kStride+kOwner)!=owner) {result.reason=4;return result;}
+            if(c.Owner(slot)!=owner || !c.Active(slot)) {result.reason=4;return result;}
             auto& p=pending_[slot];
             if(p.owner!=owner) p={};
             p.owner=owner;
             if(opcode==0x0861) {
-                p.oldModel=Read<uint32_t>(c.room,kSlotBase+slot*kStride+0x49);
+                p.oldModel=Read<uint32_t>(c.Active(slot),0);
                 std::memcpy(p.active.data(),packet+0x12,p.active.size());p.unit=true;
                 Unit(c,slot,p);result.model=Read<uint32_t>(p.active.data(),0);
             } else {
@@ -56,13 +69,13 @@ public:
                 const auto* entry=packet+0x20+slot*0x10F;
                 const uint32_t owner=Read<uint32_t>(entry,0),model=Read<uint32_t>(entry,0x0E);
                 if(!owner || (owner&0x80000000u) || !model ||
-                   Read<uint32_t>(c.room,kSlotBase+slot*kStride+kOwner)!=owner) continue;
+                   c.Owner(slot)!=owner || !c.Active(slot)) continue;
                 auto& p=pending_[slot];
                 if(p.owner==owner && p.unit && Read<uint32_t>(p.active.data(),0)==model) {
                     if(p.ship && (c.room[5]==6 || c.room[5]==7)) Ship(c,slot,p);
                     Unit(c,slot,p);++result.applied;
                 }
-                const auto cached=Read<uint32_t>(c.room,kSlotBase+slot*kStride+0x49);
+                const auto cached=Read<uint32_t>(c.Active(slot),0);
                 if(cached!=model) {++result.mismatched;result.owner=owner;result.model=model;result.cached=cached;}
                 else if(!result.mismatched) {result.owner=owner;result.model=model;result.cached=cached;}
                 expected_[slot]=model;previous_[slot]=p.oldModel;

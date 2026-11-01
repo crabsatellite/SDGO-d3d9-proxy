@@ -1,11 +1,13 @@
 #include <windows.h>
+#include <cstdio>
 #include "sdgo/sdgo_api.h"
 #include "cache_sync.h"
+#include "context.h"
 
 namespace {
 const SdgoApi* g_api=nullptr;
 SdgoMod* g_mod=nullptr;
-uint8_t** g_profile=nullptr;
+room_random_client::Bindings g_bindings;
 void* g_original=nullptr;
 const DWORD g_defaultMxcsr=0x1F80;
 room_random_client::CacheSync g_sync;
@@ -17,10 +19,7 @@ room_random_client::Result GuardedPacket(BYTE* frame,uint16_t* opcode) {
     __try {
         *opcode=static_cast<uint16_t>(room_random_client::Read<uint32_t>(frame,0x14));
         if(*opcode!=0x0861 && *opcode!=0x098B && *opcode!=0x06C3) return {};
-        auto* profile=g_profile ? *g_profile : nullptr;
-        if(!profile) {room_random_client::Result r;r.reason=1;return r;}
-        room_random_client::Context context{profile,room_random_client::Read<uint8_t*>(profile,0xEC),
-                                             room_random_client::Read<uint32_t>(profile,0x138)};
+        const auto context=room_random_client::Resolve(g_bindings);
         return g_sync.Process(context,*opcode,room_random_client::Read<const uint8_t*>(frame,0x18));
     } __except(EXCEPTION_EXECUTE_HANDLER) {room_random_client::Result r;r.reason=5;return r;}
 }
@@ -29,8 +28,8 @@ void __stdcall OnPacket(BYTE* frame) {
     EnterCriticalSection(&g_lock);
     const auto result=GuardedPacket(frame,&opcode);
     LeaveCriticalSection(&g_lock);
-    if(result.applied) g_api->Log(g_mod,SDGO_LOG_INFO,"native %04X applied immediately: %u human loadout record(s), unit %lu",
-        opcode,result.applied,static_cast<unsigned long>(result.model));
+    if(result.applied) g_api->Log(g_mod,SDGO_LOG_INFO,"native %04X applied immediately: %u human loadout record(s), unit %lu, cache source %u",
+        opcode,result.applied,static_cast<unsigned long>(result.model),result.source);
     else if(result.reason && (opcode==0x0861 || opcode==0x098B || opcode==0x06C3))
         g_api->Log(g_mod,SDGO_LOG_WARN,"native %04X cache update skipped: context reason %u",opcode,result.reason);
     if(opcode==0x06C3 && (result.applied || result.mismatched))
@@ -75,8 +74,22 @@ void* __cdecl Factory(int type,uint32_t model) {
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
     if(api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite) || !api->HookSite) return 0;
-    g_profile=reinterpret_cast<uint8_t**>(api->Symbol(mod,"room_random.client_profile"));
-    if(!g_profile) return 0;
+    g_bindings.profile=reinterpret_cast<uint8_t**>(api->Symbol(mod,"room_random.client_profile"));
+    g_bindings.app=reinterpret_cast<uint8_t**>(api->Symbol(mod,"room_random.client_app"));
+    g_bindings.waitRoomVtable=api->Symbol(mod,"room_random.client_waitroom_vtable");
+    g_bindings.roomInfo=reinterpret_cast<room_random_client::RoomInfoFn>(api->Symbol(mod,"room_random.client_room_info"));
+    if(!g_bindings.profile || !g_bindings.app || !g_bindings.waitRoomVtable || !g_bindings.roomInfo) return 0;
+    auto bindSlots=[&](room_random_client::SlotAccess& s,const char* prefix) {
+        char name[96];
+        auto symbol=[&](const char* key) {sprintf_s(name,"room_random.client_%s_%s",prefix,key);return api->Symbol(mod,name);};
+        s.owner=reinterpret_cast<room_random_client::SlotAccess::Owner>(symbol("owner"));
+        s.active=reinterpret_cast<room_random_client::SlotAccess::Get>(symbol("unit"));
+        s.ship=reinterpret_cast<room_random_client::SlotAccess::Get>(symbol("ship"));
+        s.setActive=reinterpret_cast<room_random_client::SlotAccess::Set>(symbol("set_unit"));
+        s.setShip=reinterpret_cast<room_random_client::SlotAccess::Set>(symbol("set_ship"));
+        return s.owner && s.active && s.ship && s.setActive && s.setShip;
+    };
+    if(!bindSlots(g_bindings.normal,"normal") || !bindSlots(g_bindings.mission,"mission"))return 0;
     InitializeCriticalSection(&g_lock);
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
     if(!api->HookCode(mod,"room_random.client_factory",reinterpret_cast<void*>(&Factory),reinterpret_cast<void**>(&g_factory))) return 0;

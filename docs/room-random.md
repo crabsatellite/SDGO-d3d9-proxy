@@ -23,7 +23,7 @@ See [combined commands](room-commands.md).
 `!ai !rand` is valid. The server sends native `0x0861` full-unit and, for deck modes,
 `0x098B` full-ship notifications before `0x06C3` battle start. Version 0.1.5 alone
 was insufficient in real gameplay: the 3D room handles those notices as queued
-commands. The 0.1.6 client companion applies complete records before that queue,
+commands. The 0.1.8 client companion applies complete records before that queue,
 then refreshes them at the start boundary. It also records native human-factory
 observations for manual acceptance. Failed starts and teardown restore originals.
 
@@ -34,9 +34,14 @@ and rejects overwriting genuinely live loadouts. This prevents a stale round
 from causing `ERR_BATTLE_START_FAIL` on re-entry.
 
 Close the client, select it in Mod Manager and import the supplied
-`SDGO-RoomRandomClient-0.1.6-beta.zip`, then use the normal launcher. No new settings
+current `SDGO-RoomRandomClient-*-beta.zip`, then use the normal launcher. No new settings
 are needed. Distribute this overlay to every participant. It contains no game files
 or server credentials, and its symbol fragment merges with other installed Mods.
+
+The 3D path does not use the legacy profile room pointer. It resolves the current
+3D manager and calls the native room/slot accessors; mission and ordinary room
+layouts differ. The runtime fixture covers a null legacy pointer and a separate
+mission-slot layout. Missing live context remains a logged rejection.
 
 The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
 executes the actual server model-selection and client cache-copy instructions

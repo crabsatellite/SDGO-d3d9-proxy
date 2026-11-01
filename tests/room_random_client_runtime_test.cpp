@@ -11,20 +11,39 @@ namespace {
 int failures=0,startedModel=0,factoryCalls=0;
 std::array<uint8_t,0x5DA8> profile{};
 std::array<uint8_t,0x4000> room{};
+std::array<uint8_t,0x4C0> app{};
+std::array<uint8_t,0x10> owner{};
+std::array<uint8_t,0x80> manager{},model{},ownerVtable{};
+std::array<uint8_t,0xA0> modelVtable{};
+std::array<uint8_t,0x4000> missionRoom{};
 uint8_t* profilePointer=profile.data();
+uint8_t* appPointer=app.data();
 bool starting=true;
+bool threeD=false;
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
 void Check(bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name);if(!ok)++failures;}
 __declspec(noinline) void* __cdecl NativeFactory(int type,uint32_t model) {
     ++factoryCalls;return type==15 ? reinterpret_cast<void*>(static_cast<uintptr_t>(model)+0x1000) : nullptr;
 }
+__declspec(noinline) uint8_t* __fastcall NativeRoomInfo(uint8_t* object,void*) {
+    return object==model.data() ? room.data() : nullptr;
+}
+#define SLOT_METHODS(Name,Storage,Base,Count) \
+__declspec(noinline) uint32_t __fastcall Name##Owner(uint8_t*,void*,int slot) {return slot>=0 && slot<Count ? room_random_client::Read<uint32_t>(Storage.data(),Base+slot*0x48E+0x429) : 0;} \
+__declspec(noinline) uint8_t* __fastcall Name##Unit(uint8_t* self,void*,int slot) {return Name##Owner(self,nullptr,slot) ? Storage.data()+Base+slot*0x48E+0x49 : nullptr;} \
+__declspec(noinline) uint8_t* __fastcall Name##Ship(uint8_t* self,void*,int slot) {return Name##Owner(self,nullptr,slot) ? Storage.data()+Base+slot*0x48E+0x146 : nullptr;} \
+__declspec(noinline) void __fastcall Name##SetUnit(uint8_t* self,void*,int slot,const uint8_t* data) {auto* p=Name##Unit(self,nullptr,slot);if(p)std::memcpy(p,data,0x99);} \
+__declspec(noinline) void __fastcall Name##SetShip(uint8_t* self,void*,int slot,const uint8_t* data) {auto* p=Name##Ship(self,nullptr,slot);if(p)std::memcpy(p,data,0x2BC);}
+SLOT_METHODS(Normal,room,0x533,12)
+SLOT_METHODS(Mission,missionRoom,0x5C6,4)
+#undef SLOT_METHODS
 void __stdcall QueuedHandler(uint32_t opcode,const uint8_t* packet) {
     // Native 3D room notifications are commands. Starting prevents their cache
     // operation from completing before the start command constructs the mode.
     if(opcode==0x0861 && !starting)
         std::memcpy(room.data()+0x57C,packet+0x12,0x99);
     if(opcode==0x06C3) {
-        startedModel=static_cast<int>(room_random_client::Read<uint32_t>(room.data(),0x57C));
+        startedModel=static_cast<int>(threeD ? room_random_client::Read<uint32_t>(missionRoom.data(),0x60F) : room_random_client::Read<uint32_t>(room.data(),0x57C));
         NativeFactory(15,static_cast<uint32_t>(startedModel));
     }
 }
@@ -66,7 +85,21 @@ void Symbols() {
     Symbol(f,"test.dispatch.entry",reinterpret_cast<void*>(&NativeDispatch),"code");
     Symbol(f,"room_random.client_dispatch",reinterpret_cast<const uint8_t*>(&NativeDispatch)+5,"site");
     Symbol(f,"room_random.client_profile",&profilePointer,"data");
-    Symbol(f,"room_random.client_factory",reinterpret_cast<void*>(&NativeFactory),"code");fclose(f);
+    Symbol(f,"room_random.client_factory",reinterpret_cast<void*>(&NativeFactory),"code");
+    Symbol(f,"room_random.client_app",&appPointer,"data");
+    Symbol(f,"room_random.client_waitroom_vtable",ownerVtable.data(),"data");
+    Symbol(f,"room_random.client_room_info",reinterpret_cast<void*>(&NativeRoomInfo),"code");
+    Symbol(f,"room_random.client_normal_owner",reinterpret_cast<void*>(&NormalOwner),"code");
+    Symbol(f,"room_random.client_normal_unit",reinterpret_cast<void*>(&NormalUnit),"code");
+    Symbol(f,"room_random.client_normal_ship",reinterpret_cast<void*>(&NormalShip),"code");
+    Symbol(f,"room_random.client_normal_set_unit",reinterpret_cast<void*>(&NormalSetUnit),"code");
+    Symbol(f,"room_random.client_normal_set_ship",reinterpret_cast<void*>(&NormalSetShip),"code");
+    Symbol(f,"room_random.client_mission_owner",reinterpret_cast<void*>(&MissionOwner),"code");
+    Symbol(f,"room_random.client_mission_unit",reinterpret_cast<void*>(&MissionUnit),"code");
+    Symbol(f,"room_random.client_mission_ship",reinterpret_cast<void*>(&MissionShip),"code");
+    Symbol(f,"room_random.client_mission_set_unit",reinterpret_cast<void*>(&MissionSetUnit),"code");
+    Symbol(f,"room_random.client_mission_set_ship",reinterpret_cast<void*>(&MissionSetShip),"code");
+    fclose(f);
 }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -97,5 +130,21 @@ int wmain(int argc,wchar_t** argv) {
         dispatch(dispatcher.data(),0,0,0,0x0861,restore.data());
         Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==15019,"restore notice updates the room cache without a UI queue tick");
     }
+    Put<uint8_t*>(profile.data(),0xEC,nullptr);
+    Put<uint32_t>(app.data(),0x4A0,18);Put<uint8_t*>(app.data(),0x4A4,owner.data());
+    Put<uint8_t*>(owner.data(),0,ownerVtable.data());Put<uint8_t*>(owner.data(),4,manager.data());
+    Put<uint8_t*>(manager.data(),0x38,model.data());Put<uint8_t*>(model.data(),0,modelVtable.data());
+    Put<void*>(modelVtable.data(),0x1C,reinterpret_cast<void*>(&NativeRoomInfo));
+    Put<void*>(modelVtable.data(),0x20,reinterpret_cast<void*>(&MissionOwner));
+    Put<void*>(modelVtable.data(),0x84,reinterpret_cast<void*>(&MissionSetUnit));
+    Put<void*>(modelVtable.data(),0x88,reinterpret_cast<void*>(&MissionUnit));
+    Put<void*>(modelVtable.data(),0x8C,reinterpret_cast<void*>(&MissionSetShip));
+    Put<void*>(modelVtable.data(),0x90,reinterpret_cast<void*>(&MissionShip));
+    Put<uint32_t>(missionRoom.data(),0x9EF,1001);Put<uint32_t>(missionRoom.data(),0x60F,15019);threeD=true;
+    Put<uint32_t>(room.data(),0x57C,15019);startedModel=0;
+    dispatch(dispatcher.data(),0,0,0,0x0861,notice.data());dispatch(dispatcher.data(),0,0,0,0x06C3,start.data());
+    Check(startedModel==(enabled?11032:15019),"real DLL resolves the 3D room while the legacy profile room pointer is null");
+    Check(room_random_client::Read<uint8_t*>(profile.data(),0xEC)==nullptr,"3D synchronization never fabricates a legacy room publication");
+    Check(room_random_client::Read<uint32_t>(room.data(),0x57C)==15019,"3D mission updates never write the unrelated normal-layout row");
     std::printf("%s CLIENT START-STATE RUNTIME CHECKS\n",failures?"FAILED":"PASSED");return failures?1:0;
 }
