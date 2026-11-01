@@ -95,8 +95,9 @@ public:
 };
 inline bool Need(bool value,const char* operation="rank policy SQL operation failed"){if(!value)throw std::runtime_error(operation);return value;}
 inline bool Prepare(Session& db,const std::wstring& expectedDatabase) {
-    std::wstring database;Need(db.String(L"SELECT DB_NAME()",database),"rank database name unavailable");
-    if(database!=expectedDatabase)return false;
+    std::wstring database;
+    Need(db.String(L"SELECT CASE WHEN DB_ID("+Literal(expectedDatabase)+L")=DB_ID() THEN N'1' ELSE N'0' END",database),"rank database identity unavailable");
+    if(database!=L"1")return false;
     Need(db.Begin(),"rank owned transaction unavailable");
     struct Rollback { Session& db; ~Rollback(){db.Abort();} } rollback{db};
     // SQLOLEDB defers the SQL transaction until a table access. A constant-only

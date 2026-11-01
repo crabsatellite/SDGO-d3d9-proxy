@@ -24,7 +24,7 @@ function Q([string]$name){'['+$name.Replace(']',']]')+']'}
 $source=$ini['DBName'];$name='SDGO_RankModTest_'+[guid]::NewGuid().ToString('N').Substring(0,12);$owner=[guid]::NewGuid().ToString('N')
 $backup=Get-Content -LiteralPath $OriginalBackup -Raw -Encoding UTF8 | ConvertFrom-Json
 if($backup.fix -ne 'rank_progression_fix' -or @($backup.procedures).Count -ne 2){throw 'Need the original two-procedure recovery backup for an unpatched fixture'}
-$before=Rows "SELECT o.name,m.definition FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id WHERE o.name IN ('sp_SetBattleExp_V4','sp_SetGridBattleExp_V2')"
+$before=Rows "SELECT o.name,m.definition FROM sys.sql_modules m JOIN sys.objects o ON o.object_id=m.object_id WHERE o.name IN ('sp_SetBattleExp_V4','sp_SetGridBattleExp_V2') AND SCHEMA_NAME(o.schema_id)=N'dbo'"
 $passed=$false;$created=$false
 $priorCommonFiles=$env:CommonProgramFiles
 try {
@@ -128,5 +128,5 @@ try {
         Exec ('USE '+(Q $source));Exec ('DROP DATABASE '+(Q $name))
     }
     $connection.Close();$builder.Clear();$ini.Clear()
-    [IO.File]::WriteAllText((Join-Path $work 'result.json'),(@{passed=$passed;database=$name;sourcePlayerRowsCopied=0;scratchRemoved=$passed} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $work 'result.json'),(@{passed=$passed;database=$name;owner=$owner;sourcePlayerRowsCopied=0;scratchRemoved=$passed} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 }
