@@ -3,6 +3,8 @@
 任务模式里，AI 驾驶员按游戏自带 AI 对战模式加入机器人的方式加入你的队伍，使用游戏原生的对战 AI，
 击破会被正常计算，也会被击落。English: [coop-wingmen.md](coop-wingmen.md)
 
+![任务 AI 僚机](coop-wingmen-demo.webp)
+
 | mod | 运行在 | 负责 |
 |---|---|---|
 | `coop_ai` | 对战服务器 | 任务开局时把 AI 驾驶员加入房间 |

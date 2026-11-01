@@ -10,6 +10,8 @@ restores it for everything except the game itself. 中文：[findwindow-fix.zh-C
 
 Independent of [`ime_fix`](ime-fix.md), which fixes how the game reads committed text.
 
+![Using an input method in the lobby](findwindow-fix-ime.png)
+
 ## Use
 
 Nothing to do: it is on after the client install. The mod needs the `sdgo\core.dll` of the

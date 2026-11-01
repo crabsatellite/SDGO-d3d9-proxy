@@ -9,6 +9,8 @@
 
 与 [`ime_fix`](ime-fix.md)（修正游戏读取已提交文字的长度）相互独立。
 
+![游戏大厅中使用输入法](findwindow-fix-ime.png)
+
 ## 使用
 
 无需操作，安装客户端后即生效。本 mod 需要同一版本的 `sdgo\core.dll`（使用 `HookSystemExport`），
