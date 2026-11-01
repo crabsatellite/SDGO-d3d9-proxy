@@ -11,6 +11,10 @@ $products=@{
 }
 foreach($side in 'client','server') {
     $stage=Join-Path $repo "build\stage\$Config\$side"
+    $loader=if($side -eq 'client') {'d3d9.dll'} else {'winmm.dll'}
+    New-Item -ItemType Directory -Force -Path (Join-Path $out "$side\sdgo") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $stage $loader) -Destination (Join-Path $out $side)
+    Copy-Item -LiteralPath (Join-Path $stage 'sdgo\core.dll') -Destination (Join-Path $out "$side\sdgo")
     $requires=@()
     foreach($id in $products[$side].Keys) {
         $mod=Join-Path $out "$side\sdgo\mods\$id"

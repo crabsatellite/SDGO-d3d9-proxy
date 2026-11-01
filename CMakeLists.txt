@@ -288,6 +288,8 @@ endif()
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+add_executable(launcher_handshake_test tests/launcher_handshake_test.cpp)
+sdgo_strict(launcher_handshake_test)
 
 add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
                mods/capsule_catalog/capsule_runtime.cpp)
@@ -348,6 +350,7 @@ sdgo_strict(daily_rewards_runtime_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_test(NAME launcher_handshake_offline COMMAND launcher_handshake_test)
     add_test(NAME capsule_currency_actual_dll COMMAND capsule_currency_dll_test "$<TARGET_FILE:capsule_currency_fix>")
     set_tests_properties(capsule_currency_actual_dll PROPERTIES TIMEOUT 30)
 endif()

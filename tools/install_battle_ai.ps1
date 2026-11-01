@@ -4,6 +4,7 @@ param([Parameter(Mandatory=$true)][string]$GameDir,[string]$Source,
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $sideName=$Side.ToLowerInvariant()
+$loader=if($Side -eq 'Client') {'d3d9.dll'} else {'winmm.dll'}
 if(-not $Source) {
     $Source=Join-Path $repo $sideName
     if(-not (Test-Path -LiteralPath $Source)) { $Source=Join-Path $repo "build\stage\Release\$sideName" }
@@ -22,6 +23,17 @@ $exe=Join-Path $game $exeName
 if(-not (Test-Path -LiteralPath $exe)) { throw "GameDir must contain $exeName" }
 if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ine $expectedHash) { throw "Unsupported $exeName byte identity" }
 if(-not (Test-Path -LiteralPath (Join-Path $game 'sdgo\core.dll'))) { throw 'Install the SDGO mod framework first' }
+foreach($file in @($loader,'sdgo\core.dll')) {
+    if(-not (Test-Path -LiteralPath (Join-Path $Source $file))) { throw "AI package is missing its matching framework file: $file" }
+}
+$targetLoader=Join-Path $game $loader
+if(Test-Path -LiteralPath $targetLoader) {
+    $product=(Get-Item -LiteralPath $targetLoader).VersionInfo.ProductName
+    $strings=[Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($targetLoader))
+    if($product -ne 'SDGO mod framework' -and -not $strings.Contains('sdgo\core.dll')) {
+        throw "Existing $loader is not this framework. Use the framework installer to preserve its chain before updating AI."
+    }
+}
 $running=Get-CimInstance Win32_Process -Filter "Name='$exeName'" | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath) -eq $exe }
 if($running) { throw 'Close this exact copy before installing. Other copies are not stopped.' }
 $sourceSymbols=Join-Path $Source "sdgo\symbols\$symbolName"
@@ -57,6 +69,11 @@ function Merge-UserSections([string]$NewManifest,[string]$OldManifest) {
 }
 $backup=Join-Path $game ('sdgo\backups\battle_ai\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
+foreach($file in @($loader,'sdgo\core.dll')) {
+    $target=Join-Path $game $file
+    if(Test-Path -LiteralPath $target) { Copy-Item -LiteralPath $target -Destination (Join-Path $backup ([IO.Path]::GetFileName($file))) }
+    Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $target -Force
+}
 if(Test-Path -LiteralPath $targetSymbols) { Copy-Item -LiteralPath $targetSymbols -Destination (Join-Path $backup $symbolName) }
 foreach($id in $products.Keys) {
     $sourceMod=Join-Path $Source "sdgo\mods\$id";$targetMod=Join-Path $game "sdgo\mods\$id";$priorDir=Join-Path $backup $id

@@ -66,6 +66,10 @@ def main():
         ("mission_player_warp_calls_unit_warp",0x50205F,bytes.fromhex("e8 dc 82 17 00")),
         ("mission_unit_warp_binding",0x511B19,bytes.fromhex("68 40 a3 67 00 68 8c 56 e4 00")),
         ("mission_unit_warp_ret8",0x67A50E,b"\xc2\x08\x00"),
+        ("startup_opens_launcher_event",0x491521,bytes.fromhex("ff 15 f8 d2 e2 00")),
+        ("startup_missing_event_returns_zero",0x491529,bytes.fromhex("3b f3 74 17")),
+        ("startup_signals_launcher_event",0x49152E,bytes.fromhex("ff 15 f4 d2 e2 00")),
+        ("startup_closes_native_event_handle",0x491535,bytes.fromhex("ff 15 f0 d2 e2 00")),
     ]:
         assert bytes_at(address,len(expected))==expected,name
         contracts[name]=hex(address)

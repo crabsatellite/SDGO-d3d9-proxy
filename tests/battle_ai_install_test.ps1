@@ -33,6 +33,20 @@ foreach($id in 'battle_ai','match_ai','mission_ai') {
 }
 if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\mission_ai\mission_ai.lua'))) { throw 'Mission search/transition adapter missing' }
 Write-Output "PASS additive, idempotent install preserves separate config and unrelated network settings: $work"
+foreach($relative in 'd3d9.dll','sdgo\core.dll') {
+    if((Get-FileHash -LiteralPath (Join-Path $work $relative)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $source $relative)).Hash) { throw "Matching framework not installed: $relative" }
+}
+$loader=Join-Path $work 'd3d9.dll'
+$loaderBytes=[IO.File]::ReadAllBytes($loader)
+$modBefore=(Get-FileHash -LiteralPath (Join-Path $work 'sdgo\mods\battle_ai\battle_ai.dll')).Hash
+try {
+    [IO.File]::WriteAllText($loader,'foreign-loader-test')
+    $rejected=$false
+    try { & (Join-Path $repo 'tools\install_battle_ai.ps1') -GameDir $work -Source $source } catch { $rejected=$true }
+    if(-not $rejected -or [IO.File]::ReadAllText($loader) -ne 'foreign-loader-test' -or
+       (Get-FileHash -LiteralPath (Join-Path $work 'sdgo\mods\battle_ai\battle_ai.dll')).Hash -ne $modBefore) { throw 'Foreign loader rejection did not preserve the install' }
+} finally { [IO.File]::WriteAllBytes($loader,$loaderBytes) }
+Write-Output 'PASS foreign loader rejected before framework or AI files are changed'
 if($ServerExe) {
     $hostWork=Join-Path (Split-Path -Parent $work) 'server with spaces'
     foreach($dir in 'sdgo\symbols','sdgo\mods\udp_pool','sdgo\mods\pvp_ai') { New-Item -ItemType Directory -Force -Path (Join-Path $hostWork $dir) | Out-Null }
@@ -51,4 +65,7 @@ if($ServerExe) {
     if(-not (Test-Path -LiteralPath (Join-Path $hostWork 'sdgo\mods\battle_ai_server\battle_ai_server.dll'))) { throw 'Host fairness component missing' }
     if(-not ([IO.File]::ReadAllText($hostSymbols)).Contains('[private.server.symbol]')) { throw 'Unrelated host symbol missing' }
     Write-Output "PASS host install preserves SQL configuration, UDP pool and NPC pool settings: $hostWork"
+    foreach($relative in 'winmm.dll','sdgo\core.dll') {
+        if((Get-FileHash -LiteralPath (Join-Path $hostWork $relative)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $hostSource $relative)).Hash) { throw "Matching server framework not installed: $relative" }
+    }
 }

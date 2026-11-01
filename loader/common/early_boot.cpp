@@ -1,4 +1,5 @@
 #include "early_boot.h"
+#include "launcher_handshake.h"
 
 #include "sdgo/sdgo_api.h"
 
@@ -6,13 +7,33 @@ namespace
 {
     const char* g_loaderName = "loader";
     INIT_ONCE g_bootOnce = INIT_ONCE_STATIC_INIT;
+    sdgo::loader::LauncherHandshake g_launcherHandshake;
 
     using GetSystemTimeAsFileTimeFn = void(WINAPI*)(LPFILETIME);
     GetSystemTimeAsFileTimeFn* g_earlySlot = nullptr;
     GetSystemTimeAsFileTimeFn g_earlyOriginal = nullptr;
+    using OpenEventFn = HANDLE(WINAPI*)(DWORD, BOOL, LPCWSTR);
+    OpenEventFn* g_launcherSlot = nullptr;
+    OpenEventFn g_launcherOriginal = nullptr;
+    void** FindImportSlot(HMODULE exe, const char* importName);
+    HANDLE WINAPI OpenLauncherEvent(DWORD access, BOOL inherit, LPCWSTR name);
+    template<typename Fn> bool PatchSlot(Fn* slot, Fn value);
 
     BOOL CALLBACK BootCallback(PINIT_ONCE, PVOID, PVOID*)
     {
+        auto host = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
+        auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(host);
+        if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+            auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(host + dos->e_lfanew);
+            if (nt->Signature == IMAGE_NT_SIGNATURE &&
+                g_launcherHandshake.Acquire(nt->FileHeader.TimeDateStamp, nt->OptionalHeader.SizeOfImage)) {
+                g_launcherSlot = reinterpret_cast<OpenEventFn*>(FindImportSlot(GetModuleHandleW(nullptr), "OpenEventW"));
+                if (g_launcherSlot) {
+                    g_launcherOriginal = *g_launcherSlot;
+                    PatchSlot(g_launcherSlot, &OpenLauncherEvent);
+                }
+            }
+        }
         wchar_t path[MAX_PATH * 2] = {};
         DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH * 2);
         if (length == 0 || length >= MAX_PATH * 2)
@@ -43,7 +64,7 @@ namespace
         return TRUE;
     }
 
-    bool PatchSlot(GetSystemTimeAsFileTimeFn* slot, GetSystemTimeAsFileTimeFn value)
+    template<typename Fn> bool PatchSlot(Fn* slot, Fn value)
     {
         DWORD old = 0;
         if (!VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &old))
@@ -53,6 +74,18 @@ namespace
         return true;
     }
 
+    HANDLE WINAPI OpenLauncherEvent(DWORD access, BOOL inherit, LPCWSTR name)
+    {
+        PatchSlot(g_launcherSlot, g_launcherOriginal);
+        HANDLE event = g_launcherOriginal(access, inherit, name);
+        DWORD error = GetLastError();
+        // Native WinMain owns its own handle now. Retaining the object after
+        // that point could give the next launch a stale signalled event.
+        if (event) g_launcherHandshake.Release();
+        SetLastError(error);
+        return event;
+    }
+
     void WINAPI EarlyGetSystemTimeAsFileTime(LPFILETIME time)
     {
         PatchSlot(g_earlySlot, g_earlyOriginal);
@@ -60,8 +93,8 @@ namespace
         EarlyBoot();
     }
 
-    // Finds kernel32!GetSystemTimeAsFileTime in the executable's import table.
-    GetSystemTimeAsFileTimeFn* FindEarlySlot(HMODULE exe)
+    // Finds one named kernel32 import in the executable's import table.
+    void** FindImportSlot(HMODULE exe, const char* importName)
     {
         auto base = reinterpret_cast<BYTE*>(exe);
         auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
@@ -74,7 +107,7 @@ namespace
         if (!dir.VirtualAddress)
             return nullptr;
 
-        FARPROC resolved = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetSystemTimeAsFileTime");
+        FARPROC resolved = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), importName);
         for (auto desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); desc->Name; ++desc) {
             if (lstrcmpiA(reinterpret_cast<char*>(base + desc->Name), "kernel32.dll") != 0)
                 continue;
@@ -86,12 +119,12 @@ namespace
                 bool match = false;
                 if (names && !(names[i].u1.Ordinal & IMAGE_ORDINAL_FLAG)) {
                     auto byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names[i].u1.AddressOfData);
-                    match = lstrcmpA(reinterpret_cast<char*>(byName->Name), "GetSystemTimeAsFileTime") == 0;
+                    match = lstrcmpA(reinterpret_cast<char*>(byName->Name), importName) == 0;
                 } else {
                     match = resolved && iat[i].u1.Function == reinterpret_cast<ULONG_PTR>(resolved);
                 }
                 if (match)
-                    return reinterpret_cast<GetSystemTimeAsFileTimeFn*>(&iat[i].u1.Function);
+                    return reinterpret_cast<void**>(&iat[i].u1.Function);
             }
         }
         return nullptr;
@@ -148,7 +181,7 @@ void EarlyBoot()
 void EarlyBootInstall(const char* loaderName)
 {
     g_loaderName = loaderName;
-    GetSystemTimeAsFileTimeFn* slot = FindEarlySlot(GetModuleHandleW(nullptr));
+    auto slot = reinterpret_cast<GetSystemTimeAsFileTimeFn*>(FindImportSlot(GetModuleHandleW(nullptr), "GetSystemTimeAsFileTime"));
     if (!slot) {
         EarlyBootTrace(L"early boot import not found; core starts at the first forwarded call");
         return;
