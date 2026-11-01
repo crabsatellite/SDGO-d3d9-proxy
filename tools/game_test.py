@@ -29,6 +29,7 @@ import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
+import importlib.util
 
 
 SCHEMA_VERSION = 2
@@ -50,6 +51,7 @@ SUPPORTED_PVP_MODES = (1, 3, 6, 7, 9)
 MODE_FLOW_STEPS = ("room", "start", "ai_spawn", "return")
 IGNORED_DIRECTORIES = {
     ".git",
+    ".sdgo-updater",
     ".svn",
     "__pycache__",
     "app_log",
@@ -253,6 +255,18 @@ def overlay_observer(root: Path, stage: Path) -> None:
         stage_client / "sdgo" / "mods" / TARGET_MOD / f"{TARGET_MOD}.dll"
     )
     if staged_target_dll.is_file():
+        staged_target_manifest=staged_target_dll.with_name('mod.ini')
+        if not staged_target_manifest.is_file():
+            raise GameTestError('staged production match_ai DLL requires its matching manifest')
+        previous_manifest=read_ini(target_manifest)
+        current_manifest=read_ini(staged_target_manifest)
+        if current_manifest.get('mod','id',fallback='')!=TARGET_MOD:
+            raise GameTestError('staged production match_ai manifest has the wrong identity')
+        if previous_manifest.has_section('settings'):
+            if not current_manifest.has_section('settings'):current_manifest.add_section('settings')
+            for key,value in previous_manifest.items('settings',raw=True):
+                current_manifest['settings'][key]=value
+        write_ini(target_manifest,current_manifest)
         shutil.copy2(staged_target_dll, target_dll)
 
     stage_symbols = stage_client / "sdgo" / "symbols" / f"{HOST_KEY}.ini"
@@ -289,6 +303,123 @@ def configure_sfx_only(root: Path) -> dict:
                 "effect_volume": int(effects.get("Value")), "process_audio_only": True}
     except (OSError, ET.ParseError, ValueError) as error:
         raise GameTestError(f"cannot configure SFX-only test client: {error}") from error
+
+
+def configure_muted_audio(root: Path) -> dict:
+    path=root/'config.xml'
+    try:
+        tree=ET.parse(path)
+        sound=tree.getroot().find('Sound')
+        if sound is None:raise ValueError('missing Sound settings')
+        for key in ('BGMVolume','EffectVolume','VoiceVolume'):
+            setting=sound.find(key)
+            if setting is None:raise ValueError(f'missing {key}')
+            # Keep the legacy sound-driver objects initialized. Zero volume
+            # silences the copy without disabling their native lifecycle.
+            setting.set('Value','0');setting.set('use','true')
+        tree.write(path,encoding='utf-8',xml_declaration=True)
+        return {'audio':'muted','bgm_volume':0,'effect_volume':0,'voice_volume':0}
+    except (OSError,ET.ParseError,ValueError) as error:
+        raise GameTestError(f'cannot prepare a silent test client: {error}') from error
+
+
+def validate_muted_audio(root: Path) -> None:
+    try:
+        sound=ET.parse(root/'config.xml').getroot().find('Sound')
+        if sound is None or any(sound.find(key) is None or
+            sound.find(key).get('Value')!='0' or sound.find(key).get('use') not in ('true','false')
+            for key in ('BGMVolume','EffectVolume','VoiceVolume')):
+            raise ValueError('all three test audio channels must have zero volume')
+    except (OSError,ET.ParseError,ValueError) as error:
+        raise GameTestError(f'quiet test audio policy failed before launch: {error}') from error
+
+
+class QuietRuntime:
+    def __init__(self,metadata: dict,receipt_dir: Path):
+        self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
+        self.receipt={'status':'preparing','audio':'muted','background':True}
+
+    def firewall_action(self,action: str) -> dict:
+        # Argument-array invocation, no UAC/elevation or user-visible console.
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-WindowStyle','Hidden',
+            '-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_name('game_test_firewall.ps1')),
+            '-Action',action,'-Program',self.metadata['client']['game'],'-RunId',self.metadata['run_id'],
+            '-RemoteIPv4',self.metadata['plan']['target_host']],capture_output=True,text=True,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),timeout=30)
+        if result.returncode:raise GameTestError('cannot establish the owned silent firewall rule; client was not launched interactively')
+        try:return json.loads(result.stdout)
+        except json.JSONDecodeError as error:raise GameTestError('invalid quiet firewall readback') from error
+
+    def start(self) -> None:
+        validate_muted_audio(Path(self.metadata['client']['root']))
+        # Scope stays on the declared server. Routed/non-IPv4 tests must supply
+        # an explicit endpoint before a quiet run can open a native listener.
+        try:ipaddress.IPv4Address(self.metadata['plan']['target_host'])
+        except ipaddress.AddressValueError as error:raise GameTestError('quiet tests require an explicit IPv4 server endpoint') from error
+        if (ipaddress.IPv4Address(self.metadata['plan']['target_host']).is_loopback and
+            self.metadata['plan'].get('network_policy')=='direct'):
+            # Local GameTest has no reason to listen on a public interface.
+            # The native Mod constrains its own bind calls before game startup.
+            self.firewall={'status':'loopback_only','system_policy_changed':False}
+        else:
+            self.firewall_attempted=True
+            self.firewall=self.firewall_action('Install')
+        self.receipt['firewall']=self.firewall
+        self.save()
+
+    def save(self):
+        atomic_write(self.directory/'quiet-runtime.json',json.dumps(self.receipt,indent=2))
+
+    def spawn(self,arguments: list[str],**kwargs):
+        spec=importlib.util.spec_from_file_location('sdgo_game_test_windows',Path(__file__).with_name('game_test_windows.py'))
+        module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+        self.process=module.WindowsBackgroundProcess(arguments,cwd=kwargs['cwd'],env=kwargs['env'],
+            stdout=kwargs['stdout'],stderr=kwargs['stderr'],run_id=self.metadata['run_id'])
+        return self.process
+
+    def verify(self,pid: int) -> dict | None:
+        proof=self.process.verify_background(pid)
+        if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
+        if not proof.get('verified',False):return None
+        marker=Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-sockets.ini'
+        if not marker.is_file():return None
+        guard=read_ini(marker)
+        if guard.get('run','id',fallback='')!=self.metadata['run_id'] or guard.getint('policy','pid',fallback=0)!=pid:return None
+        opened=guard.getint('audio','opened',fallback=0)
+        if guard.getint('audio','active',fallback=0)!=1 or opened<1:return None
+        if guard.getint('audio','muted',fallback=0)!=opened or guard.getint('audio','failed',fallback=0):
+            raise GameTestError('native Miles audio drivers did not verify zero master volume')
+        proof.update(audio_driver='native_miles_waveout',audio_drivers_opened=opened,audio_drivers_muted=opened)
+        network_verified=self.firewall.get('status')=='installed'
+        if self.firewall.get('status')=='loopback_only':
+            if (guard.getint('policy','loopback_only',fallback=0)!=1 or
+                guard.getint('policy','active',fallback=0)!=1):return None
+            if guard.getint('sockets','escaped',fallback=0):raise GameTestError('native socket escaped the test loopback interface')
+            endpoints=owned_udp_endpoints(pid)
+            if any(not ipaddress.IPv4Address(row['local_ipv4']).is_loopback for row in endpoints):
+                raise GameTestError('owned game has a non-loopback UDP listener')
+            network_verified=True
+            proof.update(network_policy='loopback_only',udp_endpoints=endpoints)
+        proof={**proof,'audio_muted':True,'firewall_verified':network_verified,'pid':pid}
+        if self.receipt.get('proof')!=proof:
+            self.receipt.update(status='running',proof=proof);self.save()
+        parser=ini_parser();parser['run']={'id':self.metadata['run_id']}
+        parser['quiet']={'pid':str(pid),'verified':'1','audio_muted':'1','firewall_verified':'1'}
+        write_ini(Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-verified.ini',parser)
+        return proof
+
+    def close(self) -> dict:
+        errors=[]
+        if self.process:
+            try:self.process.close()
+            except Exception as error:errors.append(type(error).__name__)
+        if self.firewall_attempted:
+            try:self.receipt['cleanup']=self.firewall_action('Remove')
+            except Exception as error:errors.append(type(error).__name__)
+        elif self.firewall:
+            self.receipt['cleanup']={'status':'removed','system_policy_changed':False}
+        self.receipt['status']='failed' if errors else 'closed'
+        self.receipt['cleanup_errors']=errors;self.save();return self.receipt
 
 
 def random_account() -> tuple[str, str]:
@@ -344,6 +475,28 @@ def verify_direct_peer(metadata: dict, pid: int) -> dict | None:
     receipt['network']={'verified':'1','pid':str(pid),'ipv4':expected,'port':str(port)}
     write_ini(Path(metadata['client']['root'])/'sdgo/gametest/network-verified.ini',receipt)
     return proof
+
+
+def owned_udp_endpoints(pid: int) -> list[dict]:
+    if os.name!='nt':raise GameTestError('quiet socket readback requires Windows')
+    api=ctypes.WinDLL('iphlpapi',use_last_error=True)
+    get=api.GetExtendedUdpTable
+    get.argtypes=[ctypes.c_void_p,ctypes.POINTER(wintypes.DWORD),wintypes.BOOL,wintypes.ULONG,ctypes.c_int,wintypes.ULONG]
+    get.restype=wintypes.DWORD
+    size=wintypes.DWORD(0)
+    result=get(None,ctypes.byref(size),False,2,1,0)
+    if result not in (0,122) or not 4<=size.value<=4*1024*1024:
+        raise GameTestError('cannot size the Windows process-owned UDP table')
+    data=ctypes.create_string_buffer(size.value)
+    if get(data,ctypes.byref(size),False,2,1,0):raise GameTestError('cannot read the Windows process-owned UDP table')
+    count=struct.unpack_from('<I',data.raw)[0]
+    if count>(size.value-4)//12:raise GameTestError('malformed Windows process-owned UDP table')
+    rows=[]
+    for i in range(count):
+        local,port,owner=struct.unpack_from('<3I',data.raw,4+i*12)
+        if owner==pid:rows.append({'local_ipv4':socket.inet_ntoa(struct.pack('<I',local)),
+                                 'local_port':socket.ntohs(port&65535)})
+    return rows
 
 
 def default_account_profile() -> Path:
@@ -561,6 +714,10 @@ def write_job(
     for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
+    if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
+    if plan.get('quiet'):
+        run['run']['quiet_loopback']='1' if (plan.get('network_policy')=='direct' and
+            ipaddress.IPv4Address(plan['target_host']).is_loopback) else '0'
     write_ini(directory / "run.ini", run)
 
 
@@ -613,6 +770,9 @@ def read_public_plan(root: Path) -> dict:
         if 'network_policy' in run:
             if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
             plan['network_policy']=run['network_policy']
+        if 'quiet' in run:
+            if run['quiet'] not in ('0','1'):raise ValueError('invalid quiet policy')
+            plan['quiet']=run['quiet']=='1'
         return plan
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid normal-flow run.ini: {error}") from error
@@ -754,8 +914,13 @@ def prepare(
     gift_requests_only: bool = False,
     deck_only: bool = False,
     network_policy: str = 'direct',
+    quiet: bool = True,
 ) -> dict:
     client_template = client_template.resolve()
+    if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
+    if quiet:
+        try:ipaddress.IPv4Address(target_host)
+        except ipaddress.AddressValueError as error:raise GameTestError('quiet tests require an explicit IPv4 server endpoint') from error
     if network_policy not in ('direct','preserve'):raise GameTestError('invalid network policy')
     if network_policy=='direct':
         try:target_host=str(ipaddress.IPv4Address(target_host))
@@ -807,6 +972,7 @@ def prepare(
     )
     required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only)
     plan['network_policy']=network_policy
+    plan['quiet']=quiet
     for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only)):
         if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -824,6 +990,7 @@ def prepare(
         overlay_observer(client, stage)
         configure_test_network(client,network_policy)
         recording = configure_sfx_only(client) if sfx_only else None
+        if quiet:configure_muted_audio(client)
         write_job(client, run_id, plan, profile, profile_path)
 
         entry = client / (launcher_path or GAME_EXE)
@@ -1149,7 +1316,7 @@ def has_run_end(path: Path) -> bool:
     return False
 
 
-def spawn_entry(metadata: dict, receipt_dir: Path):
+def spawn_entry(metadata: dict, receipt_dir: Path, quiet_runtime=None):
     client = metadata["client"]
     plan = metadata["plan"]
     entry = Path(client["entry"])
@@ -1170,7 +1337,8 @@ def spawn_entry(metadata: dict, receipt_dir: Path):
     stdout = (receipt_dir / "client.stdout.log").open("wb")
     stderr = (receipt_dir / "client.stderr.log").open("wb")
     try:
-        process = subprocess.Popen(
+        launch=quiet_runtime.spawn if quiet_runtime else subprocess.Popen
+        process = launch(
             arguments,
             cwd=client["root"],
             env=environment,
@@ -1192,7 +1360,7 @@ def startup_info():
         return None
     info = subprocess.STARTUPINFO()
     info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    info.wShowWindow = 4  # SW_SHOWNOACTIVATE: render normally without stealing focus.
+    info.wShowWindow = 0  # SW_HIDE; quiet runs additionally use a separate desktop.
     return info
 
 
@@ -1212,6 +1380,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     receipt_dir = run_dir / "receipts"
     entry_process = None
     game_process = None
+    quiet_runtime = None
     handles = []
     started = utc_now()
     try:
@@ -1219,9 +1388,12 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
         account_lock, account_token = acquire_account_lock(
             Path(metadata["client"]["root"]), metadata["plan"]
         )
+        if metadata['plan'].get('quiet'):
+            quiet_runtime=QuietRuntime(metadata,receipt_dir)
+            quiet_runtime.start()
         with NamedStartupEvent():
             try:
-                entry_process, stdout, stderr = spawn_entry(metadata, receipt_dir)
+                entry_process, stdout, stderr = spawn_entry(metadata, receipt_dir,quiet_runtime)
                 handles.extend((stdout, stderr))
             except OSError as error:
                 metadata["execution"] = {
@@ -1273,6 +1445,11 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             deadline = time.monotonic() + max(0.0, timeout)
             status = "running"
             while time.monotonic() < deadline:
+                if quiet_runtime:
+                    proof=quiet_runtime.verify(game_process['pid'])
+                    if proof and not metadata['execution'].get('quiet_verified'):
+                        metadata['execution']['quiet_verified']=proof
+                        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
                 if metadata['plan'].get('network_policy')=='direct' and not metadata['execution'].get('network_verified'):
                     proof=verify_direct_peer(metadata,game_process['pid'])
                     if proof:
@@ -1292,6 +1469,13 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             metadata["execution"]["finished_utc"] = utc_now()
             metadata["status"] = "executed"
             atomic_write(run_dir / "run.json", json.dumps(metadata, indent=2, sort_keys=True))
+    except (GameTestError,OSError) as error:
+        if quiet_runtime is None:raise
+        execution=metadata.get('execution') or {}
+        metadata['execution']=execution
+        execution.update(status='launch_error',error=str(error),finished_utc=utc_now())
+        metadata['status']='executed'
+        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
     finally:
         if game_process:
             if entry_process and game_process["pid"] == entry_process.pid:
@@ -1311,6 +1495,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 pass
         for handle in handles:
             handle.close()
+        if quiet_runtime:
+            metadata.setdefault('execution',{})['quiet_cleanup']=quiet_runtime.close()
+            atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
         if account_lock is not None and account_token is not None:
             release_owned_lock(account_lock, account_token)
         release_owned_lock(lock, token)
@@ -1586,6 +1773,15 @@ def build_report(run_dir: Path) -> dict:
             proof.get('remote_ipv4')!=metadata['plan']['target_host'] or proof.get('remote_port')!=metadata['plan']['login_port']):
             launch_errors.append('the actual native login TCP peer was not verified against the requested endpoint')
             launch_status='fail'
+    if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('quiet'):
+        proof=execution.get('quiet_verified',{})
+        cleanup=execution.get('quiet_cleanup',{})
+        if (proof.get('verified') is not True or proof.get('foreground_safe') is not True or
+            proof.get('pid')!=execution.get('game_pid') or proof.get('audio_muted') is not True or
+            proof.get('firewall_verified') is not True or cleanup.get('status')!='closed' or
+            cleanup.get('cleanup',{}).get('status')!='removed'):
+            launch_errors.append('quiet desktop, muted audio, scoped firewall and cleanup evidence are incomplete')
+            launch_status='fail'
 
     required_cases = required_flow_cases(metadata["plan"]["mode_sequence"], metadata['plan'].get('bootstrap_only', False),
         metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False))
@@ -1681,6 +1877,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
     prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
                                 help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
+    prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -1736,6 +1933,7 @@ def main(argv: list[str] | None = None) -> int:
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
                 network_policy=args.network_policy,
+                quiet=not args.visible,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("game_test", ROOT / "tools/game_test.py")
 game_test = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(game_test)
+REAL_QUIET_RUNTIME=game_test.QuietRuntime
 
 
 TEST_MANIFEST = """[mod]
@@ -88,6 +89,16 @@ class FakeStartupEvent:
         return None
 
 
+class FakeQuietRuntime:
+    def __init__(self,metadata,receipt_dir):self.metadata=metadata
+    def start(self):game_test.validate_muted_audio(Path(self.metadata['client']['root']))
+    def spawn(self,arguments,**kwargs):return game_test.subprocess.Popen(arguments,**kwargs)
+    def verify(self,pid):
+        return {'verified':True,'foreground_safe':True,'pid':pid,'desktop':'offline-fixture',
+                'audio_muted':True,'firewall_verified':True}
+    def close(self):return {'status':'closed','cleanup':{'status':'removed'}}
+
+
 class GameTestRunnerTests(unittest.TestCase):
     def test_real_manifest_merges_the_optional_production_observer_profile_alias(self):
         # An older normal installation may have only flow.profile_pointer.
@@ -115,6 +126,8 @@ class GameTestRunnerTests(unittest.TestCase):
         )
         git_source_patch.start()
         self.addCleanup(git_source_patch.stop)
+        quiet_patch=mock.patch.object(game_test,'QuietRuntime',FakeQuietRuntime)
+        quiet_patch.start();self.addCleanup(quiet_patch.stop)
         self.template = self.root / "normal-client"
         self.stage = self.root / "stage"
         self.account_profile = self.root / "persistent" / "account.ini"
@@ -139,7 +152,8 @@ state=auth_accepted
         (self.template / "GOnline.exe").write_bytes(b"normal-game")
         (self.template / "3_SD敢达快速启动.exe").write_bytes(b"normal-launcher")
         (self.template / "配置文件.ini").write_text("[server]\nhost=127.0.0.1\nport=5001\n")
-        (self.template / "config.xml").write_text("<config/>")
+        (self.template / "config.xml").write_text('<Config><Sound><BGMVolume Value="22" use="true"/>'
+            '<EffectVolume Value="22" use="true"/><VoiceVolume Value="56" use="true"/></Sound></Config>')
         (self.template / "d3d9.dll").write_bytes(b"normal-loader")
         (self.template / "SDPlus.dll").write_bytes(b"normal-localization")
         (self.template / "GPackData.zpk").write_bytes(b"normal-assets")
@@ -304,6 +318,8 @@ rva=state
             "error": None,
             "network_verified": {"verified":True,"pid":pid,"remote_ipv4":metadata['plan']['target_host'],
                                  "remote_port":metadata['plan']['login_port']},
+            "quiet_verified":{'verified':True,'foreground_safe':True,'pid':pid,'audio_muted':True,'firewall_verified':True},
+            "quiet_cleanup":{'status':'closed','cleanup':{'status':'removed'}},
         }
         game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
 
@@ -355,6 +371,11 @@ rva=state
         staged = self.stage / "client" / "sdgo" / "mods" / "match_ai"
         staged.mkdir()
         (staged / "match_ai.dll").write_bytes(b"current-production-match-ai")
+        (staged/'mod.ini').write_text(MATCH_MANIFEST.replace('version=0.1.0','version=0.2.0').replace('requires=game.app,match.runtime','requires=game.app,match.runtime,match.additional')+'\n[settings]\nLogLuaErrors=1\nNewSetting=1\n')
+        with (self.stage/'client/sdgo/symbols'/f'{game_test.HOST_KEY}.ini').open('a') as stream:
+            stream.write('\n[match.additional]\nkind=code\nrva=additional\n')
+        with (self.template/'sdgo/mods/match_ai/mod.ini').open('a') as stream:
+            stream.write('\n[settings]\nLogLuaErrors=0\n')
         original_manifest = (
             self.template / "sdgo" / "mods" / "match_ai" / "mod.ini"
         ).read_bytes()
@@ -365,7 +386,13 @@ rva=state
             (copied / "match_ai.dll").read_bytes(),
             b"current-production-match-ai",
         )
-        self.assertEqual((copied / "mod.ini").read_bytes(), original_manifest)
+        updated_manifest=game_test.read_ini(copied/'mod.ini')
+        self.assertEqual(updated_manifest['mod']['version'],'0.2.0')
+        self.assertEqual(updated_manifest['settings']['LogLuaErrors'],'0')
+        self.assertEqual(updated_manifest['settings']['NewSetting'],'1')
+        self.assertEqual((self.template/'sdgo/mods/match_ai/mod.ini').read_bytes(),original_manifest)
+        merged=game_test.read_ini(run_dir/'client/sdgo/symbols'/f'{game_test.HOST_KEY}.ini')
+        self.assertEqual(merged['match.additional']['rva'],'additional')
         self.assertEqual(
             (self.template / "sdgo" / "mods" / "match_ai" / "match_ai.dll").read_bytes(),
             b"normal-match-ai",
@@ -407,6 +434,73 @@ rva=state
         job = game_test.read_ini(Path(meta['client']['root'])/'sdgo/gametest/run.ini')
         self.assertEqual(job['run']['required_cases'], ','.join(game_test.FLOW_CASES[:3]))
         self.assertEqual(game_test.validate_metadata(run_dir)['plan'], meta['plan'])
+
+    def test_quiet_default_mutes_only_the_copy_and_binds_the_policy(self):
+        source=(self.template/'config.xml').read_bytes()
+        run_dir=self.prepare('quiet-default')
+        meta=self.metadata(run_dir)
+        self.assertIs(meta['plan']['quiet'],True)
+        game_test.validate_muted_audio(run_dir/'client')
+        self.assertEqual((self.template/'config.xml').read_bytes(),source)
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')['run']['quiet'],'1')
+        meta['plan']['quiet']=False
+        game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+
+    def test_prepare_excludes_the_normal_updaters_private_git_cache(self):
+        cache=self.template/'.sdgo-updater/repository.git/objects'
+        cache.mkdir(parents=True);(cache/'private-cache').write_bytes(b'preserve-source')
+        run_dir=self.prepare('without-updater-cache')
+        self.assertFalse((run_dir/'client/.sdgo-updater').exists())
+        self.assertEqual((cache/'private-cache').read_bytes(),b'preserve-source')
+
+    def test_quiet_audio_tampering_fails_without_launching_a_window(self):
+        run_dir=self.prepare('audible-copy')
+        path=run_dir/'client/config.xml'
+        tree=ET.parse(path);tree.getroot().find('Sound/EffectVolume').set('Value','1');tree.write(path)
+        with mock.patch.object(game_test.subprocess,'Popen') as launch:
+            report=game_test.run_prepared(run_dir,timeout=0,launch_timeout=0)
+        launch.assert_not_called()
+        self.assertEqual(report['status'],'fail')
+
+    def test_completed_quiet_run_requires_background_and_cleanup_proof(self):
+        run_dir=self.prepare('quiet-proof')
+        self.set_execution(run_dir);self.write_events(run_dir,game_test.FLOW_CASES,include_end=True)
+        self.assertEqual(game_test.build_report(run_dir)['status'],'pass')
+        for field in ('quiet_verified','quiet_cleanup'):
+            meta=self.metadata(run_dir);original=meta['execution'].pop(field)
+            game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+            self.assertEqual(game_test.build_report(run_dir)['status'],'fail')
+            meta['execution'][field]=original
+            game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
+
+    def test_quiet_loopback_proof_rejects_wrong_run_and_public_udp(self):
+        run_dir=self.prepare('loopback-proof')
+        meta=self.metadata(run_dir);receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(meta,receipt)
+        runtime.firewall={'status':'loopback_only','system_policy_changed':False}
+        runtime.process=mock.Mock()
+        runtime.process.verify_background.return_value={'verified':True,'foreground_safe':True,'desktop':'offline-fixture'}
+        marker=run_dir/'client/sdgo/gametest/quiet-sockets.ini'
+        def write_marker(run_id,escaped):
+            marker.write_text(f'[run]\nid={run_id}\n[policy]\npid=1234\nactive=1\nloopback_only=1\n[sockets]\nescaped={escaped}\n[audio]\nactive=1\nopened=1\nmuted=1\nfailed=0\n')
+        self.assertIsNone(runtime.verify(1234))
+        write_marker('different-run',0);self.assertIsNone(runtime.verify(1234))
+        write_marker(meta['run_id'],1)
+        with self.assertRaises(game_test.GameTestError):runtime.verify(1234)
+        write_marker(meta['run_id'],0)
+        with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[{'local_ipv4':'0.0.0.0','local_port':4000}]):
+            with self.assertRaises(game_test.GameTestError):runtime.verify(1234)
+        with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[{'local_ipv4':'127.0.0.1','local_port':4000}]):
+            self.assertTrue(runtime.verify(1234)['firewall_verified'])
+
+    @unittest.skipUnless(game_test.os.name=='nt','Windows process-owned UDP table')
+    def test_actual_windows_udp_table_finds_the_owned_loopback_socket(self):
+        import socket,os
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+            probe.bind(('127.0.0.1',0))
+            self.assertIn({'local_ipv4':'127.0.0.1','local_port':probe.getsockname()[1]},game_test.owned_udp_endpoints(os.getpid()))
+            self.assertEqual(game_test.owned_udp_endpoints(0xFFFFFFFF),[])
 
     def test_deck_setup_keeps_private_units_and_cannot_downgrade_its_scope(self):
         with self.account_profile.open('a',encoding='utf-8') as stream:
@@ -826,7 +920,7 @@ state=pending_first_login
         environment = captured["kwargs"]["env"]
         self.assertEqual(environment["__COMPAT_LAYER"], "RunAsInvoker")
         self.assertEqual(environment["SDGO_GAME_TEST_RUN"], metadata["run_id"])
-        self.assertEqual(captured["kwargs"]["startupinfo"].wShowWindow, 4)
+        self.assertEqual(captured["kwargs"]["startupinfo"].wShowWindow, 0)
         self.assertTrue(environment["SDGO_GAME_TEST_ACCOUNT"].endswith("private\\account.ini"))
         self.assertNotIn(self.private_account(run_dir)["account"]["password"], str(captured))
         self.assertTrue(process.killed)

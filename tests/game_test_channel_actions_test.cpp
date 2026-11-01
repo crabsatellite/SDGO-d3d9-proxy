@@ -888,6 +888,22 @@ void TestLobbyFailureBoundaries(ChannelActions& channels)
         "transport alone cannot pass without the original state-4 transition");
 }
 
+void TestReturnToNormalVsGroup(ChannelActions& channels)
+{
+    ResetFixture(channels,2,kTargetChannel);
+    Check(channels.EnsureVsGroup(1)==ChannelActions::kRequestSent,
+        "normal modes switch back from battleship channels through native lobby business");
+    Check(g_lobbyRequestedChannel==200 && g_openCalls==0 && g_clickCalls==0,
+        "normal group uses its real available channel without the battleship selector");
+    uint8_t* packet=AllocateGuardedReply(200,0);
+    Check(packet!=nullptr,"normal group reply allocated at guarded boundary");
+    if (!packet) return;
+    g_replyUpdateProfile=true;
+    Check(g_lobbyReplyDetour(g_lobbyService,nullptr,1,2,3,0x09DF,packet)==73 &&
+        channels.EnsureVsGroup(1)==ChannelActions::kAccepted,
+        "return to normal VS requires original consumption and matching profile group");
+}
+
 void TestLobbyReplyStateGuard(ChannelActions& channels)
 {
     ResetFixture(channels);
@@ -1017,9 +1033,9 @@ void TestMalformedBoundaries(ChannelActions& channels)
 {
     ResetFixture(channels);
     Check(
-        channels.EnsureVsGroup(1) ==
+        channels.EnsureVsGroup(0) ==
             ChannelActions::kInvalidTarget,
-        "only the verified VS group is accepted");
+        "cooperative group is not accepted as a VS target");
 
     ResetFixture(channels);
     g_profile = nullptr;
@@ -1159,6 +1175,7 @@ int main()
     if (nativeBound && channelBound) {
         TestAlreadySelected(channels);
         TestLobbyFallback(channels);
+        TestReturnToNormalVsGroup(channels);
         TestLobbyFailureBoundaries(channels);
         TestLobbyReplyStateGuard(channels);
         TestOpenPageRequestAndReplyLifetime(channels);

@@ -164,7 +164,7 @@ public:
     {
         if (!bound_ || !native_)
             return Publish(kUnbound, targetGroup);
-        if (targetGroup != kSupportedVsGroup)
+        if (targetGroup != kSupportedVsGroup && targetGroup != kNormalVsGroup)
             return Publish(kInvalidTarget, targetGroup);
 
         const NativeActions::OnboardingObservation selected =
@@ -192,6 +192,11 @@ public:
                 targetChannel_ = selected.channel_id;
                 return Publish(kAlreadySelected, targetGroup);
             }
+
+            // The loaded lobby's native channel worker supports both groups.
+            // The specialized pre-channel selector lists battleship channels.
+            if (targetGroup == kNormalVsGroup)
+                return SendThroughLobby(group,targetGroup);
 
             void* service = ResolveVsChannelService();
             if (!service)
@@ -398,6 +403,7 @@ public:
 private:
     static constexpr uint32_t kLobbyAppState = 6;
     static constexpr uint32_t kSupportedVsGroup = 2;
+    static constexpr uint32_t kNormalVsGroup = 1;
     static constexpr uint32_t kRowsPerPage = 7;
     static constexpr uint32_t kMaxGroups = 16;
     static constexpr uint32_t kMaxChannelsPerGroup = 64;
@@ -446,6 +452,7 @@ private:
     struct GroupView
     {
         const uint8_t* group;
+        uint32_t category;
         uint32_t channel_count;
     };
 
@@ -559,6 +566,7 @@ private:
         if (channelCount > kMaxChannelsPerGroup)
             return kTargetGroupMalformed;
         out->group = group;
+        out->category = targetGroup == kNormalVsGroup ? 2 : kVsCategory;
         out->channel_count = channelCount;
         return kAccepted;
     }
@@ -573,7 +581,7 @@ private:
             if (*reinterpret_cast<const uint16_t*>(
                     entry + kChannelId) == channelId &&
                 *reinterpret_cast<const uint32_t*>(
-                    entry + kChannelCategory) == kVsCategory)
+                    entry + kChannelCategory) == group.category)
                 return true;
         }
         return false;
@@ -601,7 +609,7 @@ private:
                 *reinterpret_cast<const uint32_t*>(
                     entry + kChannelPopulation);
             if (channelId &&
-                category == kVsCategory &&
+                category == group.category &&
                 capacity != 0 &&
                 population < capacity) {
                 *out = channelId;
@@ -646,7 +654,7 @@ private:
             const uint32_t category =
                 *reinterpret_cast<const uint32_t*>(
                     entry + kChannelCategory);
-            if (!channelId || category != kVsCategory)
+            if (!channelId || category != group.category)
                 continue;
             sawVsChannel = true;
 

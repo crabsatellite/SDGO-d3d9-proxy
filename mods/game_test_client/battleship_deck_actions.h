@@ -712,8 +712,11 @@ private:
     {
         uint8_t* manager = static_cast<uint8_t*>(
             ResolveService(L"unitmgr"));
-        if (!HasVtable(manager, lobbyManagerVtable_))
+        if (!HasVtable(manager, lobbyManagerVtable_)) {
+            api_->Log(mod_,SDGO_LOG_ERROR,"native deck unitmgr=%p vtable=%p expected=%p",
+                manager,manager ? *reinterpret_cast<void**>(manager) : nullptr,lobbyManagerVtable_);
             return Publish(kLobbyServiceMismatch);
+        }
         if (entryInvoked_)
             return Publish(kWaitingForBattleShip);
 

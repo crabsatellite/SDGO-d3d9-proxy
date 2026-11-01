@@ -14,6 +14,13 @@ Missing steps, failed assertions, native errors and timeouts fail the run.
 Results are written as JSON and JUnit XML. Installing this Mod alone does not
 start tests or change ordinary play.
 
+Tests default to a separate background desktop with BGM, effects and voice
+muted in the copied client. Desktop/window ownership is checked separately and
+missing evidence fails the run. Local direct tests bind only loopback and do
+not change firewall profiles or notifications. Nonlocal quiet runs require
+permission to prepare their scoped application rule; setup failure never opens
+a UAC prompt or falls back to an interactive client.
+
 Runs reuse `%LOCALAPPDATA%\SDGO-GameTest\account.ini`, or the file selected with
 `--account-profile`. Preparing another run never generates a new account.
 Only explicit `--create-test-account` creates the first persistent profile;
@@ -66,7 +73,7 @@ runner is a developer test command for a bounded job; it is not a player launche
 or a persistent service. Keep account profiles and run receipts out of distributed
 packages and source control.
 
-For optional developer footage, add `--sfx-only` to `prepare`, build the
+For explicitly visible developer footage, add `--visible --sfx-only` to `prepare`, build the
 `game_test_audio` target, then use `python tools/game_test_record.py --run-dir
 build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`. The copied client's BGM
 is muted and effects remain enabled. Recording is bounded to 25 seconds per

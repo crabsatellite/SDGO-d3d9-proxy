@@ -1,3 +1,5 @@
+#include "quiet_sockets.h"
+#include "quiet_audio.h"
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
 #include "channel_actions.h"
@@ -17,8 +19,12 @@ static_assert(static_cast<uint32_t>(OnboardingActions::kStarterAccepted) == sdgo
 static_assert(static_cast<uint32_t>(OnboardingActions::kInitialLoadingAccepted) == sdgo_game_test::kInitialLoadingAccepted, "initial-loading observation contract changed");
 using AppMethod = void(__thiscall*)(uint8_t*);
 using FindWindowFn = HWND(WINAPI*)(LPCWSTR, LPCWSTR);
+using MessageBoxWFn=int(WINAPI*)(HWND,LPCWSTR,LPCWSTR,UINT);
+using MessageBoxAFn=int(WINAPI*)(HWND,LPCSTR,LPCSTR,UINT);
 AppMethod originalUpdate;
 FindWindowFn originalFindWindow;
+MessageBoxWFn originalMessageBoxW;
+MessageBoxAFn originalMessageBoxA;
 DWORD mainThread;
 NativeActions actions;
 ChannelActions channels;
@@ -38,6 +44,10 @@ bool passwordIsMd5 = false;
 bool importedExistingAccount = false;
 bool bootstrapOnly = false;
 bool verifyDirectNetwork = false;
+bool verifyQuietRuntime = false;
+bool quietLoopback = false;
+QuietSockets quietSockets;
+QuietAudio quietAudio;
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
@@ -70,6 +80,8 @@ bool LoadPlan() {
     wchar_t networkPolicy[24]{};
     GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
     verifyDirectNetwork = !wcscmp(networkPolicy,L"direct");
+    verifyQuietRuntime=GetPrivateProfileIntW(L"run",L"quiet",0,job.c_str())!=0;
+    quietLoopback=verifyQuietRuntime && GetPrivateProfileIntW(L"run",L"quiet_loopback",0,job.c_str())==1;
     bootstrapOnly = GetPrivateProfileIntW(L"run", L"bootstrap_only", 0, job.c_str()) != 0;
     battleshipOnly = GetPrivateProfileIntW(L"run", L"battleship_only", 0, job.c_str()) != 0;
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
@@ -157,6 +169,17 @@ bool LoadPlan() {
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     const uint32_t state = actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
+    if (verifyQuietRuntime) {
+        const auto file=sdgo_test::directory+L"\\quiet-verified.ini";
+        wchar_t id[64]{};
+        GetPrivateProfileStringW(L"run",L"id",L"",id,64,file.c_str());
+        const std::wstring expected(sdgo_test::runId.begin(),sdgo_test::runId.end());
+        if (expected!=id || GetPrivateProfileIntW(L"quiet",L"pid",0,file.c_str())!=GetCurrentProcessId() ||
+            GetPrivateProfileIntW(L"quiet",L"verified",0,file.c_str())!=1 ||
+            GetPrivateProfileIntW(L"quiet",L"audio_muted",0,file.c_str())!=1 ||
+            GetPrivateProfileIntW(L"quiet",L"firewall_verified",0,file.c_str())!=1) return SDGO_GAME_TEST_WAIT;
+        context->Assert(1,"the owned client has an isolated background desktop, muted audio and a verified listener policy before login");
+    }
     if (verifyDirectNetwork) {
         const auto file=sdgo_test::directory+L"\\network-verified.ini";
         wchar_t id[64]{};
@@ -220,8 +243,9 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
     if (!roomRequested) {
         const auto state = actions.OnboardingState();
         if (!state.profile_pilot_id || actions.AppState() == 4 || actions.AppState() == 25) return SDGO_GAME_TEST_WAIT;
-        if (RequestedMode() == 6 || RequestedMode() == 7) {
-            const ChannelActions::Result result = channels.EnsureVsGroup(2);
+        {
+            const uint32_t requiredGroup = RequestedMode() == 6 || RequestedMode() == 7 ? 2 : 1;
+            const ChannelActions::Result result = channels.EnsureVsGroup(requiredGroup);
             const auto channel = channels.State();
             static uint32_t lastResult = UINT32_MAX;
             static uint32_t lastReplySequence = UINT32_MAX;
@@ -766,6 +790,38 @@ HWND WINAPI FindOwnInstance(LPCWSTR className, LPCWSTR title) {
         title && !IS_INTRESOURCE(title) && !wcscmp(title, L"Gundam Online")) return nullptr;
     return originalFindWindow(className, title);
 }
+int WINAPI QuietMessageBoxW(HWND owner,LPCWSTR text,LPCWSTR caption,UINT type) {
+    if (!verifyQuietRuntime)return originalMessageBoxW(owner,text,caption,type);
+    char message[1024]="native Windows dialog during quiet test";
+    if (text)WideCharToMultiByte(CP_UTF8,0,text,-1,message,sizeof(message),nullptr,nullptr);
+    sdgo_test::Fail(message);
+    return IDCANCEL;
+}
+int WINAPI QuietMessageBoxA(HWND owner,LPCSTR text,LPCSTR caption,UINT type) {
+    if (!verifyQuietRuntime)return originalMessageBoxA(owner,text,caption,type);
+    sdgo_test::Fail(text ? text:"native Windows dialog during quiet test");
+    return IDCANCEL;
+}
+void PublishQuietSocketReceipt() {
+    if (!verifyQuietRuntime) return;
+    const auto observed=quietSockets.State();
+    const auto audio=quietAudio.State();
+    static QuietSockets::Observation previous{};
+    static QuietAudio::Observation previousAudio{};
+    static bool written=false;
+    if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)))return;
+    const auto path=sdgo_test::directory+L"\\quiet-sockets.ini";
+    const auto temporary=path+L".tmp";
+    FILE* file=_wfopen(temporary.c_str(),L"wb");
+    if (!file)return;
+    fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
+        sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
+        audio.active,audio.opened,audio.muted,audio.failed);
+    fclose(file);
+    if (MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
+        previous=observed;previousAudio=audio;written=true;
+    }
+}
 LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     if (!fault || !fault->ExceptionRecord || !fault->ContextRecord) return EXCEPTION_CONTINUE_SEARCH;
     const DWORD code = fault->ExceptionRecord->ExceptionCode;
@@ -777,12 +833,23 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
             sdgo_test::api->Log(sdgo_test::mod, SDGO_LOG_ERROR,
                 "native exception %08lX at %p: eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX",
                 code, fault->ExceptionRecord->ExceptionAddress, c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+            __try {
+                const auto* stack=reinterpret_cast<const uint32_t*>(c->Esp);
+                for (unsigned i=0;i<16;++i) {
+                    HMODULE owner=nullptr;
+                    const auto address=reinterpret_cast<const wchar_t*>(stack[i]);
+                    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,address,&owner))
+                        sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native stack[%u]=%08X module=%p offset=%08X",
+                            i,stack[i],owner,stack[i]-reinterpret_cast<uint32_t>(owner));
+                }
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 void __fastcall Update(uint8_t* app, void*) {
     originalUpdate(app);
+    PublishQuietSocketReceipt();
     if (!mainThread) mainThread = GetCurrentThreadId();
     if (GetCurrentThreadId() != mainThread) return;
     static uint32_t previousState = UINT32_MAX;
@@ -798,6 +865,12 @@ SDGO_GAME_TEST_PROVIDER_ENTRY { return &provider; }
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
     const bool loaded = LoadPlan();
+    if (verifyQuietRuntime) {
+        if (!quietAudio.Install(api,mod) || (quietLoopback && !quietSockets.Install(api,mod)) ||
+            !api->HookImport(mod,"user32.dll","MessageBoxW",reinterpret_cast<void*>(&QuietMessageBoxW),reinterpret_cast<void**>(&originalMessageBoxW)) ||
+            !api->HookImport(mod,"user32.dll","MessageBoxA",reinterpret_cast<void*>(&QuietMessageBoxA),reinterpret_cast<void**>(&originalMessageBoxA)))return 0;
+        PublishQuietSocketReceipt();
+    }
     // Map 0 selects the game's normal quick-room random-map policy; the
     // actual map and participants remain provided by the server.
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");

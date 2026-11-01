@@ -9,6 +9,11 @@
 测试账号与注册重试规则保存在本地私有配置中。缺少步骤、断言失败、原生异常
 和超时都会判为失败，结果输出为 JSON 和 JUnit XML。仅安装 Mod 不会自动运行测试。
 
+测试默认使用独立后台桌面，副本中的 BGM、音效和语音全部静音。后台窗口与前台
+归属有独立回执；不满足条件就失败。本机直连测试只绑定回环地址，不创建公网监听，
+不修改系统防火墙或通知设置。非本机测试需要预先具备其专用防火墙规则的管理权限；
+准备失败时不会弹出提权窗口或回退到交互运行。
+
 默认复用 `%LOCALAPPDATA%\SDGO-GameTest\account.ini`，也可用 `--account-profile`
 指定已有配置。普通重跑不会注册新账号；只有显式 `--create-test-account` 才允许
 首次创建持久账号配置，且不会覆盖已有文件。
@@ -49,7 +54,7 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 两个组件均作为开发类 Mod 接入 Mod Manager。Python 运行器是执行有限测试任务的
 开发命令，不是玩家启动器或常驻服务。账号配置和运行回执不得放入分发包或源码仓库。
 
-需要录制开发素材时，`prepare` 加 `--sfx-only`，构建 `game_test_audio` 目标，再运行
+开发者明确需要可见录制时，`prepare` 加 `--visible --sfx-only`，构建 `game_test_audio` 目标，再运行
 `python tools/game_test_record.py --run-dir build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`。
 仅测试副本关闭 BGM、启用音效。每场通过开局和 AI 断言后录制最多 25 秒，画面和声音
 只取自该测试游戏进程。失败、静音或黑屏片段会清理；保留素材仍需检查交战情况与构图，
