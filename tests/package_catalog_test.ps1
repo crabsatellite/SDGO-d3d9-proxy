@@ -53,7 +53,7 @@ function Check-Package([string]$zip, [string[]]$expected) {
     } finally { $archive.Dispose() }
 }
 try {
-    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile')
+    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile','shop_labels')
     $baseZip = Invoke-Package 'Base' '' (Join-Path $work 'base')
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
@@ -83,9 +83,12 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','hangar_manager'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
+        }
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
@@ -166,6 +169,14 @@ try {
     foreach ($file in @('winmm.dll','sdgo\core.dll','sdgo\mods\new_account_profile\new_account_profile.dll','sdgo\mods\new_account_profile\config.example.ini','sdgo\symbols\WorldServer-548A86E3-0010C000.ini')) {
         if (-not (Test-Path -LiteralPath (Join-Path $world $file))) { throw "World install lost $file" }
     }
+    $fullFolder=Join-Path $work 'full-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($fullZip,$fullFolder)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $fullFolder 'install_server.ps1') -ServerRoot $world -Role World 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Full World installer failed: $output" }
+    foreach ($file in @('sdgo\mods\shop_catalog\shop_catalog.dll','sdgo\mods\shop_catalog\shop_catalog_apply.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $world $file))) { throw "Full World installation lost shop runtime component: $file" }
+    }
+    if ([IO.File]::ReadAllText((Join-Path $world 'sdgo\mods\shop_catalog\mod.ini')) -notmatch '(?m)^enabled=0\s*$') { throw 'An unconfigured shop catalog must remain disabled' }
     $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
     if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'

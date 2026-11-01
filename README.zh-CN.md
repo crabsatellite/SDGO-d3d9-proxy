@@ -20,6 +20,7 @@
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 | 防止较高子等级误将当前军衔降级，例如 `15-1 → 5-2` | `rank_progression_fix` | World 服务器 | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 | 新账号起始资料修复 | 调整新账号的初始货币、军衔和机体发放，保留已有进度 | `new_account_profile` | World 服务器 | [使用说明](docs/new-account-profile.zh-CN.md) |
+| 商城租赁与中文选项修复 | 悬停、购买和赠送窗口明确显示租赁/永久，支持配套 Unicode 标签；可独立分发 | `shop_labels` | 客户端 | [使用说明](docs/shop-labels.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
 军衔修复通过 WorldServer 的框架加载，将对应结算调用交给 Mod 自己的修正版过程，保留原生过程，无需更新玩家客户端。
@@ -106,7 +107,12 @@
 | 功能 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | FRP 联机（Beta） | 服主配置公网地址、端口映射与可复用 UDP 端口池 | `net_route`、`agent_udp_pool` | 客户端 + Agent 服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
+| 商城商品管理（Beta） | Windows 服主窗口增删改查、定价、上下架与配置分发；沿用原生商城结算 | `shop_catalog` | World 服务器 + 服主管理窗口 | [使用说明](docs/shop-catalog.zh-CN.md) |
 <!-- /mod-category:network -->
+商城服主双击 `SdgoShopManager.exe` 管理商品，操作方式与发钱工具一致。新增/编辑先存草稿，
+点击“应用到商城”后生效；玩家继续使用原生商城。[按钮测试步骤](docs/shop-testing.zh-CN.md)。
+租赁/中文选项修复与商城管理仍分别提供独立安装包；商品配置不包含服主数据库密码。
+
 
 ## 奖励规则与验证
 
