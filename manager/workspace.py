@@ -20,6 +20,8 @@ class Workspace:
         self.settings = storage.read_json(self.path, {'schema_version': 1, 'hosts': [], 'modules': {}})
         if self.settings.get('schema_version') != 1 or not isinstance(self.settings.get('hosts'), list):
             raise ValueError('Manager 工作区版本无效')
+        from .supervisor import ServiceRegistry
+        self.services = ServiceRegistry(self)
 
     def require_developer(self):
         if self.mode != 'developer':

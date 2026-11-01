@@ -20,6 +20,7 @@ class ProviderTests(unittest.TestCase):
         self.workspace=Workspace(self.root/'manager',ROOT/'mods');attach(self.workspace)
 
     def tearDown(self):
+        self.workspace.services.close()
         for provider in self.workspace.providers.values():
             if provider.engine is not None and hasattr(provider.engine,'close'):provider.engine.close()
         self.temp.cleanup()

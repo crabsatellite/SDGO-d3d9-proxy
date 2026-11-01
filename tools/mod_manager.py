@@ -33,14 +33,13 @@ def main(argv=None):
     server = make_server(workspace, args.port)
     url = 'http://127.0.0.1:' + str(server.server_port) + '/'
     storage.atomic(workspace.root / 'manager-session.json', storage.json_bytes({'application': 'sdgo_mod_manager', 'url': url, 'pid': os.getpid()}))
+    workspace.services.restore()
     if not args.no_browser: webbrowser.open(url)
     if sys.stdout: print(url, flush=True)
     try: server.serve_forever()
     finally:
         server.server_close()
-        for provider in workspace.providers.values():
-            if hasattr(provider,'wallet'):provider.wallet.stop()
-            if provider.engine is not None and hasattr(provider.engine,'close'):provider.engine.close()
+        workspace.services.close()
         lease.close()
 
 

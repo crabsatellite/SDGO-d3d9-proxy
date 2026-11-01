@@ -74,3 +74,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 
 [界面测试步骤](shop-testing.zh-CN.md)说明新增、改价、币种、租期和删除的手动验收。
 [验证记录](shop-validation.zh-CN.md)区分窗口业务、隔离 SQL、文件安装和真人游戏验收。
+
+
+配置发布和后台所有权统一归 Manager。WorldServer 组件不再启动时自动应用 SQL，发布配置也不会重新启用旧自动接管。

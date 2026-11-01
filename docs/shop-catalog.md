@@ -17,3 +17,6 @@ The owner window uses Windows .NET Framework 4.x and needs no Python during norm
 
 See the [complete Chinese guide](shop-catalog.zh-CN.md), [button-based manual checks](shop-testing.zh-CN.md),
 and [verification scope](shop-validation.zh-CN.md). Native gameplay and actual delivery are user acceptance steps.
+
+
+Configuration publication and background ownership belong to the unified Manager. The WorldServer component performs no startup SQL application and is not re-enabled by publishing.
