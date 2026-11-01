@@ -171,9 +171,12 @@ int main() {
           "boost decoder uses the full sixteen-byte protected storage");
     Check(capabilities.weapons[0].valid &&
               capabilities.weapons[0].ammoReady &&
+              capabilities.weapons[0].ordinary &&
+              capabilities.weapons[0].attackStyle == 1 &&
+              capabilities.weapons[0].rangeType == 1 &&
               capabilities.weapons[0].kind ==
                   battle_ai::native::WeaponKind::Melee,
-          "zero-ammo ordinary melee remains ready");
+          "zero-ammo ordinary melee retains its native style and range type");
     Check(capabilities.weapons[1].kind ==
               battle_ai::native::WeaponKind::Hitscan,
           "zero-speed unscripted ranged weapon is immediate");
@@ -211,9 +214,12 @@ int main() {
     fixture.weapons[2][0x6A] = 4;
     Check(battle_ai::native::ReadCapabilities(fixture.unit, capabilities) &&
               capabilities.weapons[2].valid &&
+              capabilities.weapons[2].ordinary &&
+              capabilities.weapons[2].attackStyle == 1 &&
+              capabilities.weapons[2].rangeType == 4 &&
               capabilities.weapons[2].kind ==
                   battle_ai::native::WeaponKind::Other,
-          "ordinary funnel remains valid for native fallback");
+          "ordinary funnel remains a valid opaque native weapon");
 
     Fixture protection;
     std::uint8_t movement[0x200]{};

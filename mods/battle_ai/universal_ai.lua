@@ -20,6 +20,19 @@ local function ChangeWeapon(npc,slot)
   if SDGO_BattleAI_RequestWeapon then return SDGO_BattleAI_RequestWeapon(slot) end
   return npc:ChangeWeapon(slot)
 end
+local function ReleaseHeldIntent()
+  if SDGO_BattleAI_ReleaseHeldIntent then return SDGO_BattleAI_ReleaseHeldIntent() end
+  return 0
+end
+local function SafeSetFire(npc,o,on)
+  if not on then
+    if Flag(o.specialBusy) or Flag(o.rangedBusy) then return ReleaseHeldIntent() end
+    -- A generic stop must not clear a valid melee combo. Explicit player-style
+    -- melee cancels use their own gate below; all other melee actions finish.
+    if Flag(o.meleeBusy) then return 0 end
+  end
+  return npc:SetAttackOnOff(on)
+end
 local function Min(a,b) if a<b then return a else return b end end
 local function Max(a,b) if a>b then return a else return b end end
 local function Distance2(a,b)
@@ -67,29 +80,59 @@ local function State(o,now)
   end
   return s
 end
+local function Ordinary(w)
+  if not w or w.slot==nil or w.slot<0 or w.slot>=3 or w.attackStyle==2 then return false end
+  if w.kind=='melee' or w.kind=='hitscan' or w.kind=='projectile' or w.kind=='missile' then return true end
+  -- Some ordinary scripted weapons have native range/initializer evidence but
+  -- no known projectile family. The adapter marks only those records opaque;
+  -- an unknown kind without that affirmative receipt remains fail-closed.
+  return w.kind=='opaque' and Flag(w.ordinary)
+end
 local function Usable(w)
-  return Flag(w.valid) and w.range and w.range>0 and (Flag(w.ammoReady) or Flag(w.active))
+  return Ordinary(w) and Flag(w.valid) and w.range and w.range>0 and
+    (Flag(w.ammoReady) or Flag(w.active))
+end
+local function TargetDistance(w,t)
+  if w and w.kind=='melee' and t.meleeDistance~=nil then return t.meleeDistance end
+  if w and w.kind~='melee' and t.rangedDistance~=nil then return t.rangedDistance end
+  return t.distance
+end
+local function TargetVisible(w,t)
+  if w and w.kind=='melee' and t.meleeVisible~=nil then return Flag(t.meleeVisible) end
+  if w and w.kind~='melee' and t.rangedVisible~=nil then return Flag(t.rangedVisible) end
+  return Flag(t.visible)
+end
+local function AnyVisible(t)
+  if t.rangedVisible~=nil or t.meleeVisible~=nil then
+    return Flag(t.rangedVisible) or Flag(t.meleeVisible)
+  end
+  return Flag(t.visible)
+end
+local function RoleDistance(o,t)
+  if Flag(o.meleeRole) and t.meleeDistance~=nil then return t.meleeDistance end
+  if not Flag(o.meleeRole) and t.rangedDistance~=nil then return t.rangedDistance end
+  return t.distance
 end
 local function DamageProtected(t)
   return t and Flag(t.damageProtected)
 end
 local function InRange(w,t)
-  if not Usable(w) or DamageProtected(t) or t.distance>w.range then return false end
-  return Flag(t.visible) and Flag(t.attackable)
+  local distance=TargetDistance(w,t)
+  if not Usable(w) or not distance or DamageProtected(t) or distance>w.range then return false end
+  return TargetVisible(w,t) and Flag(t.attackable)
 end
 local function AnyInRange(o,t)
   for _,w in pairs(o.weapons) do if InRange(w,t) then return true end end
   return false
 end
 local function Candidate(o,s,t,now)
-  return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and Flag(t.attackable) and
-    (not s.blocked[t.id] or now>=s.blocked[t.id] or AnyInRange(o,t))
+  return t.id~=s.id and t.hp>0 and not DamageProtected(t) and Flag(t.enemy) and Flag(t.attackable)
 end
 local function PickTarget(o,s,now)
   local current=nil
   for _,t in pairs(o.targets) do
     if t.id==s.target and Candidate(o,s,t,now) then current=t end
-    if Candidate(o,s,t,now) and Flag(t.visible) then
+    if Candidate(o,s,t,now) and AnyVisible(t) then
       local copy=s.memory[t.id] or {}
       for key in pairs(copy) do if key~='seen' and t[key]==nil then copy[key]=nil end end
       for key,value in pairs(t) do copy[key]=value end
@@ -99,34 +142,47 @@ local function PickTarget(o,s,now)
   local currentRange=current and AnyInRange(o,current)
   local best,near=nil,nil
   for _,t in pairs(o.targets) do
-    if Candidate(o,s,t,now) and Flag(t.visible) then
-      if not near or t.distance<near.distance or (t.distance==near.distance and t.id<near.id) then near=t end
-      local tooFar=currentRange and t.distance>current.distance+C.FarTargetSlack and
-        t.distance*100>current.distance*C.FarTargetRatioPercent
-      if AnyInRange(o,t) and not tooFar and
-         (not best or t.hp<best.hp or (t.hp==best.hp and
-          (t.distance<best.distance or (t.distance==best.distance and t.id<best.id)))) then best=t end
+    if Candidate(o,s,t,now) and AnyVisible(t) then
+      local distance=RoleDistance(o,t)
+      local nearDistance=near and RoleDistance(o,near)
+      if not near or distance<nearDistance or (distance==nearDistance and t.id<near.id) then near=t end
     end
   end
-  best=best or (currentRange and current) or near
+  for _,t in pairs(o.targets) do
+    if Candidate(o,s,t,now) and AnyVisible(t) then
+      local distance=RoleDistance(o,t)
+      local reference=Flag(o.meleeRole) and near or (currentRange and current)
+      local referenceDistance=reference and RoleDistance(o,reference)
+      local tooFar=reference and distance>referenceDistance+C.FarTargetSlack and
+        distance*100>referenceDistance*C.FarTargetRatioPercent
+      if AnyInRange(o,t) and not tooFar and
+         (not best or t.hp<best.hp or (t.hp==best.hp and
+          (distance<RoleDistance(o,best) or (distance==RoleDistance(o,best) and t.id<best.id)))) then best=t end
+    end
+  end
+  if Flag(o.meleeRole) then best=best or near or (currentRange and current)
+  else best=best or (currentRange and current) or near end
   if not best and s.target then
     local last=s.memory[s.target]
     if last and now-last.seen<C.TargetMemoryMs and Candidate(o,s,last,now) then
       local copy={}
       for key,value in pairs(last) do copy[key]=value end
-      copy.visible=0;copy.remembered=true;best=copy
+      copy.visible=0;copy.rangedVisible=0;copy.meleeVisible=0
+      copy.remembered=true;best=copy
     end
   end
   return best
 end
 local function WeaponScore(w,t,threat)
   if not Usable(w) then return -1 end
-  local cycle=Max(w.cycleMs or 300,50)
+  local cycle=w.cycleMs
+  if not cycle or cycle<=0 then cycle=300 else cycle=Max(cycle,50) end
   local score=Max(w.damage or 1,1)*1000/cycle
-  if t.distance>w.range then score=score*0.15*w.range/Max(t.distance,1) end
+  local distance=TargetDistance(w,t)
+  if distance>w.range then score=score*0.15*w.range/Max(distance,1) end
   if w.kind=='melee' then
-    if t.distance<=w.range*0.9 then score=score*1.2 else score=score*0.6 end
-  elseif t.distance<w.range*0.08 then score=score*0.6 end
+    if distance<=w.range*0.9 then score=score*1.2 else score=score*0.6 end
+  elseif distance<w.range*0.08 then score=score*0.6 end
   if threat and Flag(w.movingShot) then score=score*1.15 end
   if Flag(w.ready)==false then score=score*0.85 end
   return score
@@ -135,7 +191,9 @@ local function PickWeapon(o,s,t,threat,now,forceKind)
   local best,current=nil,nil
   local score,tier=-1,-1
   for _,w in pairs(o.weapons) do
-    local allowed=not forceKind or (forceKind=='melee' and w.kind=='melee') or (forceKind=='ranged' and w.kind~='melee' and w.kind~='other')
+    local allowed=Ordinary(w) and (not forceKind or
+      (forceKind=='melee' and w.kind=='melee') or
+      (forceKind=='ranged' and w.kind~='melee'))
     local value=allowed and WeaponScore(w,t,threat) or -1
     if allowed and w.slot==o.selectedSlot and Usable(w) then current=w end
     local rank=InRange(w,t) and (Flag(w.ready) and 2 or 1) or 0
@@ -169,15 +227,18 @@ local function Support(o,t,now)
   return false
 end
 local function Weave(npc,o,s,t,now)
-  if C.Difficulty<2 then s.weave=nil;MeleeGate(false);return nil,false end
+  if C.Difficulty<2 then
+    s.weave=nil;MeleeGate(Flag(o.meleePressure))
+    return Flag(o.meleePressure) and 'ranged' or nil,false
+  end
   local function HasRanged()
     for _,w in pairs(o.weapons) do
-      if Usable(w) and w.kind~='melee' and w.kind~='other' and t.distance<=w.range then return true end
+      if Usable(w) and w.kind~='melee' and InRange(w,t) then return true end
     end
     return false
   end
   local q=s.weave
-  if q and (q.target~=t.id or now-q.started>6500 or not Flag(t.visible)) then s.weave=nil;q=nil end
+  if q and (q.target~=t.id or now-q.started>6500 or not AnyVisible(t)) then s.weave=nil;q=nil end
   if not q and Flag(o.meleeSwinging) and Flag(o.comboKnown) and o.comboMax>=2 and
      o.comboIndex==o.comboMax-2 and o.contactTarget==t.id and now-(o.contactAt or 0)<=650 and
      o.contactCombo==o.comboIndex and o.contactAction==o.actionHandle and
@@ -225,7 +286,7 @@ local function Flank(npc,o,s,w,t,now)
     s.flanking=false
   end
   local mayMove=not Flag(o.rangedBusy) or Flag(w.movingShot) or Flag(o.moveCancelOpen)
-  if w.kind=='melee' or not t.forward or not t.groundPos or not Flag(t.visible) or not mayMove then
+  if w.kind=='melee' or not t.forward or not t.groundPos or not TargetVisible(w,t) or not mayMove then
     Release();return false
   end
   local caught=false
@@ -254,10 +315,10 @@ local function CoverStep(npc,o,s,w,t,now)
   if s.coverSearching and s.coverSearching~=t.id then s.coverSearching=nil;s.coverAt=0 end
   local q=s.cover
   if q and (q.target~=t.id or now-q.started>C.CoverTimeoutMs or Flag(o.meleePressure) or
-     (q.stage=='peek' and not Flag(t.visible))) then
+     (q.stage=='peek' and not TargetVisible(w,t))) then
     s.cover=nil;q=nil;s.coverSearching=nil;SDGO_BattleAI_CancelRoute()
   end
-  if not q and not Flag(t.visible) then s.coverSearching=nil;return false,false end
+  if not q and not TargetVisible(w,t) then s.coverSearching=nil;return false,false end
   local mayMove=not Flag(o.rangedBusy) or Flag(w.movingShot) or Flag(o.moveCancelOpen)
   if not q and not mayMove then return false,false end
   if not q and now>=(s.coverAt or 0) then
@@ -311,11 +372,11 @@ local function CoverStep(npc,o,s,w,t,now)
     Log(s,'cover: retract after primary fire',now);return true,not mayMove
   end
   Log(s,'cover: smallest fireable edge',now)
-  return true,Flag(t.visible) and t.distance<=w.range
+  return true,TargetVisible(w,t) and TargetDistance(w,t)<=w.range
 end
 local function Orbwalk(npc,o,s,w,t,now)
   if C.Difficulty<2 then return false,false end
-  if w.kind=='melee' or not Flag(t.visible) or t.distance>w.range or
+  if w.kind=='melee' or not TargetVisible(w,t) or TargetDistance(w,t)>w.range or
      (not Flag(t.meleeApproaching) and not Flag(t.meleeTracking) and not Flag(t.meleeSwinging) and not Flag(t.hurt) and not Support(o,t,now)) then return false,false end
   local count=o.shots or 0
   if s.orbShots==nil then s.orbShots=count end
@@ -342,7 +403,7 @@ local function Orbwalk(npc,o,s,w,t,now)
   return false,false
 end
 local function Move(npc,o,s,target,now,force)
-  if now<s.repathAt and not force and (Flag(o.moving) or Flag(o.routeActive)) then return end
+  if now<s.repathAt and not force then return false end
   s.repathAt=now+C.RepathMs
   local status
   if target.remembered and target.groundPos then
@@ -350,11 +411,81 @@ local function Move(npc,o,s,target,now,force)
     status=SDGO_BattleAI_Route(target.id,force and 1 or 0,p.x,p.y,p.z)
   else status=SDGO_BattleAI_Route(target.id,force and 1 or 0) end
   if status==0 then
-    s.blocked[target.id]=now+2500
-    s.movementIntent=false
-    npc:MoveStop()
-    Log(s,'route unavailable',now)
-  else s.movementIntent=true;s.movementIntentAt=now end
+    s.blocked[target.id]=now+C.RepathMs
+    local point=target.groundPos or target.typedAimPos or target.typedAimpos or target.pos
+    local advanced=false
+    if point and SDGO_BattleAI_AdvancePoint then
+      advanced=SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,300,0)==1
+    end
+    s.movementIntent=advanced
+    if advanced then
+      s.movementIntentAt=now
+      Log(s,'route unavailable: bounded walking fallback',now)
+    else Log(s,'route unavailable: retry throttled',now) end
+    return advanced
+  end
+  s.blocked[target.id]=nil
+  s.movementIntent=true;s.movementIntentAt=now
+  return true
+end
+local function MeleeReach(o)
+  local reach=0
+  for _,w in pairs(o.weapons or {}) do
+    if Ordinary(w) and Flag(w.valid) and w.kind=='melee' and w.range and w.range>reach then reach=w.range end
+  end
+  return reach
+end
+local function MeleeOpportunity(o,t)
+  if not Flag(o.meleeRole) or Flag(o.meleePressure) then return false end
+  for _,w in pairs(o.weapons or {}) do
+    if w.kind=='melee' and InRange(w,t) then return true end
+  end
+  return false
+end
+local function MeleeApproach(npc,o,s,w,t,now)
+  if not Flag(o.meleeRole) or Flag(o.meleePressure) or t.remembered or
+     Flag(o.defenceMoving) or Flag(o.meleeBusy) or Flag(o.specialBusy) or not AnyVisible(t) then
+    s.meleeAdvanceTarget=nil
+    return false
+  end
+  local reach=MeleeReach(o)
+  local distance=t.meleeDistance or t.distance
+  if reach<=0 or not distance or distance<=Max(100,reach*0.9) then
+    if s.meleeAdvanceTarget==t.id and Flag(o.routeActive) then SDGO_BattleAI_CancelRoute() end
+    s.meleeAdvanceTarget=nil
+    return false
+  end
+  -- Direct bounded closing follows the visible combat/aim point. A large
+  -- target's navigation root can be outside the playable map even while its
+  -- exposed body is in legal melee space; full route planning may still use
+  -- groundPos elsewhere.
+  local point=t.pos or t.typedAimPos or t.typedAimpos or t.groundPos
+  if not point then return false end
+  if s.meleeAdvanceTarget~=t.id then
+    if Flag(o.routeActive) then SDGO_BattleAI_CancelRoute() end
+    s.meleeAdvanceTarget=t.id;s.meleeAdvanceAt=0
+  end
+  if Flag(o.rangedBusy) and not Flag(w.movingShot) and not Flag(o.moveCancelOpen) then
+    Log(s,'melee role: wait for legal ranged movement window',now)
+    return true
+  end
+  if Flag(o.routeActive) then
+    s.movementIntent=true;s.movementIntentAt=now
+    Log(s,'melee role: continue bounded advance',now)
+    return true
+  end
+  if now<(s.meleeAdvanceAt or 0) then return true end
+  s.meleeAdvanceAt=now+C.RepathMs
+  local allowRanged=w and w.kind~='melee' and Flag(w.movingShot)
+  local step=Min(400,Max(100,distance-reach*0.75))
+  local advanced=SDGO_BattleAI_AdvancePoint and
+    SDGO_BattleAI_AdvancePoint(point.x,point.y,point.z,step,allowRanged and 1 or 0)==1
+  s.movementIntent=advanced
+  if advanced then
+    s.movementIntentAt=now
+    Log(s,'melee role: close while keeping legal output',now)
+  else Log(s,'melee role: bounded advance unavailable',now) end
+  return true
 end
 local function RecoveryMode(active)
   if SDGO_BattleAI_RecoveryMode then SDGO_BattleAI_RecoveryMode(active and 1 or 0) end
@@ -454,12 +585,18 @@ local function Evade(npc,o,s,w,t,now,canFire)
   return true
 end
 local function SpecialTarget(o,t)
-  return t and t.hp>0 and not DamageProtected(t) and Flag(t.visible) and
-    Flag(t.attackable) and t.distance<=(o.specialRange or 0)
+  local distance=t and (t.rangedDistance or t.distance)
+  local visible=false
+  if t then
+    if t.rangedVisible~=nil then visible=Flag(t.rangedVisible)
+    else visible=Flag(t.visible) end
+  end
+  return t and distance and t.hp>0 and not DamageProtected(t) and visible and
+    Flag(t.attackable) and distance<=(o.specialRange or 0)
 end
 local function HasOrdinary(o,slot)
   if not slot or slot<0 or slot>=3 then return false end
-  for _,w in pairs(o.weapons or {}) do if w.slot==slot and Flag(w.valid) then return true end end
+  for _,w in pairs(o.weapons or {}) do if Ordinary(w) and w.slot==slot and Flag(w.valid) then return true end end
   return false
 end
 local function AllyCatch(o,t,now)
@@ -472,7 +609,7 @@ local function AllyCatch(o,t,now)
 end
 local function OrdinaryFinisher(o,t)
   for _,w in pairs(o.weapons or {}) do
-    if InRange(w,t) and Flag(w.ready) and w.kind~='other' and (w.damage or 0)>=t.hp then return true end
+    if Ordinary(w) and InRange(w,t) and Flag(w.ready) and (w.damage or 0)>=t.hp then return true end
   end
   return false
 end
@@ -480,7 +617,7 @@ local function KeepBoundGun(npc,o,t)
   local fire=false
   if not Flag(o.hurt) then
     for _,w in pairs(o.weapons or {}) do
-      if w.slot==o.selectedSlot and w.kind~='melee' and w.kind~='other' and InRange(w,t) and
+      if Ordinary(w) and w.slot==o.selectedSlot and w.kind~='melee' and InRange(w,t) and
          (Flag(w.ready) or Flag(w.active)) then fire=true end
     end
   end
@@ -513,18 +650,62 @@ local function ProfileTick(npc,o,now,deferSpecial)
     -- A transform may remove the old slot. Do not freeze the whole controller
     -- waiting for an impossible restoration; normal selection owns the new form.
     if HasOrdinary(o,o.selectedSlot) or not HasOrdinary(o,q.slot) or now-q.returnAt>=250 then return Release() end
-    npc:SetAttackOnOff(false)
+    -- A lease always owns either the selected special record or a natively
+    -- acknowledged action. Clear only that held request; the stock attack-off
+    -- receiver queues Neutral and can cut the action that is handing off.
+    ReleaseHeldIntent()
     ChangeWeapon(npc,q.slot)
     return true
   end
+  if not q and Flag(o.specialBusy) then
+    -- A native/stock/late-observed special can predate this Lua lease. It
+    -- still owns its animation, but no stale held input may keep it open.
+    ReleaseHeldIntent();p.orphanSpecial=true
+    return true
+  end
+  if p.orphanSpecial then
+    -- The native busy predicate is now clear. Give the generic controller
+    -- this same decision to keep an ordinary slot or request one.
+    p.orphanSpecial=nil
+    return false
+  end
   if q then
-    if Flag(o.specialBusy) then q.active=true;q.returnAt=nil;return true end
+    if Flag(o.specialBusy) then
+      -- Admission has already happened. Release the held slot-3 input so a
+      -- miss or a surviving SP budget cannot immediately re-open the special
+      -- after the native animation; the native FSM still owns completion.
+      ReleaseHeldIntent()
+      q.active=true;q.returnAt=nil
+      return true
+    end
     local admitted=Flag(o.specialAcknowledged) and (o.specialAckSequence or 0)>(q.ackSequence or 0)
-    if admitted and (o.specialFinished or 0)<=(q.finished or 0) and now-q.started<=2200 then q.returnAt=nil;return true end
+    -- A begin receipt followed by an actually committed ordinary slot is a
+    -- stronger handoff receipt than a possibly lost finish packet. This cannot
+    -- be the initial switch delay: admission only occurs after slot 3 ran.
+    if admitted and HasOrdinary(o,o.selectedSlot) then return Release() end
+    if admitted and (o.specialFinished or 0)<=(q.finished or 0) then
+      -- The server begin receipt proves this trigger was accepted. Releasing
+      -- held input cannot cancel the owned FSM state and prevents it from
+      -- queuing another trigger while that state finishes.
+      ReleaseHeldIntent()
+      if Flag(o.attackNeutral) then
+        return ReturnWeapon()
+      end
+      -- Current or pending native state still owns the admitted action. Do not
+      -- replace that evidence with an arbitrary elapsed-time cutoff.
+      q.returnAt=nil
+      return true
+    end
     if q.returning then return ReturnWeapon() end
-    if q.active or (o.specialFinished or 0)>(q.finished or 0) or now-q.started>2200 then return ReturnWeapon() end
+    if q.active or (o.specialFinished or 0)>(q.finished or 0) or
+       (not admitted and now-q.started>2200) then return ReturnWeapon() end
     if not specialControl or lockedAttack then
-      npc:SetAttackOnOff(false)
+      -- The bridge only clears an owned slot-three held request here. If a
+      -- melee action currently owns the FSM and slot three was not committed,
+      -- it deliberately does nothing so that melee can finish naturally.
+      if Flag(o.specialSelected) or admitted or Flag(o.specialBusy) or Flag(o.rangedBusy) then
+        ReleaseHeldIntent()
+      end
       return true
     end
     local target=nil
@@ -574,7 +755,7 @@ end
 local function ProtectedTarget(o,s)
   local held,native,nearest=nil,nil,nil
   for _,t in pairs(o.targets or {}) do
-    if t.hp>0 and Flag(t.enemy) and Flag(t.visible) and DamageProtected(t) then
+    if t.hp>0 and Flag(t.enemy) and AnyVisible(t) and DamageProtected(t) then
       if t.id==s.target then held=t
       elseif t.id==o.nativeTarget or t.id==o.policyTarget then native=t
       elseif not nearest or t.distance<nearest.distance or
@@ -586,7 +767,7 @@ end
 local function SelectedWeapon(o)
   local fallback=nil
   for _,w in pairs(o.weapons or {}) do
-    if Flag(w.valid) and w.range and w.range>0 then
+    if Ordinary(w) and Flag(w.valid) and w.range and w.range>0 then
       if w.slot==o.selectedSlot then return w end
       if not fallback or (w.kind~='melee' and fallback.kind=='melee') or w.range>fallback.range then fallback=w end
     end
@@ -594,7 +775,12 @@ local function SelectedWeapon(o)
   return fallback
 end
 local function PositionForProtected(npc,o,s,t,now)
-  npc:SetAttackOnOff(false);SDGO_BattleAI_Cadence(0)
+  if Flag(o.specialBusy) or Flag(o.rangedBusy) then
+    ReleaseHeldIntent()
+  elseif not Flag(o.meleeBusy) then
+    npc:SetAttackOnOff(false)
+  end
+  SDGO_BattleAI_Cadence(0)
   npc:SetAttackTarget(t.id);SDGO_BattleAI_AimTarget(t.id)
   s.patrolling=false;s.weave=nil;s.cover=nil;s.flanking=false;s.cooldownMoving=false
   npc:SetJumpTime(0)
@@ -617,15 +803,16 @@ local function PositionForProtected(npc,o,s,t,now)
   local desired=w.kind=='melee' and Max(120,range*0.8) or Max(300,range*0.65)
   local near=Max(90,desired*0.65)
   local far=desired+Max(80,range*0.1)
-  if t.distance<near then
-    DirectMove(npc,o,UNIT_MOVE_DIR_BACKWARD,Min(C.StrafeDistance,Max(100,near-t.distance+80)),UNIT_MOVE_EVENT_MOVE)
+  local distance=TargetDistance(w,t)
+  if distance<near then
+    DirectMove(npc,o,UNIT_MOVE_DIR_BACKWARD,Min(C.StrafeDistance,Max(100,near-distance+80)),UNIT_MOVE_EVENT_MOVE)
     Log(s,'protected target: walk back to engagement range',now)
     return
   end
   local point=t.groundPos or t.pos
-  if t.distance>far and point and o.pos then
+  if distance>far and point and o.pos then
     local dx,dz=o.pos.x-point.x,o.pos.z-point.z
-    local length=t.distance
+    local length=distance
     if dx*dx+dz*dz>1 and length>1 and
        (not Flag(o.routeActive) or now>=(s.protectedRepathAt or 0)) then
       local p={x=point.x+dx*desired/length,y=point.y,z=point.z+dz*desired/length}
@@ -673,7 +860,7 @@ local function Tick(npc)
     RecoveryMode(false);return 123
   end
   if o.hp<=0 or Flag(o.hurt) then
-    npc:SetAttackOnOff(false); npc:MoveStop();s.movementIntent=false;s.readyAt=nil; s.recoverUntil=nil
+    SafeSetFire(npc,o,false); npc:MoveStop();s.movementIntent=false;s.readyAt=nil; s.recoverUntil=nil
     SDGO_BattleAI_CancelRoute()
     s.weave=nil;s.cover=nil;MeleeGate(false)
     s.recovering=nil;RecoveryMode(false)
@@ -689,27 +876,30 @@ local function Tick(npc)
     s.cover=nil;s.flanking=false;s.orbUntil=nil
     local fire=false
     for _,w in pairs(o.weapons) do
-      if w.slot==o.selectedSlot and t and InRange(w,t) and Flag(w.movingShot) and w.kind~='melee' then
+      if Ordinary(w) and w.slot==o.selectedSlot and t and InRange(w,t) and
+         Flag(w.movingShot) and w.kind~='melee' then
         fire=Flag(w.ready) or Flag(o.rangedBusy)
       end
     end
-    SDGO_BattleAI_AimTarget(t and Flag(t.visible) and t.id or 0)
-    npc:SetAttackOnOff(fire);SDGO_BattleAI_Cadence(0)
+    SDGO_BattleAI_AimTarget(fire and t.id or 0)
+    SafeSetFire(npc,o,fire);SDGO_BattleAI_Cadence(0)
     return 123
   end
   if s.weave or Flag(o.meleeBusy) then
     for _,held in pairs(o.targets) do
-      if held.id==s.target and held.hp>0 and not DamageProtected(held) and Flag(held.attackable) then t=held end
+      if held.id==s.target and held.hp>0 and not DamageProtected(held) and Flag(held.attackable) and
+         (AnyVisible(held) or Flag(o.meleeBusy)) then t=held end
     end
   end
   if not t then
-    npc:SetAttackOnOff(false); s.readyAt=nil; s.target=nil
+    s.readyAt=nil; s.target=nil
     SDGO_BattleAI_CancelRoute()
     s.weave=nil;s.cover=nil
     if protected then
       MeleeGate(Flag(s.protectedMeleeGate));PositionForProtected(npc,o,s,protected,now)
       return 123
     end
+    SafeSetFire(npc,o,false)
     SDGO_BattleAI_AimTarget(0)
     MeleeGate(Flag(s.protectedMeleeGate))
     if not Flag(o.meleeBusy) and not Flag(o.specialBusy) then
@@ -726,12 +916,15 @@ local function Tick(npc)
   if s.target~=t.id then
     s.target=t.id; s.targetAt=now+C.TargetHoldMs; s.readyAt=nil
     s.repathAt=0
+    s.meleeAdvanceTarget=nil;s.meleeAdvanceAt=0
     npc:SetAttackTarget(t.id)
     s.cover=nil;s.flanking=false
   end
   local forced,waiting=nil,false
   if s.protectedMeleeGate and Flag(o.meleeBusy) then
-    npc:SetAttackOnOff(false);MeleeGate(true)
+    -- Suppress future combo continuation without forcing the current native
+    -- melee action through the stock Neutral transition.
+    MeleeGate(true)
   else
     forced,waiting=Weave(npc,o,s,t,now)
   end
@@ -742,13 +935,18 @@ local function Tick(npc)
     -- A charged/continuous native ranged state may already have consumed its
     -- round. Do not switch weapons, pulse its held input or cut it at a burst boundary.
     for _,active in pairs(o.weapons) do
-      if active.slot==o.selectedSlot and Flag(active.valid) then
-        local keep=not DamageProtected(t) and Flag(t.visible) and
-          Flag(t.attackable) and t.distance<=active.range
+      if Ordinary(active) and active.slot==o.selectedSlot and Flag(active.valid) then
+        local keep=InRange(active,t)
         SDGO_BattleAI_AimTarget(keep and t.id or 0)
         local covered,peek=false,false
-        if not Flag(o.defenceMoving) then covered,peek=CoverStep(npc,o,s,active,t,now) end
-        if covered then keep=keep and peek
+        local approaching=false
+        if not Flag(o.defenceMoving) then approaching=MeleeApproach(npc,o,s,active,t,now) end
+        local meleeOpportunity=MeleeOpportunity(o,t)
+        local roleOwns=approaching or meleeOpportunity
+        if roleOwns then
+        elseif not Flag(o.defenceMoving) then covered,peek=CoverStep(npc,o,s,active,t,now) end
+        if roleOwns then
+        elseif covered then keep=keep and peek
         elseif Flag(o.defenceMoving) then
         elseif Flank(npc,o,s,active,t,now) then
         else
@@ -762,7 +960,17 @@ local function Tick(npc)
             end
           end
         end
-        npc:SetAttackOnOff(keep)
+        if meleeOpportunity then
+          -- Stop future ranged pulses without sending the stock attack-off
+          -- message: that message queues Neutral and cuts the current action.
+          -- The native ranged FSM finishes naturally; the next free decision
+          -- can commit the requested melee weapon.
+          ReleaseHeldIntent()
+          SDGO_BattleAI_Cadence(0)
+          Log(s,'melee role: release held ranged intent for natural finish',now)
+          return 123
+        end
+        SafeSetFire(npc,o,keep)
         SDGO_BattleAI_Cadence(C.AttackIntervalMs)
         Log(s,'native ranged state owns held input',now)
         return 123
@@ -770,9 +978,15 @@ local function Tick(npc)
     end
     return 123
   end
-  local w=PickWeapon(o,s,t,threat,now,forced)
+  local selectionKind=forced
+  if not selectionKind and MeleeOpportunity(o,t) then selectionKind='melee' end
+  local w=PickWeapon(o,s,t,threat,now,selectionKind)
   if not w then
-    npc:SetAttackOnOff(false); SDGO_BattleAI_AimTarget(0)
+    if Flag(o.meleeBusy) or Flag(o.specialBusy) then
+      Log(s,'weapons unavailable: current native action retains ownership',now)
+      return 123
+    end
+    SafeSetFire(npc,o,false); SDGO_BattleAI_AimTarget(0)
     if Flag(o.defenceMoving) then
       Log(s,'weapons unavailable: retain defensive escape route',now)
       return 123
@@ -791,8 +1005,8 @@ local function Tick(npc)
     s.requestedSlot=w.slot
     local current=nil
     for _,candidate in pairs(o.weapons) do
-      local permitted=not forced or (forced=='melee' and candidate.kind=='melee') or
-        (forced=='ranged' and candidate.kind~='melee' and candidate.kind~='other')
+      local permitted=Ordinary(candidate) and
+        not (selectionKind=='ranged' and candidate.kind=='melee')
       if permitted and candidate.slot==o.selectedSlot and InRange(candidate,t) then current=candidate end
     end
     if current then
@@ -801,7 +1015,7 @@ local function Tick(npc)
       w=current
     else
       if not Flag(o.defenceMoving) and not s.weave then
-        if forced=='ranged' and Flag(o.meleePressure) then
+        if selectionKind=='ranged' and Flag(o.meleePressure) then
           DirectMove(npc,o,UNIT_MOVE_DIR_BACKWARD,C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
         else Move(npc,o,s,t,now,false) end
       end
@@ -823,6 +1037,18 @@ local function Tick(npc)
     npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(0)
     if pendingSlot then ChangeWeapon(npc,pendingSlot) end
     Log(s,'front/rear crossfire: keep defensive movement and fire',now)
+    return 123
+  end
+  local roleApproaching=MeleeApproach(npc,o,s,w,t,now)
+  if selectionKind=='melee' and pendingSlot then
+    npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+    ChangeWeapon(npc,pendingSlot)
+    Log(s,'melee opportunity: retain legal bound output while switching',now)
+    return 123
+  end
+  if roleApproaching then
+    npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
     return 123
   end
   local covered,peek=CoverStep(npc,o,s,w,t,now)
@@ -847,7 +1073,8 @@ local function Tick(npc)
   local evasive=false
   local ground=false
   if not covered and not flanking and not walked then
-    local tooClose=w.kind~='melee' and t.distance<w.range*0.18
+    local distance=TargetDistance(w,t)
+    local tooClose=w.kind~='melee' and distance<w.range*0.18
     if not tooClose then ground=GroundStrafe(npc,o,s,w,now,reaction) end
     if not ground then
       SDGO_BattleAI_CancelRoute()
@@ -855,7 +1082,8 @@ local function Tick(npc)
     end
   end
   if not covered and not flanking and not walked and not evasive and not ground then
-    if w.kind~='melee' and t.distance<w.range*0.18 then
+    local distance=TargetDistance(w,t)
+    if w.kind~='melee' and distance<w.range*0.18 then
       DirectMove(npc,o,UNIT_MOVE_DIR_BACKWARD,Min(C.StrafeDistance,w.range*0.2),UNIT_MOVE_EVENT_MOVE)
     elseif not reaction then
       -- Spend native cooldown/reload time positioning, rather than adding an

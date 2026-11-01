@@ -13,9 +13,13 @@ int wmain(int argc,wchar_t** argv) {
     std::vector<uint32_t> pool{123};
     SCENARIO("optional catalog is untouched when not installed");
     CHECK(!sdgo::AiCatalogPool(&api,nullptr,1,pool));CHECK(pool==std::vector<uint32_t>{123});
+    CHECK(sdgo::AiCatalogMasteredWeaponType(&api,nullptr,700)==-1);
     const HMODULE module=LoadLibraryW(path.c_str());CHECK(module!=nullptr);
     if(module) {
         SCENARIO("active provider is authoritative, including empty and refused pools");
+        CHECK(sdgo::AiCatalogMasteredWeaponType(&api,nullptr,700)==0);
+        CHECK(sdgo::AiCatalogMasteredWeaponType(&api,nullptr,701)==1);
+        CHECK(sdgo::AiCatalogMasteredWeaponType(&api,nullptr,999)==-1);
         CHECK(sdgo::AiCatalogPool(&api,nullptr,1,pool));CHECK(pool==std::vector<uint32_t>({700,701}));
         for(int level:{2,3,4}) {
             pool={123};CHECK(sdgo::AiCatalogPool(&api,nullptr,level,pool));CHECK(pool.empty());

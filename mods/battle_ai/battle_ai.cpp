@@ -23,6 +23,7 @@
 #include "native_protection.h"
 #include "native_loadout.h"
 #include "sdgo/room_titles_current.h"
+#include "sdgo/ai_catalog_provider.h"
 
 namespace {
 struct lua_State;
@@ -153,6 +154,8 @@ struct Actor {
     uint64_t specialAcknowledgedSequence=0;
     uint64_t specialFinished=0;
     uint64_t thinkSerial=0;
+    uint32_t roleUnit=0;
+    bool roleAlternate=false,meleeRole=false;
     uint64_t coverQueryFrame=0;
     bool coverQueryUsed=false;
     struct CoverSearch {
@@ -280,6 +283,17 @@ battle_ai::loadout::ApplyResult InitializeLoadout(uint8_t* unit,int options,uint
 Vec3 Position(uint8_t* unit) { return *reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(unit+8)+0x88); }
 Vec3 AimPoint(uint8_t* unit) {
     Vec3 position=Position(unit);
+    auto table=*reinterpret_cast<void***>(unit);
+    auto node=*reinterpret_cast<uint8_t**>(unit+8);
+    if(table&&table[1]&&node) {
+        using IsA=bool(__thiscall*)(uint8_t*,int);
+        auto isA=reinterpret_cast<IsA>(table[1]);
+        uint8_t* shape=nullptr;Vec3 point={};
+        using namespace battle_ai::native::detail;
+        if(isA(unit,7)&&ReadPointer(node,0xE0,shape)&&Read(shape,0x10,point)&&battle_ai::Finite(point)) return point;
+        if(isA(unit,0x12)&&ReadPointer(node,0xD8,shape)&&Read(shape,0x3C,point)&&battle_ai::Finite(point)) return point;
+        if(isA(unit,0x15)) return position;
+    }
     auto scene=*reinterpret_cast<uint8_t**>(unit+0x34);
     if(scene) {
         auto bounds=reinterpret_cast<float*>(scene+0xBC);
@@ -357,16 +371,18 @@ void AdvancePath(uint8_t* unit,Actor& a) {
     while(a.waypoint<a.path.size()&&battle_ai::Length(a.path[a.waypoint]-here)<(a.pathRanged?25:100)) ++a.waypoint;
     if(a.waypoint>=a.path.size()) a.path.clear();
 }
+bool MovementAvailable(uint8_t* unit,bool allowRanged) {
+    auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+    if(!fsm||ControlBlocked(unit)) return false;
+    if(battle_ai::native::detail::Neutral(fsm)) return true;
+    if(!allowRanged||*reinterpret_cast<uint8_t**>(fsm+4)!=fsm+0x34||
+       (*reinterpret_cast<uint8_t**>(fsm+8)&&*reinterpret_cast<uint8_t**>(fsm+8)!=fsm+0x34)) return false;
+    auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
+    return record&&(record[0x8F]==1||fsm[0xB38]==1);
+}
 void FollowPath(uint8_t* unit,Actor& a) {
     if(a.path.empty()) return;
-    auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
-    bool legalRanged=false;
-    if(fsm && a.pathRanged && *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x34 &&
-       (!*reinterpret_cast<uint8_t**>(fsm+8)||*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x34)) {
-        auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
-        legalRanged=record&&(record[0x8F]==1||fsm[0xB38]==1);
-    }
-    if(!fsm || ControlBlocked(unit) || (!battle_ai::native::detail::Neutral(fsm)&&!legalRanged)) {
+    if(!MovementAvailable(unit,a.pathRanged)) {
         // Native attacks/hurt/guard own the motor now; drop our route without
         // cancelling the movement belonging to their active state.
         a.path.clear();return;
@@ -374,13 +390,14 @@ void FollowPath(uint8_t* unit,Actor& a) {
     AdvancePath(unit,a);
     if(a.path.empty()) return;
     Vec3 current=*reinterpret_cast<Vec3*>(unit+0x3078);
-    if(battle_ai::Length(current-a.path[a.waypoint])>1) g_setGoal(unit,&a.path[a.waypoint],1);
+    if(unit[0x30DC]==0||battle_ai::Length(current-a.path[a.waypoint])>1)
+        g_setGoal(unit,&a.path[a.waypoint],1);
 }
 struct TargetObservation {
     uint32_t id=0;
     int hp=0,maxHp=0;
-    float distance=0;
-    bool visible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false,damageProtected=false;
+    float distance=0,rangedDistance=0,meleeDistance=0;
+    bool visible=false,rangedVisible=false,meleeVisible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false,damageProtected=false;
     uint32_t selectedTarget=0;
     uint8_t hitType=0;bool hitKnown=false;
     bool meleeApproaching=false;
@@ -422,11 +439,13 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     };
     for(size_t i=0;i<o.count;++i) {
         const auto& t=o.targets[i];if(!t.visible||(!t.attackable&&!t.damageProtected)||t.hp<=0) continue;
+        const double groundDistance=battle_ai::Length(t.ground-o.pos);
+        if(!std::isfinite(groundDistance)) continue;
         bool engaged=!t.damageProtected&&t.selectedTarget==o.id&&(t.rangedFiring||t.meleeTracking||t.meleeSwinging);
-        bool melee=engaged&&(t.meleeTracking||t.meleeSwinging)&&t.distance<600;
+        bool melee=engaged&&(t.meleeTracking||t.meleeSwinging)&&groundDistance<600;
         // A distant idle opponent remains observable to targeting, but does not
         // force this bot to turn side-on or abandon its current engagement.
-        if(!engaged&&t.distance>effectiveRange) continue;
+        if(!engaged&&groundDistance>effectiveRange) continue;
         add(t.id,t.ground,melee?1.8f:(engaged?1.2f:1.0f),melee,t.hitType,t.hitKnown);
     }
     auto received=g_incoming.find(g_current);
@@ -484,6 +503,13 @@ bool CaptureUnsafe(Observation& o) {
     if(!hasWeapon) return false;
     uint8_t* unit=g_current;
     auto& actor=ActorFor(unit);
+    if(actor.roleUnit!=o.caps.unitId||actor.roleAlternate!=o.caps.alternate) {
+        actor.roleUnit=o.caps.unitId;actor.roleAlternate=o.caps.alternate;
+        int nativeRole=sdgo::AiCatalogMasteredWeaponType(g_api,g_mod,o.caps.unitId);
+        battle_ai::loadout::NativeProfile fallback;
+        actor.meleeRole=nativeRole==0||(nativeRole<0&&ClientLoadoutProfile(unit,nullptr,&fallback)&&
+            fallback.role==battle_ai::loadout::UnitRole::Melee);
+    }
     AdvancePath(unit,actor);
     ULONGLONG now=GetTickCount64();
     o.id=*reinterpret_cast<uint32_t*>(unit+4);o.generation=actor.generation;
@@ -495,9 +521,12 @@ bool CaptureUnsafe(Observation& o) {
     o.hurt=ControlBlocked(unit);
     if(actor.lastHp>0 && o.hp<actor.lastHp) actor.hurtAt=now;
     actor.lastHp=o.hp;o.hurtRecently=actor.hurtAt && now-actor.hurtAt<1600;
-    float perception=1500;
-    for(const auto& w:o.caps.weapons) if(w.valid) perception=(std::max)(perception,w.range*1.5f);
-    perception=(std::min)(perception,24000.0f);
+    float maxRange=0,meleeRange=0;
+    for(const auto& w:o.caps.weapons) if(w.valid&&w.ordinary&&w.slot<3) {
+        maxRange=(std::max)(maxRange,w.range);
+        if(w.kind==battle_ai::native::WeaponKind::Melee) meleeRange=(std::max)(meleeRange,w.range);
+    }
+    float perception=(std::max)(maxRange,(std::min)(24000.0f,(std::max)(1500.0f,maxRange*1.5f)));
     int ownTeam=*reinterpret_cast<int*>(unit+0x20);
     using CanAttack=bool(__thiscall*)(uint8_t*,uint8_t*);
     Ray3 ray={};
@@ -512,6 +541,13 @@ bool CaptureUnsafe(Observation& o) {
     Ray3* nativeRay=g_ray(fsm,&ray);
     if(!nativeRay || !battle_ai::Finite(nativeRay->origin)) return false;
     if(nativeRay!=&ray) ray=*nativeRay;
+    Vec3 meleeOrigin=o.pos;
+    auto selfNode=*reinterpret_cast<uint8_t**>(unit+8);
+    uint8_t* selfSphere=nullptr;Vec3 nativeMeleeOrigin={};
+    if(battle_ai::native::detail::ReadPointer(selfNode,0xE0,selfSphere)&&
+       battle_ai::native::detail::Read(selfSphere,0x10,nativeMeleeOrigin)&&
+       battle_ai::Finite(nativeMeleeOrigin))
+        meleeOrigin=nativeMeleeOrigin;
     for(size_t offset:{size_t(0x48),size_t(0x70),size_t(0x7C)}) {
         auto head=*reinterpret_cast<uint8_t***>(*g_document+offset);
         if(!head) continue;
@@ -542,8 +578,11 @@ bool CaptureUnsafe(Observation& o) {
                 continue;
             }
             Vec3 point=AimPoint(candidate);
-            float distance=static_cast<float>(battle_ai::Length(Position(candidate)-o.pos));
-            if(!battle_ai::Finite(point)||!std::isfinite(distance)||distance>perception) continue;
+            float rangedDistance=static_cast<float>(battle_ai::Length(point-ray.origin));
+            float meleeDistance=static_cast<float>(battle_ai::Length(point-meleeOrigin));
+            if(!battle_ai::Finite(point)||!std::isfinite(rangedDistance)||
+               !std::isfinite(meleeDistance)||
+               (rangedDistance>perception&&meleeDistance>perception)) continue;
             auto vtable=*reinterpret_cast<void***>(candidate);
             if(!vtable||!vtable[10]) continue;
             const auto protection=battle_ai::native::ReadDamageProtection(candidate);
@@ -552,7 +591,8 @@ bool CaptureUnsafe(Observation& o) {
             if(!attackable&&!damageProtected) continue;
             auto& t=o.targets[o.count++];
             t.id=id;t.hp=hp;t.maxHp=*reinterpret_cast<int*>(candidate+0x3C);
-            t.distance=distance;t.enemy=true;t.attackable=attackable;t.damageProtected=damageProtected;t.point=point;t.ground=Position(candidate);
+            t.distance=rangedDistance;t.rangedDistance=rangedDistance;t.meleeDistance=meleeDistance;
+            t.enemy=true;t.attackable=attackable;t.damageProtected=damageProtected;t.point=point;t.ground=Position(candidate);
             t.hurt=HurtState(candidate);
             t.forward=*reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(candidate+8)+0x6C);
             t.selectedTarget=candidateFsm?*reinterpret_cast<uint32_t*>(candidateFsm+0x200):0;
@@ -563,12 +603,14 @@ bool CaptureUnsafe(Observation& o) {
             if((t.meleeTracking||t.meleeSwinging)&&t.selectedTarget==o.id) {
                 battle_ai::native::Capabilities attacking={};
                 if(battle_ai::native::ReadCapabilities(candidate,attacking))
-                    for(const auto& w:attacking.weapons) if(w.valid&&w.slot==attacking.selectedSlot&&w.kind==battle_ai::native::WeaponKind::Melee&&distance<=w.range+150) o.meleePressure=true;
+                    for(const auto& w:attacking.weapons) if(w.valid&&w.slot==attacking.selectedSlot&&w.kind==battle_ai::native::WeaponKind::Melee&&meleeDistance<=w.range+150) o.meleePressure=true;
             }
             t.velocity=Velocity(candidate,id,point,now);
             if(attackRecord&&(attackRecord[0x6A]==1||attackRecord[0x6A]==8))
                 t.meleeApproaching=battle_ai::Dot(battle_ai::Horizontal(o.pos-t.ground),t.velocity)>30;
-            t.visible=battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point);
+            t.rangedVisible=battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point,true);
+            t.meleeVisible=meleeDistance<=meleeRange&&battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,meleeOrigin,point);
+            t.visible=t.rangedVisible||t.meleeVisible;
             // A target's entire loadout/boost does not need decoding just to
             // notice gun input. The event hook below also retains brief shots.
             uint8_t* enemyFsm=nullptr;uint8_t* enemyRecord=nullptr;uint8_t rangeType=0;
@@ -609,6 +651,7 @@ int __cdecl Observe(lua_State* L) {
     if(g_runtime.generic) ActorFor(g_current).controlled=true;
     Number(L,"id",o.id);Number(L,"generation",static_cast<double>(o.generation));
     Number(L,"hp",o.hp);Number(L,"unitId",o.caps.unitId);Number(L,"alternate",o.caps.alternate);Number(L,"selectedSlot",o.caps.selectedSlot);
+    Number(L,"meleeRole",ActorFor(g_current).meleeRole);
     Number(L,"moving",o.moving);Number(L,"hurtRecently",o.hurtRecently);
     Number(L,"routeActive",!ActorFor(g_current).path.empty());
     const auto& observedActor=ActorFor(g_current);
@@ -627,6 +670,7 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"specialAckSequence",static_cast<double>(ActorFor(g_current).specialAcknowledgedSequence));
     Number(L,"rangedBusy",o.rangedBusy);
     auto attackFsm=*reinterpret_cast<uint8_t**>(g_current+0x9CC);
+    Number(L,"attackNeutral",attackFsm&&battle_ai::native::detail::Neutral(attackFsm));
     Number(L,"moveCancelOpen",attackFsm&&attackFsm[0xB38]==1);
     Number(L,"nativeTarget",attackFsm?*reinterpret_cast<uint32_t*>(attackFsm+0x200):0);
     uint32_t emergencyAttacker=0;auto incoming=g_incoming.find(g_current);ULONGLONG latest=0;
@@ -672,7 +716,7 @@ int __cdecl Observe(lua_State* L) {
         float speed=PredictionSpeed(g_current,o.caps,w);
         Number(L,"movingShot",w.movingShot);Number(L,"projectileSpeed",speed);Number(L,"id",w.id);
         Number(L,"active",o.rangedBusy && w.slot==o.caps.selectedSlot);
-        const char* kind="other";
+        const char* kind=w.ordinary?"opaque":"other";
         switch(w.kind) {
         case battle_ai::native::WeaponKind::Melee:kind="melee";break;
         case battle_ai::native::WeaponKind::Hitscan:kind="hitscan";break;
@@ -680,14 +724,18 @@ int __cdecl Observe(lua_State* L) {
         case battle_ai::native::WeaponKind::Missile:kind="missile";break;
         default:break;
         }
-        String(L,"kind",kind);g_lua.settable(L,-3);
+        String(L,"kind",kind);Number(L,"ordinary",w.ordinary);
+        Number(L,"attackStyle",w.attackStyle);Number(L,"rangeType",w.rangeType);
+        g_lua.settable(L,-3);
     }
     g_lua.settable(L,-3);
     g_lua.pushstring(L,"targets");g_lua.newtable(L);
     for(size_t i=0;i<o.count;++i) {
         const auto& t=o.targets[i];g_lua.pushnumber(L,static_cast<double>(i+1));g_lua.newtable(L);
         Number(L,"id",t.id);Number(L,"hp",t.hp);Number(L,"maxHp",t.maxHp);Number(L,"distance",t.distance);
+        Number(L,"rangedDistance",t.rangedDistance);Number(L,"meleeDistance",t.meleeDistance);
         Number(L,"enemy",t.enemy);Number(L,"visible",t.visible);Number(L,"attackable",t.attackable);
+        Number(L,"rangedVisible",t.rangedVisible);Number(L,"meleeVisible",t.meleeVisible);
         Number(L,"damageProtected",t.damageProtected);
         Number(L,"rangedFiring",t.rangedFiring);Vector(L,"pos",t.point);Vector(L,"groundPos",t.ground);Vector(L,"velocity",t.velocity);
         Number(L,"hurt",t.hurt);
@@ -783,6 +831,44 @@ int __cdecl BoundSlot(lua_State* L) {
     g_lua.pushnumber(L,known?caps.selectedSlot:-1);g_lua.pushnumber(L,mask);
     g_lua.pushnumber(L,known&&caps.specialBusy?1:0);return 3;
 }
+bool ReleaseHeldIntentUnsafe(uint8_t* unit) {
+    using namespace battle_ai::native::detail;
+    uint8_t* fsm=nullptr;uint8_t* record=nullptr;uint8_t style=0;
+    if(!ReadPointer(unit,0x9CC,fsm)) return false;
+    const bool rangedBusy=InState(fsm,0x34);
+    const bool specialBusy=InState(fsm,0x98)||InState(fsm,0xAC)||InState(fsm,0xC0)||
+        InState(fsm,0xD4)||InState(fsm,0x1D8)||InState(fsm,0x1EC);
+    const bool specialSelected=ReadPointer(fsm,0x248,record)&&Read(record,0x69,style)&&style==2;
+    const bool ordinaryMeleeBusy=InState(fsm,0x48)||InState(fsm,0x5C)||InState(fsm,0x70)||
+        InState(fsm,0x84)||InState(fsm,0xE8)||InState(fsm,0xFC);
+    // A begin receipt can outlive the special state until its terminal packet
+    // is drained. It must never authorize clearing the input of a later
+    // ordinary melee chain, even while Lua still owns the old return lease.
+    if(ordinaryMeleeBusy&&!specialBusy&&!specialSelected) return false;
+    auto actor=g_actors.find(unit);
+    const ULONGLONG now=GetTickCount64();
+    const bool admitted=actor!=g_actors.end()&&actor->second.specialSlotLease>=0&&
+        actor->second.specialAcknowledged&&actor->second.specialAcknowledgedAt<=now&&
+        now-actor->second.specialAcknowledgedAt<=60000&&!Neutral(fsm);
+    if(!rangedBusy&&!specialBusy&&!specialSelected&&!admitted) return false;
+    // CNPC::SetAttackOnOff(false) sends message 0x41. Its native receiver
+    // also queues AttackFSM Neutral, which exits an active ranged/special
+    // state on the next FSM tick. Clear only the held input latches here so
+    // the state that admitted the action remains its sole completion owner.
+    // CNPC::AttackIntent uses the same direct 312A/DCD-DCE clear in native
+    // non-neutral branches where input must be released without a transition.
+    unit[0x312A]=0;
+    *reinterpret_cast<uint16_t*>(unit+0xDCD)=0;
+    return true;
+}
+int __cdecl ReleaseHeldIntent(lua_State* L) {
+    bool released=false;
+    if(GetCurrentThreadId()==g_gameThread&&Owned(g_current)) {
+        __try {released=ReleaseHeldIntentUnsafe(g_current);}
+        __except(EXCEPTION_EXECUTE_HANDLER) {released=false;}
+    }
+    g_lua.pushnumber(L,released?1:0);return 1;
+}
 bool RequestNativeWeapon(uint8_t* unit,int slot) {
     __try {
         battle_ai::native::Capabilities caps={};
@@ -873,6 +959,47 @@ int __cdecl Route(lua_State* L) {
     if(!ok) FailedRoute();
     g_lua.pushnumber(L,ok?1:0);return 1;
 }
+bool AdvancePointUnsafe(Vec3 target,float stepLimit,bool allowRanged) {
+    if(!Owned(g_current)||GetCurrentThreadId()!=g_gameThread||*reinterpret_cast<int*>(g_current+0x38)<=0)
+        return false;
+    auto& actor=ActorFor(g_current);
+    const bool recovering=actor.recoveryControlled&&GetTickCount64()-actor.recoveryAt<250;
+    if(actor.recoveryControlled&&!recovering) actor.recoveryControlled=false;
+    if(actor.defenceMoveOwned&&actor.path.empty()&&!actor.defence.movement.relocate)
+        actor.defenceMoveOwned=false;
+    if(recovering||actor.defenceMoveOwned||!MovementAvailable(g_current,allowRanged))
+        return false;
+    Vec3 here=Position(g_current);
+    if(!battle_ai::Finite(here)||!battle_ai::Finite(target)||!std::isfinite(stepLimit)) return false;
+    stepLimit=(std::max)(100.0f,(std::min)(400.0f,stepLimit));
+    Vec3 offset={target.x-here.x,0,target.z-here.z};
+    double distance=battle_ai::Length(offset);
+    if(!std::isfinite(distance)||distance<=1.0) return false;
+    float scale=distance>stepLimit?stepLimit/static_cast<float>(distance):1.0f;
+    Vec3 goal={here.x+offset.x*scale,here.y,here.z+offset.z*scale};
+    if(!battle_ai::Finite(goal)) return false;
+    std::vector<Vec3> staged;
+    try { staged.push_back(goal); } catch(...) { return false; }
+    if(!g_setGoal(g_current,&goal,1)) return false;
+    actor.path.swap(staged);actor.waypoint=0;actor.pathRanged=allowRanged;actor.controlled=true;
+    return true;
+}
+bool AdvancePointGuarded(Vec3 target,float stepLimit,bool allowRanged) {
+    __try { return AdvancePointUnsafe(target,stepLimit,allowRanged); }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+int __cdecl AdvancePoint(lua_State* L) {
+    bool ok=false;
+    if(g_lua.gettop(L)>=5) {
+        Vec3 target={static_cast<float>(g_lua.tonumber(L,1)),
+                     static_cast<float>(g_lua.tonumber(L,2)),
+                     static_cast<float>(g_lua.tonumber(L,3))};
+        double limit=g_lua.tonumber(L,4),ranged=g_lua.tonumber(L,5);
+        ok=std::isfinite(limit)&&std::isfinite(ranged)&&
+            AdvancePointGuarded(target,static_cast<float>(limit),ranged==1);
+    }
+    g_lua.pushnumber(L,ok?1:0);return 1;
+}
 int __cdecl Chance(lua_State* L);
 int __cdecl Cover(lua_State* L) {
     g_lua.newtable(L);Number(L,"valid",0);
@@ -899,7 +1026,7 @@ int __cdecl Cover(lua_State* L) {
                 halfHeight=(std::max)(30.0f,(std::min)(160.0f,(bounds->max.y-bounds->min.y)*0.4f));
             }
         }
-        auto clear=[&](Vec3 from,Vec3 to) {return battle_ai::native::FreshLineClear(g_navigation,*g_document,self,targetId,from,to);};
+        auto clear=[&](Vec3 from,Vec3 to) {return battle_ai::native::FreshLineClear(g_navigation,*g_document,self,targetId,from,to,true);};
         auto exposed=[&](Vec3 p) {
             Vec3 c=p+(center-here);int count=0;
             for(Vec3 offset:{Vec3{},side*halfWidth,side*(-halfWidth),Vec3{0,halfHeight,0},Vec3{0,-halfHeight,0}})
@@ -1719,6 +1846,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_Cadence",Cadence);
     Register(L,"SDGO_BattleAI_RecoveryMode",RecoveryMode);
     Register(L,"SDGO_BattleAI_Route",Route);
+    Register(L,"SDGO_BattleAI_AdvancePoint",AdvancePoint);
     Register(L,"SDGO_BattleAI_CancelRoute",CancelRoute);
     Register(L,"SDGO_BattleAI_Chance",Chance);
     Register(L,"SDGO_BattleAI_Cover",Cover);
@@ -1726,6 +1854,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_ProfileLease",ProfileLease);
     Register(L,"SDGO_BattleAI_ProfilePreviousSlot",ProfilePreviousSlot);
     Register(L,"SDGO_BattleAI_BoundSlot",BoundSlot);
+    Register(L,"SDGO_BattleAI_ReleaseHeldIntent",ReleaseHeldIntent);
     Register(L,"SDGO_BattleAI_RequestWeapon",RequestWeapon);
     RuntimeSettings next;
     next.generic=true;

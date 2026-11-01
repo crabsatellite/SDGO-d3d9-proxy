@@ -13,7 +13,7 @@ $game=(Resolve-Path -LiteralPath $GameDir).Path
 if($Side -eq 'Client') {
     $exeName='GOnline.exe';$symbolName='GOnline-54BE1568-00C97000.ini'
     $expectedHash='e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92'
-    $products=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json');mission_ai=@('mission_ai.dll','mission_ai.lua','mod.ini','manager.json')}
+    $products=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json');mission_ai=@('mission_ai.dll','mission_ai.lua','mod.ini','manager.json');ai_catalog=@('ai_catalog.dll','mod.ini','manager.json')}
 } else {
     $exeName='BattleServer.exe';$symbolName='BattleServer-548A891D-0046C000.ini'
     $expectedHash='f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4'
@@ -57,6 +57,18 @@ foreach($name in ($requires | Select-Object -Unique)) {
     else { $symbols=$symbols.TrimEnd()+"`r`n`r`n"+$replaceText }
 }
 function Merge-UserSections([string]$NewManifest,[string]$OldManifest) {
+    $oldMod=[regex]::Match($OldManifest,'(?ims)^\[mod\]\r?\n.*?(?=^\[|\z)').Value
+    $enabled=[regex]::Match($oldMod,'(?im)^enabled\s*=\s*([01])\s*$')
+    if($enabled.Success) {
+        $value=$enabled.Groups[1].Value
+        $modPattern='(?ims)^\[mod\]\r?\n.*?(?=^\[|\z)'
+        $NewManifest=[regex]::Replace($NewManifest,$modPattern,[Text.RegularExpressions.MatchEvaluator]{param($m)
+            if([regex]::IsMatch($m.Value,'(?im)^enabled\s*=')) {
+                return [regex]::Replace($m.Value,'(?im)^enabled\s*=.*$',('enabled='+$value))
+            }
+            return [regex]::Replace($m.Value,'(?im)^\[mod\]\r?\n',('[mod]'+"`r`n"+'enabled='+$value+"`r`n"))
+        })
+    }
     foreach($section in [regex]::Matches($OldManifest,'(?ms)^\[([^\]\r\n]+)\]\r?\n.*?(?=^\[|\z)')) {
         $name=$section.Groups[1].Value
         if($name -ieq 'mod') { continue }

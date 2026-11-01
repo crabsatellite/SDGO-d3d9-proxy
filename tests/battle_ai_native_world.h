@@ -23,16 +23,23 @@ inline std::array<uint8_t,0x3300> enemy1{},enemy2{},remoteHuman{},sameTeamNpc{};
 inline std::array<std::array<uint8_t,0x1400>,5> definitions{},fsms{};
 inline std::array<std::array<uint8_t,0x1400>,5> movements{};
 inline std::array<std::array<uint8_t,0x300>,5> nodes{},scenes{};
+inline std::array<std::array<uint8_t,0x100>,5> targetShapes{};
+inline std::array<uint8_t*,5> configuredUnits{};
+inline std::array<int,5> unitKinds{};
 inline std::array<std::array<uint8_t,0x800>,4> weapons{};
 inline std::array<void*,16> unitVtable{},sceneVtable{};
 inline bool blocked=false;
 inline bool coverWall=false;
 inline bool nullRay=false;
+inline bool terrainWall=false;
+inline bool forceObbBlock=false;
 inline int pathMode=0;
 inline int pathCalls=0;
 inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
-inline int jumps=0,moves=0,frees=0,queries=0;
+inline int jumps=0,moves=0,goalCalls=0,lastGoalMode=0,frees=0,queries=0;
+inline int obbCalls=0,terrainCalls=0;
+inline Ray3 lastObbRay{},lastTerrainRay{};
 inline int lastWait=0;
 inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
 inline uint8_t* volatile lastCallbackSelf=nullptr;
@@ -61,6 +68,12 @@ template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) bool UnitIsA(int kind) {
+        auto unit=reinterpret_cast<uint8_t*>(this);
+        for(size_t i=0;i<configuredUnits.size();++i)
+            if(configuredUnits[i]==unit) return unitKinds[i]==kind;
+        return false;
+    }
     __declspec(noinline) void SetLevel(int level) {++levelApplications;Put(reinterpret_cast<uint8_t*>(this),0xB0C,level);}
     __declspec(noinline) void ApplyPart(uint32_t part) {++partApplications;lastPart=part;}
     __declspec(noinline) int SpecialNotice(const uint8_t*) {return 0x51A7;}
@@ -147,13 +160,20 @@ struct Callbacks {
         if(nullRay) return nullptr;
         out->origin={12,100,13};out->direction={0,0,1};return out;
     }
-    __declspec(noinline) bool IsTerrain(int) { return false; }
+    __declspec(noinline) bool IsTerrain(int) {
+        return terrainWall&&reinterpret_cast<uint8_t*>(this)==wall.data();
+    }
     __declspec(noinline) void Query(void** out,int* count,int,const Aabb*) {
         ++queries;out[0]=wall.data();*count=(blocked||coverWall)?1:0;
     }
-    __declspec(noinline) bool Terrain(const Ray3*,float*) { return false; }
-    __declspec(noinline) int Goal(const Vec3* point,int) {
-        auto unit=reinterpret_cast<uint8_t*>(this);Put(unit,0x3078,*point);unit[0x30DC]=1;++moves;return 1;
+    __declspec(noinline) bool Terrain(const Ray3* ray,float* distance) {
+        ++terrainCalls;lastTerrainRay=*ray;
+        if(!terrainWall) return false;
+        *distance=1.0f;return true;
+    }
+    __declspec(noinline) int Goal(const Vec3* point,int goalMode) {
+        auto unit=reinterpret_cast<uint8_t*>(this);Put(unit,0x3078,*point);unit[0x30DC]=1;
+        ++moves;++goalCalls;lastGoalMode=goalMode;return 1;
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
         if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();
@@ -193,6 +213,8 @@ __declspec(noinline) inline void __cdecl Free(void* p) {
 }
 __declspec(noinline) inline bool __cdecl Segment(const Vec3*,const Vec3*,const Aabb*) { return true; }
 __declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* t) {
+    ++obbCalls;lastObbRay=*ray;
+    if(forceObbBlock) {*t=1.0f;return true;}
     if(coverWall) {
         if(std::fabs(ray->direction.x)<0.01f) return false;
         *t=(500-ray->origin.x)/ray->direction.x;
@@ -215,6 +237,8 @@ inline void Encode(uint8_t* unit,size_t perm,size_t bytes,size_t key,float value
 inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,float x,float z) {
     memset(unit,0,0x3300);
     auto def=definitions[index].data(),fsm=fsms[index].data(),node=nodes[index].data(),scene=scenes[index].data();
+    configuredUnits[index]=unit;unitKinds[index]=0;targetShapes[index].fill(0);
+    Put(node,0xD8,static_cast<uint8_t*>(nullptr));Put(node,0xE0,static_cast<uint8_t*>(nullptr));
     Put(unit,0,unitVtable.data());Put(unit,4,id);Put(unit,0x20,team);Put(unit,0x38,hp);Put(unit,0x3C,1000);
     Put(unit,0x9D8,int32_t(1));Put(unit,0xEC4,int32_t(1));
     Put(unit,8,node);Put(unit,0x34,scene);Put(unit,0x9C4,def);Put(unit,0x9CC,fsm);
@@ -236,7 +260,17 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
 struct ListNode { ListNode* next;ListNode* prev;uint8_t* unit; };
 inline ListNode head{},a{},b{};
 inline ListNode remoteHead{},remoteEntry{},friendlyHead{},friendlyEntry{};
-inline int SetFire(lua_State* L){source[0x312A]=lua_toboolean(L,2)?1:0;return 0;}
+inline int SetFire(lua_State* L){
+    const uint8_t next=lua_toboolean(L,2)?1:0;
+    if(source[0x312A]==next) return 0;
+    source[0x312A]=next;
+    if(!next) {
+        Put(source,0xDCD,uint16_t(0));
+        auto fsm=*reinterpret_cast<uint8_t**>(source+0x9CC);
+        Put(fsm,8,fsm+0x20);
+    }
+    return 0;
+}
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
 inline int Stop(lua_State*){source[0x30DC]=0;return 0;}
 inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(*reinterpret_cast<int*>(source+0xDD0)!=i){uint8_t message[0x14]={};Put(message,0,uint16_t(0x48));message[0x10]=static_cast<uint8_t>(i);reinterpret_cast<Callbacks*>(source)->Receive(message);}return 0;}
@@ -244,7 +278,11 @@ inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
-    state=L;source=unit;blocked=false;jumps=moves=frees=queries=0;
+    state=L;source=unit;blocked=coverWall=nullRay=terrainWall=forceObbBlock=false;
+    jumps=moves=goalCalls=lastGoalMode=frees=queries=obbCalls=terrainCalls=0;
+    lastObbRay={};lastTerrainRay={};configuredUnits.fill(nullptr);unitKinds.fill(0);
+    wall.fill(0);
+    unitVtable[1]=Address(&Callbacks::UnitIsA);
     unitVtable[10]=Address(&Callbacks::CanAttack);sceneVtable[5]=Address(&Callbacks::IsTerrain);
     unitVtable[7]=Address(&Callbacks::Receive);
     for(int i=0;i<3;++i) {

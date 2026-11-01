@@ -154,6 +154,60 @@ int wmain(int argc,wchar_t** argv) {
         native_world::deferSwitch=false;
         native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
         Eval("SDGO_BattleAI_GenericUpdate=savedWeaponProbe");
+        Eval("savedReleaseProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) releaseProbe=SDGO_BattleAI_ReleaseHeldIntent(); return 123 end");
+        native_world::Put(fsm,4,fsm+0x98);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==1)")&&unit.bytes[0x312A]==0&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0&&
+              *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x98&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==nullptr,
+              "held-input bridge releases an active special without replacing its native FSM state");
+        native_world::Put(fsm,4,fsm+0x34);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==1)")&&unit.bytes[0x312A]==0&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0&&
+              *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x34&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==nullptr,
+              "held-input bridge stops ranged continuation without queueing Neutral");
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,fsm+0x98);
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==1)")&&unit.bytes[0x312A]==0&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0&&
+              *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x20&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x98,
+              "held-input bridge preserves a pending special admission");
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,fsm+0x34);
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==1)")&&unit.bytes[0x312A]==0&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0&&
+              *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x20&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x34,
+              "held-input bridge preserves a pending ranged admission");
+        native_world::weapons[3][0x69]=2;
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+        native_world::Put(fsm,0x248,native_world::weapons[3].data());
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==1)")&&unit.bytes[0x312A]==0&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==nullptr,
+              "held-input bridge can cancel an unadmitted selected special without a state transition");
+        native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(Eval("assert(releaseProbe==0)")&&unit.bytes[0x312A]==1&&
+              *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0x101&&
+              *reinterpret_cast<uint8_t**>(fsm+8)==nullptr,
+              "held-input bridge refuses an ordinary neutral action it does not own");
+        Check(Eval("assert(SDGO_BattleAI_ReleaseHeldIntent()==0)"),
+              "held-input bridge rejects calls outside the current owned AI callback");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) n:SetAttackOnOff(false); return 123 end");
+        native_world::Put(fsm,4,fsm+0x98);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+        unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+        Check(*reinterpret_cast<uint8_t**>(fsm+8)==fsm+0x20,
+              "fixture models native SetAttackOnOff(false) queueing Neutral during an active special");
+        native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+        native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        unit.bytes[0x312A]=0;native_world::Put(unit.bytes,0xDCD,uint16_t(0));
+        Eval("SDGO_BattleAI_GenericUpdate=savedReleaseProbe");
     }
     if(generic||medium) {
         Eval("motionProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe(); n:SetMoveTargetPos_Dir(2,400,2,false); n:SetMoveType(1); n:SetAttackOnOff(true); return 123 end");
@@ -291,6 +345,17 @@ int wmain(int argc,wchar_t** argv) {
             int noticeReturn=notify(native_world::document.data(),accepted);unit.Think();
             Check(noticeReturn==0x51A7&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==20000,
                   "matched server special acceptance preserves native return and applies authoritative SP through native command18");
+            Eval("savedAcceptedSpecial=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) staleAckRelease=SDGO_BattleAI_ReleaseHeldIntent(); return 123 end");
+            native_world::Put(fsm,4,fsm+0x5C);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
+            native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
+            unit.bytes[0x312A]=1;native_world::Put(unit.bytes,0xDCD,uint16_t(0x101));unit.Think();
+            Check(Eval("assert(staleAckRelease==0)")&&unit.bytes[0x312A]==1&&
+                  *reinterpret_cast<uint16_t*>(unit.bytes+0xDCD)==0x101&&
+                  *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x5C&&
+                  *reinterpret_cast<uint8_t**>(fsm+8)==nullptr,
+                  "a historical special acknowledgement cannot release a later ordinary melee combo");
+            Eval("SDGO_BattleAI_GenericUpdate=savedAcceptedSpecial");
+            native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
             native_world::Put(unit.bytes,0xBC8,int32_t(15000));notify(native_world::document.data(),accepted);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==15000,"duplicate special notice without a pending request cannot refund NPC SP");
             uint8_t terminal[0x20]={};native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
@@ -410,6 +475,70 @@ int wmain(int argc,wchar_t** argv) {
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==1)"),"fresh native collision query excludes lower HP behind an obstacle");
         native_world::blocked=false;Sleep(110);unit.Think();
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),"next fresh query sees newly clear target without a two-second shared cache");
+        Eval("geometrySavedGeneric=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) geometryObservation=SDGO_BattleAI_Observe(); return 123 end");
+        unit.Think();
+        Check(Eval("assert(geometryObservation.attackNeutral==1)"),
+              "native observation reports a current and pending neutral attack FSM");
+        auto geometryFsm=native_world::fsms[0].data();
+        native_world::Put(geometryFsm,8,geometryFsm+0x98);unit.Think();
+        Check(Eval("assert(geometryObservation.attackNeutral==0 and geometryObservation.specialBusy==1)"),
+              "a pending native special state keeps profile ownership out of the neutral gate");
+        native_world::Put(geometryFsm,8,uint32_t(0));
+        auto sphereShape=native_world::targetShapes[1].data();
+        auto obbShape=native_world::targetShapes[2].data();
+        native_world::unitKinds[1]=7;native_world::unitKinds[2]=0x12;
+        native_world::Put(native_world::nodes[1].data(),0xE0,sphereShape);
+        native_world::Put(native_world::nodes[2].data(),0xD8,obbShape);
+        native_world::Put(sphereShape,0x10,native_world::Vec3{321,75,-40});
+        native_world::Put(obbShape,0x3C,native_world::Vec3{654,80,70});
+        unit.Think();
+        Check(Eval("local a,b; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t elseif t.id==2 then b=t end end; assert(a and b and a.pos.x>320.99 and a.pos.x<321.01 and a.pos.y>74.99 and a.pos.y<75.01 and a.pos.z>-40.01 and a.pos.z<-39.99 and b.pos.x>653.99 and b.pos.x<654.01 and b.pos.y>79.99 and b.pos.y<80.01 and b.pos.z>69.99 and b.pos.z<70.01 and a.distance==a.rangedDistance and a.meleeDistance>0)"),
+              "native observation uses typed sphere and OBB centers instead of stale root or scene bounds");
+        const uint8_t oldOpaqueRangeType=native_world::weapons[1][0x6A];
+        native_world::weapons[1][0x6A]=4;
+        native_world::Put(native_world::weapons[1].data(),0x72,uint32_t(30000));
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(0));
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{50000,0,0});
+        native_world::Put(sphereShape,0x10,native_world::Vec3{26000,100,13});
+        unit.Think();
+        Check(Eval("local a; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t end end; local w=geometryObservation.weapons[2]; assert(a and a.rangedDistance>24000 and a.rangedDistance<30000 and w.kind=='opaque' and w.ordinary==1 and w.attackStyle==1 and w.rangeType==4)"),
+              "a legal opaque ordinary weapon retains native metadata and targets beyond the extra-perception cap");
+        native_world::weapons[1][0x6A]=oldOpaqueRangeType;
+        native_world::Put(native_world::weapons[1].data(),0x72,uint32_t(2000));
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{250,0,0});
+        native_world::Put(sphereShape,0x10,native_world::Vec3{250,0,0});
+        auto selfSphere=native_world::targetShapes[0].data();
+        native_world::Put(native_world::nodes[0].data(),0xE0,selfSphere);
+        native_world::Put(selfSphere,0x10,native_world::Vec3{100,0,0});
+        native_world::Configure(native_world::sameTeamNpc.data(),4,4,2,1000,100,0);
+        native_world::Put(native_world::wall.data(),0x0C,native_world::sameTeamNpc.data());
+        native_world::blocked=true;native_world::forceObbBlock=true;
+        unit.Think();
+        Check(Eval("local a; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t end end; assert(a and a.rangedVisible==1 and a.meleeVisible==0 and a.meleeDistance>149 and a.meleeDistance<151 and a.rangedDistance>a.meleeDistance)")&&
+              native_world::obbCalls>0&&std::abs(native_world::lastObbRay.origin.x-100)<0.01f&&
+              std::abs(native_world::lastObbRay.origin.y)<0.01f&&std::abs(native_world::lastObbRay.origin.z)<0.01f,
+              "ranged sight ignores a friendly body while strict melee uses the native self-sphere origin");
+        native_world::Put(native_world::wall.data(),0x0C,native_world::enemy2.data());
+        unit.Think();
+        Check(Eval("local a; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t end end; assert(a and a.rangedVisible==0 and a.meleeVisible==0)"),
+              "an enemy collision body blocks both ranged and melee visibility");
+        native_world::Put(native_world::wall.data(),0x0C,native_world::sameTeamNpc.data());
+        native_world::forceObbBlock=false;native_world::terrainWall=true;native_world::terrainCalls=0;
+        unit.Think();
+        Check(Eval("local a; for _,t in ipairs(geometryObservation.targets) do if t.id==1 then a=t end end; assert(a and a.rangedVisible==0 and a.meleeVisible==0)")&&native_world::terrainCalls>=2,
+              "terrain blocks both visibility modes even when its backpointer names a friendly object");
+        native_world::blocked=native_world::terrainWall=native_world::forceObbBlock=false;
+        native_world::Put(native_world::wall.data(),0x0C,static_cast<uint8_t*>(nullptr));
+        native_world::Put(native_world::nodes[0].data(),0xE0,static_cast<uint8_t*>(nullptr));
+        native_world::Put(native_world::nodes[1].data(),0xE0,static_cast<uint8_t*>(nullptr));
+        native_world::Put(native_world::nodes[2].data(),0xD8,static_cast<uint8_t*>(nullptr));
+        native_world::unitKinds[1]=native_world::unitKinds[2]=0;
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{1000,0,0});
+        native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{1400,0,100});
+        native_world::Put(native_world::scenes[1].data(),0xBC,native_world::Aabb{{960,50,-40},{1040,150,40}});
+        native_world::Put(native_world::scenes[2].data(),0xBC,native_world::Aabb{{1360,50,60},{1440,150,140}});
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(100));
+        Eval("SDGO_BattleAI_GenericUpdate=geometrySavedGeneric");
         native_world::Put(native_world::nodes[2].data(),0x90,120.0f);
         native_world::Put(native_world::scenes[2].data(),0xBC,native_world::Aabb{{1360,50,80},{1440,150,160}});
         Sleep(100);unit.Think();
@@ -466,6 +595,69 @@ int wmain(int argc,wchar_t** argv) {
         native_world::pathMode=0;
         Eval("SDGO_BattleAI_GenericUpdate=function(n) assert(SDGO_BattleAI_Route(1,1)==1); SDGO_BattleAI_CancelRoute(); return 123 end");
         unit.Think();Check(unit.bytes[0x30DC]==0,"cancelling an owned route releases its motor goal");
+        auto advanceFsm=native_world::fsms[0].data();
+        auto advanceMovement=native_world::movements[0].data();
+        native_world::Put(advanceFsm,4,advanceFsm+0x20);native_world::Put(advanceFsm,8,uint32_t(0));
+        native_world::Put(advanceMovement,4,advanceMovement+0x20);native_world::Put(advanceMovement,8,uint32_t(0));
+        native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,37,0});
+        int beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,999,0,250,0); return 123 end");
+        unit.Think();
+        auto advanceGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1&&native_world::lastGoalMode==1&&
+              std::abs(advanceGoal.x-250)<0.01f&&std::abs(advanceGoal.y-37)<0.01f&&std::abs(advanceGoal.z)<0.01f&&unit.bytes[0x30DC],
+              "native short-step bridge clamps horizontal pursuit and preserves the current height");
+        unit.bytes[0x30DC]=0;beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) return 123 end");unit.Think();
+        Check(native_world::goalCalls==beforeGoals+1&&unit.bytes[0x30DC],
+              "a stopped motor with the same cached waypoint is rearmed");
+        beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(0,-500,1000,900,0); return 123 end");
+        unit.Think();advanceGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1&&
+              std::abs(advanceGoal.x)<0.01f&&std::abs(advanceGoal.y-37)<0.01f&&std::abs(advanceGoal.z-400)<0.01f,
+              "native short-step bridge caps its maximum step at 400");
+        beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,1,0); return 123 end");
+        unit.Think();advanceGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1&&
+              std::abs(advanceGoal.x-100)<0.01f&&std::abs(advanceGoal.y-37)<0.01f&&std::abs(advanceGoal.z)<0.01f,
+              "native short-step bridge raises its minimum step limit to 100");
+        native_world::weapons[1][0x8F]=0;native_world::Put(advanceFsm,4,advanceFsm+0x34);
+        unit.bytes[0x30DC]=0;beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(600,0,0,200,1); return 123 end");
+        unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
+              "stationary-only ranged fire retains motor ownership");
+        native_world::weapons[1][0x8F]=1;beforeGoals=native_world::goalCalls;unit.Think();
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1,
+              "a legal moving-shot window permits the bounded pursuit step");
+        native_world::Put(advanceFsm,4,advanceFsm+0x48);beforeGoals=native_world::goalCalls;unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
+              "active melee retains motor ownership from the short-step bridge");
+        native_world::Put(advanceFsm,4,advanceFsm+0x98);beforeGoals=native_world::goalCalls;unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
+              "active special retains motor ownership from the short-step bridge");
+        native_world::Put(advanceFsm,4,advanceFsm+0x20);native_world::Put(advanceMovement,4,advanceMovement+0xE8);
+        beforeGoals=native_world::goalCalls;unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
+              "hurt movement state retains motor ownership from the short-step bridge");
+        native_world::Put(advanceMovement,4,advanceMovement+0x20);beforeGoals=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(1); advanceResult=SDGO_BattleAI_AdvancePoint(600,0,0,200,0); return 123 end");
+        unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==beforeGoals,
+              "wall-recovery lease has priority over a new pursuit step");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(600,0,0,200,0); return 123 end");
+        Sleep(260);beforeGoals=native_world::goalCalls;unit.Think();
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==beforeGoals+1,
+              "an expired wall-recovery lease releases the motor for pursuit");
+        Check(Eval("assert(SDGO_BattleAI_AdvancePoint(1,2,3,200,0)==0)"),
+              "short-step bridge rejects calls outside the current owned AI callback");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); SDGO_BattleAI_CancelRoute(); return 123 end");
+        unit.Think();
+        unit.bytes[0x30DC]=0;
+        native_world::Put(native_world::nodes[0].data(),0x88,native_world::Vec3{0,0,0});
+        native_world::Put(advanceFsm,4,advanceFsm+0x20);native_world::weapons[1][0x8F]=1;
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         native_world::nullRay=true;unit.Think();native_world::nullRay=false;
         Check(Eval("assert(calls>=2)"),"failed native ray observation falls back rather than querying from a zero origin");
@@ -730,6 +922,12 @@ int wmain(int argc,wchar_t** argv) {
         const auto alternateGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
         Check(unit.bytes[0x30DC]&&alternateGoal.x<anchor.x&&native_world::pathCalls-priorPaths<=3,
               "a blocked best escape point tries a bounded reachable alternative instead of giving up on movement");
+        const int goalsBeforeDefence=native_world::goalCalls;
+        Eval("savedDefenceProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,200,1); return 123 end");
+        unit.Think();
+        Check(Eval("assert(advanceResult==0)")&&native_world::goalCalls==goalsBeforeDefence,
+              "front/rear defensive route retains motor ownership from a pursuit step");
+        Eval("SDGO_BattleAI_GenericUpdate=savedDefenceProbe");
         if(unit.bytes[0x30DC]) setPosition(alternateGoal);
         native_world::pathMode=0;
         bool bounded=true;double furthest=0;
@@ -768,6 +966,34 @@ int wmain(int argc,wchar_t** argv) {
               "wall recovery keeps bounded front-facing defence while it owns the movement goal");
         Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); local o=SDGO_BattleAI_Observe(); assert(o.movementRecovery==0); return 123 end");
         unit.Think();
+        native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=0;
+        Config(generic?"[settings]\nDifficulty=Hard\n":"[settings]\nDifficulty=Medium\n");
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        unit.Init(reinterpret_cast<void*>(4));Sleep(2100);unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe();return 123 end");
+        auto stalePosition=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);
+        native_world::Put(native_world::nodes[1].data(),0x88,stalePosition+native_world::Vec3{0,0,-5000});
+        native_world::Put(native_world::nodes[2].data(),0x88,stalePosition+native_world::Vec3{0,0,5000});
+        uint8_t staleHit[0x50]={};native_world::Put(staleHit,0,uint16_t(0xC));native_world::Put(staleHit,0x14,int32_t(1));
+        for(uint32_t attacker:{1u,2u}) {
+            native_world::Put(staleHit,0x3C,attacker);
+            native_world::EmitContact(native_world::document.data(),20,staleHit,0);
+        }
+        unit.Think();
+        Check(unit.bytes[0x30DC]!=0,"stale-defence fixture first owns a native movement route");
+        Sleep(1050);
+        stalePosition=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);
+        native_world::Put(native_world::nodes[1].data(),0x88,stalePosition+native_world::Vec3{0,0,1000});
+        native_world::Put(native_world::nodes[2].data(),0x88,stalePosition+native_world::Vec3{10,0,1100});
+        auto staleFsm=native_world::fsms[0].data();
+        native_world::Put(staleFsm,4,staleFsm+0x48);
+        unit.Think();
+        native_world::Put(staleFsm,4,staleFsm+0x20);
+        const int goalsBeforeStaleDefence=native_world::goalCalls;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) advanceResult=SDGO_BattleAI_AdvancePoint(1000,0,0,200,0); return 123 end");
+        unit.Think();
+        Check(Eval("assert(advanceResult==1)")&&native_world::goalCalls==goalsBeforeStaleDefence+1,
+              "an empty obsolete defence route releases motor ownership for pursuit");
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
     // Mods live for this process; do not unload an installed trampoline.

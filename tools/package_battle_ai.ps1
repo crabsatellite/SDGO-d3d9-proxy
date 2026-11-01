@@ -2,11 +2,11 @@ param([string]$Config='Release')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $tag=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-$name='SDGO-BattleAI-0.4.1-preview-'+$tag
+$name='SDGO-BattleAI-0.4.2-preview-'+$tag
 $out=Join-Path $repo ('dist\'+$name)
 if(Test-Path -LiteralPath $out) { throw 'Package destination already exists' }
 $products=@{
- client=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json');mission_ai=@('mission_ai.dll','mission_ai.lua','mod.ini','manager.json')};
+ client=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json');mission_ai=@('mission_ai.dll','mission_ai.lua','mod.ini','manager.json');ai_catalog=@('ai_catalog.dll','mod.ini','manager.json')};
  server=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini','manager.json');pvp_ai=@('pvp_ai.dll','mod.ini','manager.json')}
 }
 foreach($side in 'client','server') {
@@ -48,7 +48,7 @@ Get-ChildItem -LiteralPath $out -Recurse -File | ForEach-Object {
     $relative=$_.FullName.Substring($out.Length+1).Replace('\','/')
     $files[$relative]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$manifest=[ordered]@{schema=1;version='0.4.1-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','mission_ai','battle_ai_server','pvp_ai');files=$files}
+$manifest=[ordered]@{schema=1;version='0.4.2-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','mission_ai','ai_catalog','battle_ai_server','pvp_ai');files=$files}
 [IO.File]::WriteAllText((Join-Path $out 'package-manifest.json'),($manifest | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=$out+'.zip'

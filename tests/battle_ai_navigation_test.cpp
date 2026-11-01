@@ -18,6 +18,7 @@ constexpr std::size_t kDocumentQuadTree = 0x82C4;
 constexpr std::size_t kOwnerScene = 0x34;
 constexpr std::size_t kSceneBackPointer = 0x0C;
 constexpr std::size_t kObjectId = 0x04;
+constexpr std::size_t kObjectTeam = 0x20;
 constexpr std::size_t kSceneAabb = 0xBC;
 constexpr std::size_t kObbCount = 0xD4;
 constexpr std::size_t kObbArray = 0xD8;
@@ -205,21 +206,25 @@ NavigationApi Fixture::Api() {
 
 bool Clear(Fixture& fixture, std::uint32_t targetId = 999,
            Vec3 from = {0.0f, 0.0f, 0.0f},
-           Vec3 to = {10.0f, 0.0f, 0.0f}) {
+           Vec3 to = {10.0f, 0.0f, 0.0f},
+           bool ignoreFriendly = false) {
     active = &fixture;
     return battle_ai::native::FreshLineClear(
         fixture.Api(), fixture.document.data(), fixture.owner.data(),
-        targetId, from, to);
+        targetId, from, to, ignoreFriendly);
 }
 
 void TestExcludedBodies() {
     Fixture fixture;
-    fixture.Results({0, 1});
+    fixture.Results({0, 1, 2});
     fixture.Obb(0, 1);
     fixture.Obb(1, 1);
+    fixture.Obb(2, 1);
     Put(fixture.scenes[1].object.data(), kObjectId, std::uint32_t{42});
+    Put(fixture.scenes[2].bytes.data(), kSceneBackPointer,
+        fixture.owner.data());
     Check(Clear(fixture, 42),
-          "owner and selected-target collision bodies are excluded");
+          "owner scenes and selected-target collision bodies are excluded");
     Check(fixture.obbCalls == 0,
           "excluded bodies never reach primitive collision callbacks");
 }
@@ -252,6 +257,74 @@ void TestPrimitiveBlockers() {
         fixture.Sphere(1, 2);
         Check(Clear(fixture),
               "primitive hits beyond the target endpoint do not block");
+    }
+}
+
+void TestFriendlyFiltering() {
+    {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, int{1});
+        Put(fixture.scenes[1].object.data(), kObjectTeam, int{1});
+        fixture.Results({1});
+        fixture.Obb(1, 1);
+        Check(!Clear(fixture),
+              "strict melee visibility keeps a friendly body as a blocker");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, int{1});
+        Put(fixture.scenes[1].object.data(), kObjectTeam, int{1});
+        fixture.Results({1});
+        fixture.terrainScene = fixture.scenes[1].bytes.data();
+        fixture.terrainHit = true;
+        fixture.terrainDistance = 4.0f;
+        Check(!Clear(fixture, 999, {0.0f, 0.0f, 0.0f},
+                     {10.0f, 0.0f, 0.0f}, true),
+              "terrain remains a ranged blocker regardless of scene ownership");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, int{1});
+        Put(fixture.scenes[1].object.data(), kObjectTeam, int{1});
+        fixture.Results({1});
+        fixture.Obb(1, 1);
+        Check(Clear(fixture, 999, {0.0f, 0.0f, 0.0f},
+                    {10.0f, 0.0f, 0.0f}, true),
+              "ranged visibility ignores a same-team collision body");
+        Check(fixture.obbCalls == 0,
+              "ignored ranged-friendly bodies never reach primitive tests");
+    }
+    for (const int specialTeam : {0, 5}) {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, specialTeam);
+        Put(fixture.scenes[1].object.data(), kObjectTeam, specialTeam);
+        fixture.Results({1});
+        fixture.Obb(1, 1);
+        Check(!Clear(fixture, 999, {0.0f, 0.0f, 0.0f},
+                     {10.0f, 0.0f, 0.0f}, true),
+              specialTeam == 0
+                  ? "neutral team zero remains a ranged collision blocker"
+                  : "special team five remains a ranged collision blocker");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, int{1});
+        Put(fixture.scenes[1].object.data(), kObjectTeam, int{2});
+        fixture.Results({1});
+        fixture.Obb(1, 1);
+        Check(!Clear(fixture, 999, {0.0f, 0.0f, 0.0f},
+                     {10.0f, 0.0f, 0.0f}, true),
+              "an enemy collision body remains a ranged blocker");
+    }
+    {
+        Fixture fixture;
+        Put(fixture.owner.data(), kObjectTeam, int{1});
+        Put(fixture.scenes[1].object.data(), kObjectTeam, int{0});
+        fixture.Results({1});
+        fixture.Obb(1, 1);
+        Check(!Clear(fixture, 999, {0.0f, 0.0f, 0.0f},
+                     {10.0f, 0.0f, 0.0f}, true),
+              "a physical wall remains a ranged blocker");
     }
 }
 
@@ -377,6 +450,7 @@ int main() {
                   "GOnline navigation fixture must run as Win32");
     TestExcludedBodies();
     TestPrimitiveBlockers();
+    TestFriendlyFiltering();
     TestFreshDifferentTargets();
     TestCapacityAndMalformedData();
     TestInputsRemainUnchanged();

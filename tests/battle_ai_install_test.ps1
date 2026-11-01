@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $work=Join-Path $repo ('build\battle_ai_install_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')+'\game with spaces')
 $source=Join-Path $repo 'build\stage\Release\client'
-New-Item -ItemType Directory -Force -Path (Join-Path $work 'sdgo\symbols'),(Join-Path $work 'sdgo\mods\net_route'),(Join-Path $work 'sdgo\mods\battle_ai'),(Join-Path $work 'sdgo\mods\match_ai') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $work 'sdgo\symbols'),(Join-Path $work 'sdgo\mods\net_route'),(Join-Path $work 'sdgo\mods\battle_ai'),(Join-Path $work 'sdgo\mods\match_ai'),(Join-Path $work 'sdgo\mods\ai_catalog') | Out-Null
 Copy-Item -LiteralPath $GameExe -Destination (Join-Path $work 'GOnline.exe')
 Copy-Item -LiteralPath (Join-Path $source 'sdgo\core.dll') -Destination (Join-Path $work 'sdgo')
 $symbols=Join-Path $work 'sdgo\symbols\GOnline-54BE1568-00C97000.ini'
@@ -15,6 +15,8 @@ $keep=@{
 }
 foreach($key in $keep.Keys) { [IO.File]::WriteAllText((Join-Path $work $key),$keep[$key]) }
 [IO.File]::WriteAllText((Join-Path $work 'sdgo\mods\match_ai\mod.ini'),"[mod]`nversion=old`n[SETTINGS]`nLogDiagnostics=1`n[private.extra]`nValue=preserved`n")
+[IO.File]::WriteAllText((Join-Path $work 'sdgo\mods\ai_catalog\mod.ini'),"[mod]`nid=ai_catalog`nversion=old`nenabled=1`n")
+[IO.File]::WriteAllText((Join-Path $work 'sdgo\mods\ai_catalog\catalog.bin'),'owner-catalog-preserved')
 for($i=0;$i -lt 2;$i++) { & (Join-Path $repo 'tools\install_battle_ai.ps1') -GameDir $work -Source $source }
 foreach($key in $keep.Keys) {
     if([IO.File]::ReadAllText((Join-Path $work $key)) -cne $keep[$key]) { throw "Installer overwrote $key" }
@@ -27,10 +29,12 @@ if([IO.File]::ReadAllBytes((Join-Path $work 'sdgo\mods\battle_ai\battle_ai.dll')
 $match=[IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\match_ai\mod.ini'))
 if(-not $match.Contains('LogDiagnostics=1') -or -not $match.Contains('[private.extra]') -or $match.Contains('version=old')) { throw 'Match AI manifest/user-section preservation failed' }
 if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\match_ai\match_ai.dll'))) { throw 'Matching loadout bridge missing' }
-foreach($id in 'battle_ai','match_ai','mission_ai') {
+foreach($id in 'battle_ai','match_ai','mission_ai','ai_catalog') {
     $management=Get-Content -LiteralPath (Join-Path $work "sdgo\mods\$id\manager.json") -Raw | ConvertFrom-Json
     if($management.id -ne $id) { throw "Missing or wrong Manager registration for $id" }
 }
+if([IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\ai_catalog\catalog.bin')) -ne 'owner-catalog-preserved' -or
+   [IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\ai_catalog\mod.ini')) -notmatch '(?m)^enabled=1\s*$') { throw 'Catalog code update changed owner data or activation' }
 if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\mission_ai\mission_ai.lua'))) { throw 'Mission search/transition adapter missing' }
 Write-Output "PASS additive, idempotent install preserves separate config and unrelated network settings: $work"
 foreach($relative in 'd3d9.dll','sdgo\core.dll') {
