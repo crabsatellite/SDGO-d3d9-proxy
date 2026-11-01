@@ -18,6 +18,9 @@ class DisclosureTests(unittest.TestCase):
         for text in ('','AI models:','AI models: TODO','AI models: [model]','<!-- AI models: model-name -->'):
             self.assertFalse(module.check(text)[0])
 
+    def test_windows_line_endings_are_valid(self):
+        self.assertTrue(module.check('Summary\r\n\r\nAI models: Unknown exact model/version\r\nAI scope: tests\r\n')[0])
+
     def test_ai_handoff_includes_conditional_fix_and_model_requirement(self):
         from manager.ai_context import build
         from manager.workspace import Workspace

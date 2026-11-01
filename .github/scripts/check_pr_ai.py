@@ -7,7 +7,7 @@ import sys
 
 
 def check(body):
-    text=re.sub(r'<!--.*?-->','',body or '',flags=re.S)
+    text=re.sub(r'<!--.*?-->','',(body or '').replace('\r\n','\n').replace('\r','\n'),flags=re.S)
     match=re.search(r'^[ \t]*(?:-[ \t]*)?AI models[ \t]*:[ \t]*([^\r\n]*)$',text,re.I|re.M)
     if not match:
         return False,'PR must include AI models: followed by the actual model name/version, None, or an explicit Unknown.'
