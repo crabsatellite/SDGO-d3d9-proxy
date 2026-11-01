@@ -21,25 +21,11 @@ Each fix can be disabled separately.
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
-| New-account starter profile | Start with 5,000 GP, zero cash and Corporal rank; cap automatic first-profile unit gifts at one; keep existing progress | `new_account_profile` | World server | [Guide](docs/new-account-profile.md) |
+| New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
 Mod-owned procedures while preserving the original procedures. Players need no client update.
-
-**New-account defaults are enabled in Base and Full packages built from current master; only the owner installs them on WorldServer.**
-New players start with **5,000 GP, zero cash and Corporal 1**. Automatic unit gifts from
-the first-profile call are capped at one instead of granting an entire catalog.
-Existing ownership and progress are preserved. Normal starter selection, later purchases,
-capsule draws and rewards continue under the native rules.
-
-Owner settings live in `sdgo/mods/new_account_profile/config.ini`. `InitialUnitLimit=1`
-caps those automatic gifts; use `0` to remove them. To disable the Mod, set
-`new_account_profile=0` under `[mods]` in `sdgo/sdgo.ini` and restart World. Future
-creations return to native rules; existing accounts keep their data.
-See the [new-account installation, configuration and acceptance guide](docs/new-account-profile.md).
-This new Mod is on master. If your downloaded release lacks
-`server/sdgo/mods/new_account_profile/`, [build a package from current source](docs/setup.md#building-from-source).
 
 <details>
 <summary>Input method example</summary>
@@ -58,10 +44,19 @@ and random-unit gameplay belong in this category.
 |---|---|---|---|---|
 | Mission AI wingmen | Add AI teammates with `!ai` in a mission title; [long-title combinations](#long-room-title-commands) | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 <!-- /mod-category:gameplay -->
+
+The AI catalog is a separate, default-off addon; Base/Full framework packages do
+not install it. The owner generates `catalog.bin` from their database catalog and
+matching client tables, installs both halves, and exports a player overlay.
+Players run its included setup once, then use their normal launcher. Room titles
+such as `!ai e2 a1 lv2` use the expanded random pool; there is no extra selection
+screen. No SQL rows or game archives are rewritten. See the
+[owner installation and player distribution guide](docs/ai-catalog.md).
 
 <a id="long-room-title-commands"></a>
 

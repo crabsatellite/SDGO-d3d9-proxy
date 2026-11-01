@@ -27,5 +27,6 @@ dist/
 __pycache__/
 *.py[cod]
 
-# Local Python tooling caches
-*.pyc
+# Owner-generated game data; generic distributions contain tools and code only.
+catalog.bin
+catalog.json

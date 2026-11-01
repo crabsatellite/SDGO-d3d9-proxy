@@ -19,20 +19,10 @@
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 | 防止较高子等级误将当前军衔降级，例如 `15-1 → 5-2` | `rank_progression_fix` | World 服务器 | [使用说明](docs/rank-progression-fix.zh-CN.md) |
-| 新账号起始资料修复 | 新账号默认 5,000 GP、0 点券、下士；首次建档自动赠送最多一台机体，保留已有养成 | `new_account_profile` | World 服务器 | [使用说明](docs/new-account-profile.zh-CN.md) |
+| 新账号起始资料修复 | 调整新账号的初始货币、军衔和机体发放，保留已有进度 | `new_account_profile` | World 服务器 | [使用说明](docs/new-account-profile.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
 军衔修复通过 WorldServer 的框架加载，将对应结算调用交给 Mod 自己的修正版过程，保留原生过程，无需更新玩家客户端。
-
-**新账号规则默认启用，包含在当前 master 构建的 Base 和 Full 包中，只需服主安装到 WorldServer。**
-默认以 **5,000 GP、0 点券、下士 1 阶**起步；首次建档调用中的自动机体赠送最多保留一台，
-不直接发全机库。已有账号的机体与进度保留，正常选初始机体、后续购买、扭蛋和奖励继续按原规则获得。
-
-服主在 `sdgo/mods/new_account_profile/config.ini` 配置，`InitialUnitLimit=1` 是这部分自动赠送的上限；
-设为 `0` 可取消这部分赠送。停用可在 `sdgo/sdgo.ini` 的 `[mods]` 中写 `new_account_profile=0` 并重启 World，
-之后的新建档恢复原服规则，已有账号不变。详见[新账号安装、配置与验收教程](docs/new-account-profile.zh-CN.md)。
-这个新增 Mod 已合入 master；若你下载的发布包没有 `server/sdgo/mods/new_account_profile/`，
-请按[源码构建说明](docs/setup.zh-CN.md#从源码构建)生成包含它的包。
 
 <details>
 <summary>查看输入法修复效果</summary>
@@ -50,10 +40,16 @@
 |---|---|---|---|---|
 | 任务 AI 僚机 | 用 `!ai` 给任务队伍加入 AI 队友；[长房名组合用法](#long-room-title-commands) | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战；[长房名组合用法](#long-room-title-commands) | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| AI 机体目录（Beta，独立附加包） | 用服主生成的配套数据扩充 LV1–LV5 机体池，关闭并重启后恢复原池；[长房名组合用法](#long-room-title-commands) | `ai_catalog` | 对战服务器 + 所有参战客户端 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
 <!-- /mod-category:gameplay -->
+
+机体目录是**默认关闭的独立 Mod**，Base / Full 框架包不会直接安装它。服主用自己的数据库目录表和
+配套客户端表生成 `catalog.bin`，安装到两端，再导出玩家增量包；玩家只需运行包内的一次性安装工具，
+以后仍用原启动器。房名如 `!ai e2 a1 lv2` 会从扩展后的对应等级池随机抽取，不增加选择界面。
+不改写 SQL 原表或游戏数据包；完整步骤见[服主安装与玩家分发教程](docs/ai-catalog.zh-CN.md)。
 
 <a id="long-room-title-commands"></a>
 
