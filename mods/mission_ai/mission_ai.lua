@@ -14,6 +14,8 @@
 --     lets an enemy switch to a wingman that is closer than its current target and
 --     within EnemyAggroRange (EnemiesTargetWingmen=1), so wingmen draw fire.
 --   * with LogCombat=1, logs each wingman's HP and target every 5 s.
+--   * replaces player-only wingman searches with the native mission enemy search.
+--   * mirrors real PlayerWarp stage transitions to locally simulated wingmen.
 
 local DEFAULTS = { EnemiesTargetWingmen = 1, EnemyAggroRange = 2500, LogCombat = 0 }
 local CFG = {}
@@ -89,6 +91,51 @@ function SearchLockPlayer(npcId)
   if CFG.EnemiesTargetWingmen == 1 and MissionLive() then
     local ids, set = Wingmen()
     if ids[1] and not set[npcId] then pcall(DivertToWingman, npcId, ids) end
+  end
+  return result
+end
+
+-- Some VSAI melee families only call SearchLockOnlyPlayer. In a co-op mission
+-- every human is their ally, so that search can leave a living wingman at target
+-- zero forever. The ordinary mission search already selects hostile NPCs for
+-- team 1; preserve that native team/range/visibility filtering and boolean result.
+if not SDGO_Original_SearchLockOnlyPlayer then SDGO_Original_SearchLockOnlyPlayer = SearchLockOnlyPlayer end
+function SearchLockOnlyPlayer(npcId)
+  if MissionLive() then
+    local _, set = Wingmen()
+    if set[npcId] then return SDGO_Original_SearchLockPlayer(npcId) end
+  end
+  return SDGO_Original_SearchLockOnlyPlayer(npcId)
+end
+
+-- Do not add NPCs to GetNumPlayer: mission objectives and difficulty use that
+-- human count. Instead mirror the actual rule-script warp, using its exact safe
+-- position/direction and the same native CUnit::Warp operation. This is never a
+-- distance-based combat teleport and never revives a dead participant.
+local function WarpWingmen(player, position, direction)
+  if not SDGO_LocalWingmen then return end
+  local humans=GetNumPlayer()
+  if not humans or humans<1 or player<1 or player>humans then return end
+  local assigned=1
+  for _,id in ipairs({SDGO_LocalWingmen()}) do
+    if assigned==player and CheckObejctAlive(id) then
+      local npc=DocumentFind(id)
+      if npc then
+        npc:Warp(position,direction)
+        npc:SetAttackOnOff(false);npc:SetAttackTarget(0)
+        npc:MoveStop();npc:SetJumpTime(0)
+      end
+    end
+    assigned=assigned+1
+    if assigned>humans then assigned=1 end
+  end
+end
+if not SDGO_Original_PlayerWarp then SDGO_Original_PlayerWarp=PlayerWarp end
+function PlayerWarp(player, position, direction)
+  local result=SDGO_Original_PlayerWarp(player,position,direction)
+  if MissionLive() then
+    local ok,err=pcall(WarpWingmen,player,position,direction)
+    if not ok then Log('wingman stage warp failed: %s',tostring(err)) end
   end
   return result
 end

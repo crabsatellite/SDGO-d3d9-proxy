@@ -21,8 +21,6 @@ void* g_meleeOriginal=nullptr;void* g_meleePlayer=nullptr;
 void* g_rangedOriginal=nullptr;void* g_rangedPlayer=nullptr;
 void* g_mapOriginal=nullptr;void* g_mapPlayer=nullptr;
 void* g_rushOriginal=nullptr;void* g_rushPlayer=nullptr;
-using BuildFn=int(__thiscall*)(uint8_t*,uint8_t*,uint8_t*,uint32_t);
-BuildFn g_build=nullptr;
 battle_ai::loadout::ServerNativeFunctions g_loadoutNative;
 using BroadcastFn=int(__thiscall*)(uint8_t*,uint8_t*,uint32_t,uint32_t*);
 BroadcastFn g_broadcast=nullptr;
@@ -89,25 +87,24 @@ bool ServerLoadoutProfile(void* context,const void*,battle_ai::loadout::NativePr
     }
     *output=battle_ai::loadout::ProfileFromWeapons(weapons,count);return count!=0;
 }
-void ApplyBuiltLoadout(uint8_t* room,uint8_t* pilot,uint8_t* unit,uint32_t npc) {
+bool ApplyBuiltLoadout(uint8_t* room,uint8_t* pilot,uint8_t* unit,uint32_t npc) {
     __try {
-        if(!g_enabled||!room||!pilot||!unit||npc<3604001||npc>3607000) return;
-        auto mode=room[5];if(mode==5||mode==8||mode==10||mode==11||mode==12) return;
+        if(!g_enabled||!room||!pilot||!unit||npc<3604001||npc>3607000) return false;
+        auto mode=room[5];if(mode==5||mode==8||mode==10||mode==11||mode==12) return false;
         int difficulty=RoomDifficulty(room);
         auto definition=*reinterpret_cast<uint8_t**>(unit+0x6C);
         battle_ai::loadout::NativeProfileSource source{unit,ServerLoadoutProfile};
         battle_ai::loadout::NativeLoadout plan;
-        if(!battle_ai::loadout::FromNativeSource(static_cast<battle_ai::Difficulty>(difficulty),source,definition,&plan)) return;
+        if(!battle_ai::loadout::FromNativeSource(static_cast<battle_ai::Difficulty>(difficulty),source,definition,&plan)) return false;
         battle_ai::loadout::ServerApplyState state;
         auto result=battle_ai::loadout::ApplyServer(unit,1,plan,g_loadoutNative,&state);
         if(result!=battle_ai::loadout::ApplyResult::Applied)
             g_api->Log(g_mod,SDGO_LOG_WARN,"native AI level/part unavailable (%d); original unit retained",static_cast<int>(result));
-    } __except(EXCEPTION_EXECUTE_HANDLER) {g_api->Log(g_mod,SDGO_LOG_WARN,"native AI loadout layout unavailable; original unit retained");}
-}
-int __fastcall BuildPilot(uint8_t* room,void*,uint8_t* pilot,uint8_t* unit,uint32_t npc) {
-    int result=g_build(room,pilot,unit,npc);
-    if(result) ApplyBuiltLoadout(room,pilot,unit,npc);
-    return result;
+        return result==battle_ai::loadout::ApplyResult::Applied;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        if(g_api) g_api->Log(g_mod,SDGO_LOG_WARN,"native AI loadout layout unavailable; original unit retained");
+        return false;
+    }
 }
 bool MakeClearSpState(uint8_t* room,const uint8_t* packet,uint32_t length,uint8_t* output) {
     __try {
@@ -134,6 +131,15 @@ int __fastcall Broadcast(uint8_t* room,void*,uint8_t* packet,uint32_t length,uin
     if(synchronize) {uint32_t ignored=0;g_broadcast(room,state,sizeof(state),&ignored);}
     return result;
 }
+}
+
+// Optional process-local post-build bridge. The PvP AI owner calls this only
+// after the native/catalog builder has returned, so other providers retain
+// sole ownership of battle.build_ai_pilot and all temporary lookup scopes have
+// already been restored.
+extern "C" __declspec(dllexport) int __cdecl
+SdgoBattleAiServerApplyLoadoutV1(uint8_t* room,uint8_t* pilot,uint8_t* unit,uint32_t npc) {
+    return ApplyBuiltLoadout(room,pilot,unit,npc)?1:0;
 }
 
 // Preserve every original register/flag before asking a source-bound policy.
@@ -265,8 +271,7 @@ SDGO_MOD_ENTRY {
        !api->HookCode(mod,"ai_sp.ranged_cost",reinterpret_cast<void*>(&RangedDetour),&g_rangedOriginal)||
        !api->HookCode(mod,"ai_sp.map_cost",reinterpret_cast<void*>(&MapDetour),&g_mapOriginal)||
        !api->HookCode(mod,"ai_sp.rush_cost",reinterpret_cast<void*>(&RushDetour),&g_rushOriginal)||
-       !api->HookCode(mod,"ai_sp.broadcast",reinterpret_cast<void*>(&Broadcast),reinterpret_cast<void**>(&g_broadcast))||
-       !api->HookCode(mod,"battle.build_ai_pilot",reinterpret_cast<void*>(&BuildPilot),reinterpret_cast<void**>(&g_build))) return 0;
+       !api->HookCode(mod,"ai_sp.broadcast",reinterpret_cast<void*>(&Broadcast),reinterpret_cast<void**>(&g_broadcast))) return 0;
     api->Log(mod,SDGO_LOG_INFO,"ready: Medium/Hard PvP bots use native player SP checks and costs");
     return 1;
 }

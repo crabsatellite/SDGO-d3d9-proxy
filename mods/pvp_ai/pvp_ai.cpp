@@ -139,6 +139,11 @@ namespace
     uint8_t** g_aiNpcList = nullptr;
     void* g_waitRoomProc = nullptr;
     BuildAiPilotFn g_buildAiPilot = nullptr;
+    using ApplyServerLoadoutFn = int(__cdecl*)(uint8_t*, uint8_t*, uint8_t*, uint32_t);
+    thread_local HMODULE g_battleAiServerModule = nullptr;
+    thread_local ApplyServerLoadoutFn g_applyServerLoadout = nullptr;
+    thread_local std::wstring g_battleAiServerPath;
+    volatile LONG g_loadoutBridgeFaultLogged = 0;
     PilotResetFn g_pilotReset = nullptr;
     PilotStateIdFn g_pilotStateId = nullptr;
     PilotStateRoomFn g_pilotStateRoom = nullptr;
@@ -185,6 +190,55 @@ namespace
             if (g_random.compare_exchange_weak(previous, next, std::memory_order_relaxed))
                 return next;
         }
+    }
+
+    void ResolveServerLoadoutBridge()
+    {
+        if (g_battleAiServerPath.empty() && g_api && g_api->ModDirectory) {
+            const wchar_t* directory = g_api->ModDirectory(g_mod);
+            if (directory && *directory) {
+                g_battleAiServerPath = directory;
+                const size_t slash = g_battleAiServerPath.find_last_of(L"\\/");
+                if (slash == std::wstring::npos) {
+                    g_battleAiServerPath.clear();
+                } else {
+                    g_battleAiServerPath.resize(slash + 1);
+                    g_battleAiServerPath += L"battle_ai_server\\battle_ai_server.dll";
+                }
+            }
+        }
+        HMODULE module =
+            g_battleAiServerPath.empty() ? nullptr : GetModuleHandleW(g_battleAiServerPath.c_str());
+        if (module != g_battleAiServerModule) {
+            g_battleAiServerModule = module;
+            g_applyServerLoadout = nullptr;
+        }
+        if (module && !g_applyServerLoadout)
+            g_applyServerLoadout = reinterpret_cast<ApplyServerLoadoutFn>(
+                GetProcAddress(module, "SdgoBattleAiServerApplyLoadoutV1"));
+    }
+
+    void ApplyOptionalServerLoadout(uint8_t* room, uint8_t* pilot, uint8_t* unit, uint32_t npcData)
+    {
+        ResolveServerLoadoutBridge();
+        if (!g_applyServerLoadout)
+            return;
+        __try {
+            g_applyServerLoadout(room, pilot, unit, npcData);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_applyServerLoadout = nullptr;
+            if (InterlockedCompareExchange(&g_loadoutBridgeFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_WARN,
+                           "battle AI server loadout bridge faulted; native AI unit retained");
+        }
+    }
+
+    int BuildAiPilotWithLoadout(uint8_t* room, uint8_t* pilot, uint8_t* unit, uint32_t npcData)
+    {
+        const int result = g_buildAiPilot(room, pilot, unit, npcData);
+        if (result)
+            ApplyOptionalServerLoadout(room, pilot, unit, npcData);
+        return result;
     }
 
     std::vector<uint32_t> ParseIds(const char* text)
@@ -723,7 +777,7 @@ namespace
         uint8_t* info = room + kSlotInfo + slot * kSlotInfoStride;
         memset(pilot, 0, kPilotStride);
         uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
-        if (!g_buildAiPilot(room, pilot, unit, npcData)) {
+        if (!BuildAiPilotWithLoadout(room, pilot, unit, npcData)) {
             g_api->Log(g_mod, SDGO_LOG_WARN, "slot %d: building the AI pilot for NPC %lu failed", slot,
                        static_cast<unsigned long>(npcData));
             memset(pilot, 0, kPilotStride);
@@ -1024,7 +1078,7 @@ namespace
     {
         std::vector<uint8_t> scratch(kPilotStride);
         uint8_t* unit = scratch.data() + kPilotUnits;
-        if (!g_buildAiPilot(room, scratch.data(), unit, npc))
+        if (!BuildAiPilotWithLoadout(room, scratch.data(), unit, npc))
             return 0;
         if (unitOut)
             memcpy(unitOut, unit, kUnitStride);
