@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $run=Join-Path $repo ('build\battle_ai_native_runs\'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
 $bin=Join-Path $repo "build\$Config"
-foreach($case in 'enabled','disabled','bad-signature','missing-script','generic') {
+foreach($case in 'enabled','disabled','bad-signature','missing-script','generic','easy','medium') {
     $dir=Join-Path $run $case
     $mod=Join-Path $dir 'sdgo\mods\battle_ai'
     New-Item -ItemType Directory -Force -Path $mod,(Join-Path $dir 'sdgo\symbols') | Out-Null
@@ -14,8 +14,10 @@ foreach($case in 'enabled','disabled','bad-signature','missing-script','generic'
     [IO.File]::WriteAllText((Join-Path $mod 'mod.ini'),$manifest)
     if($case -ne 'missing-script') { Copy-Item -LiteralPath (Join-Path $repo 'mods\battle_ai\battle_ai.lua') -Destination $mod }
     Copy-Item -LiteralPath (Join-Path $repo 'mods\battle_ai\universal_ai.lua') -Destination $mod
-    $policy="[settings]`r`nGenericMode=0`r`n"
-    if($case -eq 'generic') { $policy="[settings]`r`nGenericMode=1`r`nReactionMs=0`r`nTargetHoldMs=0`r`nBurstMs=0`r`n" }
+    $policy="[settings]`r`n"
+    if($case -eq 'generic') { $policy="[settings]`r`nDifficulty=Hard`r`nSwingCancelChance=100`r`nReactionMs=0`r`nTargetHoldMs=0`r`nBurstMs=0`r`n" }
+    if($case -eq 'easy') { $policy="[settings]`r`nDifficulty=Easy`r`n" }
+    if($case -eq 'medium') { $policy="[settings]`r`nDifficulty=Medium`r`n" }
     [IO.File]::WriteAllText((Join-Path $mod 'config.ini'),$policy)
     $cfg="[core]`r`nlog_level=1`r`n[mods]`r`n"
     if($case -eq 'disabled') { $cfg+="battle_ai=0`r`n" }

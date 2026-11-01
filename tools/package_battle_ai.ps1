@@ -2,7 +2,7 @@ param([string]$Config='Release')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $tag=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-$name='SDGO-BattleAI-0.2.0-preview-'+$tag
+$name='SDGO-BattleAI-0.3.0-preview-'+$tag
 $out=Join-Path $repo ('dist\'+$name)
 $stage=Join-Path $repo "build\stage\$Config\client"
 if(Test-Path -LiteralPath $out) { throw 'Package destination already exists' }

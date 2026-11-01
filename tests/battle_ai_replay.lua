@@ -125,7 +125,7 @@ for index=1,units.count do
   local latencies={}
   for mode=1,2 do
     now=0; objects={}; gen=gen+1
-    SDGO_BattleAI_TestConfig={Enabled=mode-1,RangedMinDistance=0}
+    SDGO_BattleAI_TestConfig={Difficulty=2,Enabled=mode-1,RangedMinDistance=0}
     dofile('mods/battle_ai/battle_ai.lua')
     _G[spec.name..'_LuaInit']()
     New(1,spec.ranged and 1000 or 100)
@@ -149,7 +149,7 @@ for index=1,units.count do
   -- Exercise the decorator's own transition while retaining the real native
   -- ChangeFn and Init. An enum-only stub could accept a non-firing state.
   now=0; objects={}; gen=gen+1
-  SDGO_BattleAI_TestConfig={Enabled=1,RangedMinDistance=0}
+  SDGO_BattleAI_TestConfig={Difficulty=2,Enabled=1,RangedMinDistance=0}
   dofile('mods/battle_ai/battle_ai.lua'); _G[spec.name..'_LuaInit']()
   New(1,spec.ranged and 1000 or 100)
   local npc=New(20,0)

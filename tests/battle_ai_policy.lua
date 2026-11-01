@@ -74,6 +74,7 @@ local function Reset(config)
   now=0; authority=1; generation=generation+1; objects={}
   local human=New(1); human.x=1000; human.target=0
   SDGO_BattleAI_TestConfig=config or {}
+  if SDGO_BattleAI_TestConfig.Difficulty==nil then SDGO_BattleAI_TestConfig.Difficulty=2 end
   dofile('mods/battle_ai/battle_ai.lua')
   return New(20)
 end
@@ -144,7 +145,7 @@ u=Reset(); dofile('mods/battle_ai/battle_ai.lua'); dofile('mods/battle_ai/battle
 Tick(u,0)
 Check(u.calls==1,'hot reload does not stack native wrappers')
 u=Reset(); u.moving=true; Tick(u,0); Tick(u,1500)
-SDGO_BattleAI_TestConfig={Enabled=0}; dofile('mods/battle_ai/battle_ai.lua')
+SDGO_BattleAI_TestConfig={Enabled=0,Difficulty=2}; dofile('mods/battle_ai/battle_ai.lua')
 Tick(u,1600)
 Check(not SDGO_BattleAI.states[20].controlUntil and u.motor==0,'disable during recovery releases the owned motor')
 u=Reset(); u.moving=true; Tick(u,0); Tick(u,1500); Tick(u,1650)

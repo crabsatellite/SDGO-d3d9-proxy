@@ -13,23 +13,59 @@ inline lua_State* state=nullptr;
 inline uint8_t* source=nullptr;
 inline std::array<uint8_t,0x8500> document{};
 inline uint8_t* documentPointer=document.data();
+inline std::array<uint8_t,0x500> app{};
+inline std::array<uint8_t,0x40> service{},mode{};
+inline std::array<uint8_t,0xA4> room{};
+inline wchar_t title[32]={};
 inline std::array<uint8_t,0x3300> enemy1{},enemy2{};
 inline std::array<std::array<uint8_t,0x1400>,3> definitions{},fsms{};
+inline std::array<std::array<uint8_t,0x1400>,3> movements{};
 inline std::array<std::array<uint8_t,0x300>,3> nodes{},scenes{};
-inline std::array<std::array<uint8_t,0x800>,3> weapons{};
+inline std::array<std::array<uint8_t,0x800>,4> weapons{};
 inline std::array<void*,16> unitVtable{},sceneVtable{};
 inline bool blocked=false;
+inline bool coverWall=false;
 inline bool nullRay=false;
 inline int pathMode=0;
 inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,frees=0,queries=0;
 inline int lastWait=0;
+inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
+inline int swingInput=-1;
+inline int attackAdmissions=0;
+inline bool deferSwitch=false;
+inline int requestedSlot=-1,switchRequests=0;
+inline void* messageEntry=nullptr;
+inline void* contactReturn=nullptr;
 inline std::array<uint8_t,0x300> wall{};
 template<class T> inline void Put(uint8_t* p,size_t off,T value) { memcpy(p+off,&value,sizeof(value)); }
+__declspec(noinline) inline uint8_t* __cdecl App() {return app.data();}
+inline void SetRoomTitle(const wchar_t* value,bool small=false) {
+    Put(app.data(),0x4A4,service.data());Put(service.data(),0x0C,mode.data());Put(mode.data(),8,room.data());
+    memset(room.data(),0,room.size());
+    auto length=wcslen(value);
+    if(small&&length<8) memcpy(room.data(),value,(length+1)*sizeof(wchar_t));
+    else {wcscpy_s(title,value);Put(room.data(),0,title);}
+    Put(room.data(),0x10,static_cast<uint32_t>(length));Put(room.data(),0x14,uint32_t(small?7:31));
+}
 template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) void AttackAdmission() {++attackAdmissions;}
+    __declspec(noinline) bool PlayerSpGate() {
+        auto owner=*reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(this)+0xB2C);
+        return *reinterpret_cast<int*>(owner+0xBC8)>29999;
+    }
+    __declspec(noinline) void TrackingEntry(void*) { ++trackEntries; }
+    __declspec(noinline) void TrackingUpdate(void*) { ++trackUpdates; }
+    __declspec(noinline) void SwingEntry(void*) { ++swingEntries; }
+    __declspec(noinline) void SwingUpdate(void* event) {swingInput=static_cast<uint8_t*>(event)[0xD];}
+    __declspec(noinline) bool Message(uint32_t id,void*,uint32_t) {return id==1||id==2;}
+    __declspec(noinline) void QueueSwing() {auto fsm=reinterpret_cast<uint8_t*>(this);Put(fsm,8,fsm+0x5C);}
+    __declspec(noinline) void Face() {++faces;}
+    __declspec(noinline) void Rotate(float degrees,int dispatch) {++rotations;Put(reinterpret_cast<uint8_t*>(this),0xD98,degrees);Put(reinterpret_cast<uint8_t*>(this),0x100,dispatch);}
+    __declspec(noinline) void Receipts(void*) {Shot(0,0,0);Shot(0,1,0);Shot(0,0,1);}
     __declspec(noinline) bool CanAttack(uint8_t*) { return true; }
     __declspec(noinline) bool Projectile(void* opaque) {
         auto p=reinterpret_cast<uint8_t*>(this);
@@ -58,14 +94,14 @@ struct Callbacks {
     }
     __declspec(noinline) bool IsTerrain(int) { return false; }
     __declspec(noinline) void Query(void** out,int* count,int,const Aabb*) {
-        ++queries;out[0]=wall.data();*count=blocked?1:0;
+        ++queries;out[0]=wall.data();*count=(blocked||coverWall)?1:0;
     }
     __declspec(noinline) bool Terrain(const Ray3*,float*) { return false; }
     __declspec(noinline) int Goal(const Vec3* point,int) {
         auto unit=reinterpret_cast<uint8_t*>(this);Put(unit,0x3078,*point);unit[0x30DC]=1;++moves;return 1;
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
-        if(id==1)return enemy1.data();if(id==2)return enemy2.data();return nullptr;
+        if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();return nullptr;
     }
     __declspec(noinline) Vec3* Path(uint32_t,Vec3,Vec3 end,Vec3*,uint32_t* count) {
         if(pathMode==1) return nullptr;
@@ -77,13 +113,35 @@ struct Callbacks {
         p[0]={200,0,200};p[1]=end;*count=2;return p;
     }
 };
+// The caller anchor comes from the actual instruction following the fixture's
+// native-dispatch call. This exercises strict caller filtering, not a test flag.
+__declspec(naked) inline bool __cdecl EmitContact(uint8_t*,uint32_t,void*,uint32_t) {
+    __asm {
+        mov ecx, dword ptr [esp+4]
+        lea eax, contactAfter
+        mov contactReturn, eax
+        push dword ptr [esp+16]
+        push dword ptr [esp+16]
+        push dword ptr [esp+16]
+        call dword ptr [messageEntry]
+    contactAfter:
+        ret
+    }
+}
 __declspec(noinline) inline void __cdecl Free(void* p) {
     ++frees;
     if(p==protectedPath) {VirtualFree(p,0,MEM_RELEASE);protectedPath=nullptr;}
     else HeapFree(GetProcessHeap(),0,p);
 }
 __declspec(noinline) inline bool __cdecl Segment(const Vec3*,const Vec3*,const Aabb*) { return true; }
-__declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* t) { *t=200;return ray->direction.z>0.02f; }
+__declspec(noinline) inline bool __cdecl Obb(const Ray3* ray,const void*,float* t) {
+    if(coverWall) {
+        if(std::fabs(ray->direction.x)<0.01f) return false;
+        *t=(500-ray->origin.x)/ray->direction.x;
+        return *t>=0&&ray->origin.z+*t*ray->direction.z<=50;
+    }
+    *t=200;return ray->direction.z>0.02f;
+}
 __declspec(noinline) inline bool __cdecl Sphere(const Ray3*,const void*,float*) { return false; }
 __declspec(noinline) inline int __cdecl Dispatch(const char* name,uint8_t*) {
     int top=lua_gettop(state);lua_getglobal(state,name);lua_getglobal(state,"npc");
@@ -101,6 +159,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
     auto def=definitions[index].data(),fsm=fsms[index].data(),node=nodes[index].data(),scene=scenes[index].data();
     Put(unit,0,unitVtable.data());Put(unit,4,id);Put(unit,0x20,team);Put(unit,0x38,hp);Put(unit,0x3C,1000);
     Put(unit,8,node);Put(unit,0x34,scene);Put(unit,0x9C4,def);Put(unit,0x9CC,fsm);
+    auto movement=movements[index].data();Put(unit,0x9C8,movement);Put(movement,4,movement+0x20);Put(movement,8,uint32_t(0));
     Put(node,0x88,Vec3{x,0,z});Put(scene,0,sceneVtable.data());Put(scene,0x0C,unit);
     Put(scene,0xBC,Aabb{{x-40,50,z-40},{x+40,150,z+40}});
     Put(def,0,uint32_t(987654+index));def[0x247]=3;
@@ -109,7 +168,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
         Put(fsm,0x24C+i*0xC8,int16_t(30));Put(fsm,0x254+i*0xC8,int16_t(0));
         Put(fsm,0x258+i*0xC8,weapons[i].data());
     }
-    Put(fsm,8,fsm+0x20);Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);
+    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);
     Encode(unit,0xBE1,0xBE5,0xBF5,100);Encode(unit,0xBCC,0xBD0,0xBE0,100);
     unit[0x326C]=1;Put(unit,0x3238,uint32_t(3604001));
     unit[0x3291]=1;
@@ -119,7 +178,7 @@ inline ListNode head{},a{},b{};
 inline int SetFire(lua_State* L){source[0x312A]=lua_toboolean(L,2)?1:0;return 0;}
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
 inline int Stop(lua_State*){source[0x30DC]=0;return 0;}
-inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(i>=0&&i<3){Put(fsms[0].data(),0x240,i);Put(fsms[0].data(),0x248,weapons[i].data());}return 0;}
+inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));requestedSlot=i;++switchRequests;if(!deferSwitch&&i>=0&&i<4){Put(fsms[0].data(),0x240,i);Put(fsms[0].data(),0x248,weapons[i].data());}return 0;}
 inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}
@@ -144,6 +203,21 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     lua_pop(L,1);
 }
 inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
+    symbol(f,"combat.attack_admission",Address(&Callbacks::AttackAdmission),false);
+    symbol(f,"combat.player_sp_gate",Address(&Callbacks::PlayerSpGate),false);
+    SetRoomTitle(L"",true);symbol(f,"game.app",reinterpret_cast<void*>(&App),false);
+    symbol(f,"npc.tracking_entry",Address(&Callbacks::TrackingEntry),false);
+    symbol(f,"npc.tracking_update",Address(&Callbacks::TrackingUpdate),false);
+    symbol(f,"npc.swing_entry",Address(&Callbacks::SwingEntry),false);
+    symbol(f,"npc.swing_update",Address(&Callbacks::SwingUpdate),false);
+    messageEntry=Address(&Callbacks::Message);
+    EmitContact(document.data(),0,nullptr,0);
+    symbol(f,"um.deliver_message",messageEntry,false);
+    symbol(f,"combat.melee_contact_return",contactReturn,false);
+    symbol(f,"combat.queue_melee_swing",Address(&Callbacks::QueueSwing),false);
+    symbol(f,"npc.face_target",Address(&Callbacks::Face),false);
+    symbol(f,"unit.rotate_y",Address(&Callbacks::Rotate),false);
+    symbol(f,"combat.fire_receipts",Address(&Callbacks::Receipts),false);
     symbol(f,"npc.dispatch_ai",reinterpret_cast<void*>(&Dispatch),false);
     symbol(f,"npc.ranged_ray",Address(&Callbacks::Ray),false);
     symbol(f,"npc.attack_intent",Address(&Callbacks::Intent),false);

@@ -5,6 +5,7 @@
 #include <initializer_list>
 
 #include "../mods/battle_ai/native_capabilities.h"
+#include "../mods/battle_ai/difficulty.h"
 
 namespace {
 
@@ -82,7 +83,7 @@ struct Fixture {
 
         Put(fsm, 0x240, std::int32_t{0});
         PutPointer(fsm, 0x248, weapons[0]);
-        Put(fsm, 0x008, static_cast<std::uint32_t>(
+        Put(fsm, 0x004, static_cast<std::uint32_t>(
             reinterpret_cast<std::uintptr_t>(fsm + 0x20)));
         Put(unit, 0xCF0, std::int32_t{5});
         EncodeProtectedFloat(unit, 0xBCC, 0xBD0, 0xBE0, 120.0f);
@@ -95,12 +96,32 @@ struct Fixture {
 int main() {
     static_assert(sizeof(void*) == 4, "GOnline capability fixture is Win32");
     Fixture fixture;
+    Check(battle_ai::RoomDifficulty(L"!ai")==-1&&battle_ai::RoomDifficulty(L"usual room")==-1,
+          "unmarked room defers to the Medium default");
+    Check(battle_ai::RoomDifficulty(L"!ai hard")==2&&battle_ai::RoomDifficulty(L"!AI3 Easy")==0,
+          "room command accepts full difficulty names and existing bot counts");
+    Check(battle_ai::RoomDifficulty(L"!ai e3 a1 medium")==1&&battle_ai::RoomDifficulty(L"!ai lv4 hard")==2,
+          "difficulty remains separate from NPC pool level and team counts");
+    Check(battle_ai::RoomDifficulty(L"!aimer hard")==-1&&battle_ai::RoomDifficulty(L"!ai harder")==-1,
+          "partial command and partial difficulty tokens are rejected");
     battle_ai::native::Capabilities capabilities{};
 
     Check(battle_ai::native::ReadCapabilities(fixture.unit, capabilities),
           "reads a complete standard-bank capability snapshot");
     Check(!capabilities.alternate && capabilities.selectedSlot == 0,
           "selected weapon slot is native zero-based");
+    PutPointer(fixture.fsm,4,fixture.fsm+0x5C);
+    PutPointer(fixture.fsm,8,fixture.fsm+0x20);
+    Check(battle_ai::native::ReadCapabilities(fixture.unit,capabilities)&&capabilities.meleeBusy&&
+          !battle_ai::native::detail::Neutral(fixture.fsm),
+          "pending neutral never hides an actual active melee state");
+    PutPointer(fixture.fsm,4,fixture.fsm+0x20);
+    PutPointer(fixture.fsm,8,fixture.fsm+0x48);
+    Check(battle_ai::native::ReadCapabilities(fixture.unit,capabilities)&&capabilities.meleeBusy&&
+          !battle_ai::native::detail::Neutral(fixture.fsm),
+          "pending knife tracking is busy even before native Entry");
+    Put(fixture.fsm,8,std::uint32_t{0});
+    Check(battle_ai::native::detail::Neutral(fixture.fsm),"actual neutral with empty pending queue admits a new action");
     Check(std::fabs(capabilities.boostFraction - 0.5f) < 0.0001f,
           "boost decoder uses the full sixteen-byte protected storage");
     Check(capabilities.weapons[0].valid &&

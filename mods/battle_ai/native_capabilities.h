@@ -46,7 +46,8 @@ constexpr std::size_t kAlternateBankFlag = 0xE34;
 
 constexpr std::size_t kSelectedSlot = 0x240;
 constexpr std::size_t kSelectedWeapon = 0x248;
-constexpr std::size_t kCurrentState = 0x008;
+constexpr std::size_t kCurrentState = 0x004;
+constexpr std::size_t kPendingState = 0x008;
 constexpr std::size_t kStandardBank = 0x24C;
 constexpr std::size_t kAlternateBank = 0x56C;
 constexpr std::size_t kSlotStride = 0xC8;
@@ -167,6 +168,19 @@ inline bool StateIs(const std::uint8_t* fsm, std::uint32_t current,
            current == static_cast<std::uint32_t>(expected);
 }
 
+// BE38A0 promotes +8 to +4, clears +8, then runs Entry/Update. A queued
+// neutral state must not hide a still-active swing during its Release.
+inline bool InState(const std::uint8_t* fsm, std::size_t offset) noexcept {
+    std::uint32_t current=0,pending=0;
+    return Read(fsm,kCurrentState,current) && Read(fsm,kPendingState,pending) &&
+        (StateIs(fsm,current,offset) || StateIs(fsm,pending,offset));
+}
+inline bool Neutral(const std::uint8_t* fsm) noexcept {
+    std::uint32_t current=0,pending=0;
+    return Read(fsm,kCurrentState,current) && Read(fsm,kPendingState,pending) &&
+        StateIs(fsm,current,0x20) && (pending==0 || StateIs(fsm,pending,0x20));
+}
+
 inline bool ReadBoostFraction(const std::uint8_t* unit, float& result) noexcept {
     // CNPC::GetBoostGage implementation 0x00656CB0 returns the quotient of
     // these two obfuscated floats: current at +BE5 and maximum at +BD0.
@@ -249,27 +263,24 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     std::uint8_t alternate = 0;
     std::uint8_t ordinaryCount = 0;
     std::int32_t selected = -1;
-    std::uint32_t currentState = 0;
+    std::uint32_t currentState = 0, pendingState = 0;
     if (!Read(unit, kAlternateBankFlag, alternate) ||
         !Read(definition, kOrdinaryWeaponCount, ordinaryCount) ||
         !Read(fsm, kSelectedSlot, selected) ||
         !Read(fsm, kCurrentState, currentState) ||
+        !Read(fsm, kPendingState, pendingState) ||
         alternate > 1 || ordinaryCount == 0 || ordinaryCount > 3)
         return false;
     value.alternate = alternate != 0;
     if (selected >= 0 && selected < 4) value.selectedSlot = selected;
 
     // 0x0068D2D0 defines the native non-interruptible special-state set.
-    value.specialBusy =
-        StateIs(fsm, currentState, 0x098) || StateIs(fsm, currentState, 0x0AC) ||
-        StateIs(fsm, currentState, 0x0C0) || StateIs(fsm, currentState, 0x0D4) ||
-        StateIs(fsm, currentState, 0x1D8) || StateIs(fsm, currentState, 0x1EC);
+    auto busyState=[&](std::size_t offset) {return StateIs(fsm,currentState,offset)||StateIs(fsm,pendingState,offset);};
+    value.specialBusy = busyState(0x098)||busyState(0x0AC)||busyState(0x0C0)||busyState(0x0D4)||busyState(0x1D8)||busyState(0x1EC);
     // GetCurrentStateId 0x0068CFC0 identifies the melee chain/tracking states.
     value.meleeBusy =
-        StateIs(fsm, currentState, 0x05C) || StateIs(fsm, currentState, 0x070) ||
-        StateIs(fsm, currentState, 0x084) || StateIs(fsm, currentState, 0x098) ||
-        StateIs(fsm, currentState, 0x0E8) || StateIs(fsm, currentState, 0x0FC) ||
-        StateIs(fsm, currentState, 0x1D8) || StateIs(fsm, currentState, 0x1EC);
+        busyState(0x048)||busyState(0x05C)||busyState(0x070)||busyState(0x084)||busyState(0x098)||
+        busyState(0x0E8)||busyState(0x0FC)||busyState(0x1D8)||busyState(0x1EC);
 
     if (!ReadBoostFraction(unit, value.boostFraction)) return false;
 

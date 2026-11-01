@@ -10,6 +10,9 @@ function SDGO_BattleAI_Observe() return observation end
 function SDGO_BattleAI_Native() calls.native=calls.native+1; return 123 end
 function SDGO_BattleAI_AimTarget(id) calls.aim=id end
 function SDGO_BattleAI_Cadence(ms) calls.cadence=ms end
+function SDGO_BattleAI_MeleeGate(value) calls.meleeGate=value end
+function SDGO_BattleAI_Chance(percent) calls.rolls=(calls.rolls or 0)+1;return calls.roll or 0 end
+function SDGO_BattleAI_Cover(id,x,y,z) calls.coverQueries=(calls.coverQueries or 0)+1;calls.coverX=x;return calls.coverCandidate end
 function SDGO_BattleAI_CancelRoute() calls.cancelled=(calls.cancelled or 0)+1 end
 function SDGO_BattleAI_Route(id,force,x,y,z)
   calls.routes=calls.routes+1; calls.routeId=id;calls.force=force
@@ -45,6 +48,7 @@ local function Reset(config)
     weapons={Weapon(0,'melee',250,2000,600),Weapon(1,'hitscan',1800,700,200)},
     targets={Target(1,1000,800),Target(2,200,1000)}}
   SDGO_BattleAI_TestConfig=config or {}
+  if SDGO_BattleAI_TestConfig.Difficulty==nil then SDGO_BattleAI_TestConfig.Difficulty=2 end
   dofile('mods/battle_ai/universal_ai.lua')
 end
 local function Tick(time)
@@ -132,4 +136,115 @@ Check(calls.switch==0,'form/bank change immediately reevaluates weapon data desp
 Reset();observation.targets={Target(1,1000,3000)};observation.moving=1;Tick(0)
 for t=100,1500,100 do observation.pos={x=0,y=t/10,z=0};Tick(t) end
 Check(calls.moves>0 and (calls.cancelled or 0)>0,'hopping against a wall triggers recovery and releases the previous navigation owner')
+Reset({ReactionMs=0});observation.targets={Target(2,100,100)};observation.selectedSlot=0;observation.meleePressure=1;Tick(0)
+Check(calls.switch==1 and calls.meleeGate==1 and calls.fire==false,'melee pressure selects ranged and suppresses a sword counter')
+Reset({ReactionMs=0});observation.targets={Target(2,100,100)};observation.meleePressure=1;observation.weapons[2].ammoReady=0;Tick(0)
+Check(calls.fire==false and calls.switch==nil,'empty ranged loadout under melee pressure does not fall back to a forbidden sword counter')
+Reset({ReactionMs=0});local t=observation.targets[2]
+t.pos={x=1000,y=100,z=0};t.groundPos={x=1000,y=0,z=0};t.forward={x=1,y=0,z=0};t.hurt=1
+observation.allies={{id=40,meleeSwinging=1,contactTarget=2,contactAt=0}};Tick(0)
+Check(calls.routeX==650 and calls.fire==true,'ally delivered melee contact plus active victim hurt requests a rear route while continuing gunfire')
+Reset({ReactionMs=0});t=observation.targets[2]
+t.pos={x=1000,y=100,z=0};t.groundPos={x=1000,y=0,z=0};t.forward={x=1,y=0,z=0}
+observation.allies={{id=40,meleeSwinging=1,contactTarget=2,contactAt=0}};Tick(0)
+Check(calls.routes==0,'ally sword intent without an actively hurt victim does not claim a catch')
+local function SetupWeave()
+  Reset({ReactionMs=0,WeaponHoldMs=0});calls.roll=1
+  observation.targets={Target(2,100,100)};local victim=observation.targets[1]
+  victim.hurt=1;victim.groundPos={x=100,y=0,z=0}
+  observation.allies={{id=40,pos={x=500,y=0,z=0},rangedTarget=2,rangedAt=0}}
+  observation.selectedSlot=0;observation.meleeBusy=1;observation.meleeSwinging=1
+  observation.comboKnown=1;observation.comboIndex=1;observation.comboMax=3
+  observation.contactTarget=2;observation.contactAt=0;observation.shots=0
+  observation.contactCombo=1;observation.contactAction=77;observation.actionHandle=77
+end
+SetupWeave();Tick(0)
+Check(calls.meleeGate==1 and calls.fire==false and SDGO_BattleAI_Universal.states[20].weave.stage=='release','supported caught penultimate melee releases continuation before the final knockdown')
+observation.meleeBusy=0;observation.meleeSwinging=0;Tick(100)
+Check(calls.switch==1 and calls.direction==UNIT_MOVE_DIR_BACKWARD,'weave waits for native melee exit then disengages and requests a gun')
+observation.selectedSlot=1;Tick(200)
+Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].weave.stage=='shoot','weave fires after native weapon commit')
+Tick(300)
+Check(SDGO_BattleAI_Universal.states[20].weave.stage=='shoot','elapsed time without a primary fire receipt cannot complete the shooting phase')
+observation.shots=1;Tick(400)
+Check(calls.switch==0 and SDGO_BattleAI_Universal.states[20].weave.stage=='return','one actual configured primary fire resumes melee')
+observation.selectedSlot=0;observation.meleeBusy=1;observation.meleeSwinging=1;observation.comboIndex=0;Tick(500)
+observation.comboIndex=1;Tick(600)
+Check(calls.meleeGate==0 and SDGO_BattleAI_Universal.states[20].weave.stage=='finish','second melee chain keeps its final strike instead of weaving forever')
+SetupWeave();observation.allies[1].rangedTarget=999;Tick(0)
+Check(SDGO_BattleAI_Universal.states[20].weave==nil,'unrelated allied fire cannot trigger supported melee weaving')
+SetupWeave();observation.comboMax=1;observation.comboIndex=0;Tick(0)
+Check(SDGO_BattleAI_Universal.states[20].weave==nil,'single-hit weapon has no penultimate segment to suppress')
+SetupWeave();observation.contactTarget=0;Tick(0)
+Check(SDGO_BattleAI_Universal.states[20].weave==nil,'a whiff without delivered contact never enters the catch weave')
+SetupWeave();observation.contactCombo=0;Tick(0)
+Check(SDGO_BattleAI_Universal.states[20].weave==nil,'a still-fresh previous slash cannot masquerade as penultimate contact')
+SetupWeave();observation.contactAction=76;Tick(0)
+Check(SDGO_BattleAI_Universal.states[20].weave==nil,'contact from another native action handle cannot release the current swing')
+SetupWeave();calls.roll=0;Tick(0);observation.meleeBusy=0;observation.meleeSwinging=0;Tick(100)
+observation.selectedSlot=1;observation.shots=1;Tick(200)
+Check(SDGO_BattleAI_Universal.states[20].weave.stage=='shoot','two-shot weave requires the second distinct native primary fire')
+observation.shots=2;Tick(300)
+Check(SDGO_BattleAI_Universal.states[20].weave.stage=='return','second primary fire completes the two-shot weave')
+Reset({ReactionMs=0});calls.roll=1;t=observation.targets[2];t.pos={x=1000,y=100,z=0}
+calls.coverCandidate={valid=1,hide={x=0,y=0,z=0},peek={x=70,y=0,z=0}};observation.shots=0;Tick(0)
+Check(calls.routeX==70 and calls.fire==true,'selected cover opportunity moves to the sampled smallest fireable edge')
+observation.pos={x=70,y=0,z=0};Tick(100)
+Check(SDGO_BattleAI_Universal.states[20].cover.stage=='peek','cover does not retract merely because attack intent was requested')
+observation.shots=1;observation.rangedBusy=1;observation.moveCancelOpen=0;observation.weapons[2].movingShot=0;Tick(200)
+Check(calls.routeX==70 and calls.fire==false,'stationary shot waits for native movement-cancel window before retracting')
+observation.moveCancelOpen=1;Tick(300)
+Check(calls.routeX==0 and SDGO_BattleAI_Universal.states[20].cover.stage=='tuck','actual primary shot and legal cancel window retract to the covered anchor')
+calls.routeResult=0;SDGO_BattleAI_Universal.states[20].cover.routeAt=400;Tick(400)
+Check(SDGO_BattleAI_Universal.states[20].cover.routeAt==600,'failed cover retraction retains a bounded retry instead of silently abandoning its route')
+calls.routeResult=1;Tick(600)
+Check(SDGO_BattleAI_Universal.states[20].cover.routeAt==nil,'cover retries a transiently unavailable return route')
+Reset({ReactionMs=0});t=observation.targets[2];t.pos={x=1000,y=100,z=0};calls.roll=0;Tick(0)
+Tick(100)
+Check((calls.coverQueries or 0)==0,'rejected cover opportunity performs no expensive geometry query or per-frame reroll')
+Check(calls.rolls==1,'cover selection probability is rolled once per opportunity cooldown')
+Reset({ReactionMs=0});observation.targets={Target(2,100,1000)};t=observation.targets[1]
+t.pos={x=1000,y=100,z=0};t.groundPos={x=1000,y=0,z=0};Tick(0)
+t.visible=0;t.pos={x=3000,y=100,z=0};calls.roll=1
+calls.coverCandidate={valid=1,hide={x=0,y=0,z=0},peek={x=70,y=0,z=0}};Tick(1700)
+Check(calls.routeX==70 and calls.coverX==1000 and calls.fire==false,'occluded cover search uses frozen last-visible position and waits for a fresh firing ray')
+Reset({ReactionMs=0});t=observation.targets[2];t.meleeTracking=1;observation.weapons[2].movingShot=0;observation.shots=0;Tick(0)
+observation.shots=1;observation.rangedBusy=1;observation.moveCancelOpen=0;Tick(100)
+Check(calls.moves==0,'orbwalk cannot cancel an unopened native shooting animation')
+observation.moveCancelOpen=1;Tick(200)
+Check(calls.moves==1 and calls.fire==false,'opened native animation gate permits one short step after a real shot')
+observation.rangedBusy=0;observation.weapons[2].ready=0;Tick(400)
+Check(calls.fire==false,'orbwalking does not bypass the true weapon cooldown')
+observation.weapons[2].ready=1;Tick(500)
+Check(calls.fire==true,'orbwalking resumes firing when the weapon is natively ready')
+Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=0
+SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==nil,'Medium cannot use the NPC unconditional SP override without the player resource gate')
+observation.spReady=1;observation.hurt=1;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==nil,'Medium cannot launch a special while the player hurt gate forbids it')
+observation.hurt=0;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==3 and calls.fire==false,'Medium requests the native special slot after legal hurt recovery')
+now=100;observation.selectedSlot=3;observation.specialSelected=1;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.fire==true,'confirmed native special selection emits attack intent through the ordinary action path')
+now=200;observation.spReady=0;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.fire==false,'SP debit stops further special request pulses while native authorization is pending')
+observation.specialBusy=1;SDGO_BattleAI_ProfileUpdate(npc);observation.specialBusy=0;now=1000;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==1,'completed native special returns to the prior ordinary weapon')
+Check(SDGO_BattleAI_Universal.profiles[20].special.returning,'special restore retains ownership until native weapon selection is acknowledged')
+now=1100;observation.selectedSlot=0;observation.specialSelected=0;SDGO_BattleAI_ProfileUpdate(npc)
+Check(SDGO_BattleAI_Universal.profiles[20].special~=nil,'an ordinary but different slot does not falsely acknowledge restoration')
+observation.selectedSlot=1;now=1200;SDGO_BattleAI_ProfileUpdate(npc)
+Check(SDGO_BattleAI_Universal.profiles[20].special==nil,'confirmed previous ordinary slot releases the special lease')
+Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+SDGO_BattleAI_ProfileUpdate(npc);observation.selectedSlot=3;observation.specialSelected=1;observation.targets[2].hp=0
+now=100;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==1 and calls.fire==false,'special target death releases intent and returns to the prior ordinary weapon')
+Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+observation.hurt=1;observation.specialControlAllowed=1;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==3,'a native style-2-permitted hurt window may request a special without overriding forbidden states')
+observation.selectedSlot=3;observation.specialSelected=1;observation.specialControlAllowed=0;now=100;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.fire==false,'a queued special loses attack intent immediately when a forbidden control state arrives')
+Reset({Difficulty=0});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==nil and calls.fire==nil,'Easy never adds special attack requests')
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

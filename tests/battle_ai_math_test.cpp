@@ -1,10 +1,29 @@
 #include <cstdio>
 #include <cmath>
 #include "../mods/battle_ai/combat_math.h"
+#include "../mods/battle_ai/defence_math.h"
 using namespace battle_ai;
 int main() {
     int failures=0;
     auto check=[&](bool ok,const char* name) { std::printf("%s %s\n",ok?"PASS":"FAIL",name); if(!ok) ++failures; };
+    DefenceThreat rear[]={{{0,0,-1000},1}};
+    auto front=DefensiveFacing({},{0,0,1},rear,1);
+    check(front.valid&&front.direction.z<-0.99,"a rear threat selects a front-facing response");
+    DefenceThreat crossfire[]={{{0,0,1000},1},{{0,0,-1000},1}};
+    auto sides=DefensiveFacing({},{0,0,1},crossfire,2);
+    check(sides.valid&&std::abs(sides.direction.x)>0.99&&sides.rearRisk<1.01,
+          "opposing attackers choose side-on defence instead of a zero-vector or full rear exposure");
+    auto reposition=DefensivePosition({},{0,0,1},crossfire,2);
+    check(reposition.relocate&&reposition.facing.rearRisk<sides.rearRisk-0.08,
+          "crossfire proposes a finite short relocation that reduces worst rear exposure");
+    check(std::abs(TurnStepDegrees({0,0,1},{0,0,-1},900,16))<=14.41&&
+          std::abs(TurnStepDegrees({0,0,1},{0,0,-1},900,5000))<=15,
+          "fast defensive turn remains visibly incremental even after a long stalled frame");
+    Vec3 turning={0,0,1};double rotation=0;
+    for(int i=0;i<15;++i) {float step=TurnStepDegrees(turning,{0,0,-1},900,16);rotation+=step*kPi/180;turning=Heading(rotation);}
+    check(turning.z<-0.99,"incremental high-skill turn reaches a rear threat quickly without one-frame teleportation");
+    check(!DefensiveFacing({},{0,0,1},nullptr,0).valid&&TurnStepDegrees({},{0,0,1},900,16)==0,
+          "missing threats and invalid facing never invent a defensive turn");
     auto a=Aim({0,0,0},{1000,0,0},{0,0,100},500,5);
     check(a.intercept && std::abs(a.seconds-2.041241452)<1e-6 && std::abs(a.direction.z-0.2)<1e-5,
           "perpendicular target gets analytic intercept lead");
