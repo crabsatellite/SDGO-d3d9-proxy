@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "storage_claim",
+  "title": "保管库一键领取",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "presentation": "configurable",
+  "description": "在保管库页签右侧批量领取当前页签的奖品，自动处理分页。",
+  "mechanism": "游戏页内确认一次，逐笔预检、领取并等待原生回执，再读取新列表。普通物品与礼物使用各自原生协议；需要手动选择的礼包暂停，不代选。失败、离开页面或断线时停止，不自动重发领取请求。无需 Manager 常驻、额外皮肤或服务器配置。",
+  "settings": [
+    {"id":"requestintervalms","key":"RequestIntervalMs","label":"请求间隔（毫秒）","type":"integer","default":200,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":100,"maximum":10000},
+    {"id":"replytimeoutms","key":"ReplyTimeoutMs","label":"回应超时（毫秒）","type":"integer","default":10000,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1000,"maximum":60000},
+    {"id":"maxclaims","key":"MaxClaims","label":"单批领取上限","type":"integer","default":5000,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1,"maximum":100000}
+  ]
+}

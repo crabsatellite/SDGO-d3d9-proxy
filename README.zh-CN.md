@@ -44,6 +44,7 @@ Beta、Experimental 表示发布阶段。
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 副官内容管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 扭蛋内容管理 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 定时奖励活动 | [使用说明](docs/daily-rewards.zh-CN.md) |
+| 保管库一键领取（Beta） <!-- catalog: `storage_claim` --> | 自动分页领取奖品 | [使用说明](docs/storage-claim.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
 
