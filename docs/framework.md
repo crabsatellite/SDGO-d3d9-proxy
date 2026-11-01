@@ -99,7 +99,7 @@ expect=55 8B EC 6A FF 68 07 75 E0 00 64 A1 00 00 00 00
 
 | key | meaning |
 |---|---|
-| `kind` | `code` (function start; `HookCode` and plain calls), `site` (an instruction inside a function; only verified, for checks), `slot` (a pointer in memory such as a vtable entry; `HookSlot`), `data` (an address of a global; not verified) |
+| `kind` | `code` (function start; `HookCode` and plain calls), `site` (verified instruction boundary; checks or `HookSite`), `slot` (a pointer in memory such as a vtable entry; `HookSlot`), `data` (an address of a global; not verified) |
 | `rva` | address minus the preferred image base (0x00400000 for both hosts) |
 | `expect` | at least 5 bytes expected at `rva`, hex, `??` for wildcards; required for `code` and `site` |
 | `target_rva` | `slot` only: the rva the pointer must currently point to |
@@ -196,6 +196,15 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension in core 1.1.4: inline detour at a verified `kind=site` boundary; the Mod owns full native-context preservation |
+
+An instruction site has no function-call ABI. Before using `HookSite`, check
+`api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite)` and a non-null pointer.
+Site detours preserve live registers, flags, stack and FP/SIMD state, then jump to
+the supplied trampoline. Site hooks use the same queued activation, ownership and
+failed-load rollback as `HookCode`. The daily reward Mod also pins separate argument
+layout signatures before touching the captured frame. Existing API 1 fields keep
+their offsets and other Mods retain their configuration and hooks.
 
 The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
 When present, its `[settings]` section is authoritative; otherwise they use the

@@ -190,6 +190,8 @@ sdgo_strict(daily_rewards_runtime_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_test(NAME daily_rewards_policy COMMAND daily_rewards_policy_test)
+    set_tests_properties(daily_rewards_policy PROPERTIES TIMEOUT 30)
     add_library(catalog_gate_probe SHARED tests/catalog_gate_probe.cpp)
     target_link_libraries(catalog_gate_probe PRIVATE sdgo_api)
     sdgo_strict(catalog_gate_probe)
@@ -206,6 +208,10 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME daily_rewards_runtime COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/daily_rewards_runtime_test.ps1"
+            -Config "$<CONFIG>")
+        set_tests_properties(daily_rewards_runtime PROPERTIES TIMEOUT 120)
         add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")

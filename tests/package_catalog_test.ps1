@@ -52,7 +52,23 @@ try {
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','net_probe','net_route','agent_udp_pool'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','net_probe','net_route','agent_udp_pool','daily_rewards'))
+    $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
+    Check-Package $dailyZip ($baseMods + @('daily_rewards'))
+    $dailyFolder = Join-Path $work 'daily-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($dailyZip, $dailyFolder)
+    $dailyServer = Join-Path $work 'daily-server'
+    New-FakeExe (Join-Path $dailyServer 'BattleServer.exe') 0x548A891D 0x0046C000
+    $dailyInstaller = Join-Path $dailyFolder 'install_server.ps1'
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Daily reward installer failed: $output" }
+    $dailyConfig = Join-Path $dailyServer 'sdgo\mods\daily_rewards\config.ini'
+    $ownerSchedule = "[settings]`r`nStartTime=20:30`r`nEndTime=01:15`r`nTrace=0"
+    [IO.File]::WriteAllText($dailyConfig, $ownerSchedule)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllText($dailyConfig) -cne $ownerSchedule) {
+        throw "Daily reward update lost the owner's time-window configuration: $output"
+    }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
