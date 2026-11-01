@@ -307,7 +307,7 @@ python tools/collection_capsule.py disable `
 
 - Python/offline 测试覆盖形态解析、动态奖池、共享 registry 保留、玩家包、安装和卸载回执；
 - 隔离 SQL 测试覆盖旧账号 Coverage、完整历史导入、并发不重复、动态新机体族、事务回滚和
-  失败补偿模型；
+  失败补偿模型，并使用与 `tempdb` 不同的数据库排序规则验证安装和导入；
 - 原生 fixture 已通过实际 `core.dll`、`collection_capsule.dll` 和 OLE DB 会话验证 ABI、
   独立会话、提交后发布结果以及错误结果回滚。
 

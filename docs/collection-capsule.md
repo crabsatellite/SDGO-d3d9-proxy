@@ -363,6 +363,7 @@ Automated evidence has three distinct scopes:
   the shared registry, the player package, and receipt-based install/uninstall;
 - isolated SQL tests cover existing-account coverage, complete-history import,
   concurrent non-repetition, dynamic imported families, transaction rollback,
+  installation and import with database collations different from `tempdb`,
   and a failure-compensation model;
 - a native fixture has exercised the actual `core.dll`, `collection_capsule.dll`,
   and OLE DB sessions for the ABI, separate sessions, publish-after-commit, and
