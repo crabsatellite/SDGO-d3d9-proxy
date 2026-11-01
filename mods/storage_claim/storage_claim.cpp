@@ -7,10 +7,36 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/storage_claim_model.h"
 #include "sdgo/inventory_app_state.h"
+#include "sdgo/game_test_page_observer.h"
 #include "native_ui.h"
 
 namespace {
 using namespace sdgo::storage;
+static_assert(static_cast<int>(Tab::Items)==SDGO_STORAGE_GAME_TEST_TAB_ITEMS &&
+              static_cast<int>(Tab::Gifts)==SDGO_STORAGE_GAME_TEST_TAB_GIFTS,
+              "storage observer tab ABI");
+static_assert(static_cast<int>(Phase::Idle)==SDGO_STORAGE_GAME_TEST_PHASE_IDLE &&
+              static_cast<int>(Phase::NeedList)==SDGO_STORAGE_GAME_TEST_PHASE_NEED_LIST &&
+              static_cast<int>(Phase::List)==SDGO_STORAGE_GAME_TEST_PHASE_LIST &&
+              static_cast<int>(Phase::NeedCheck)==SDGO_STORAGE_GAME_TEST_PHASE_NEED_CHECK &&
+              static_cast<int>(Phase::Check)==SDGO_STORAGE_GAME_TEST_PHASE_CHECK &&
+              static_cast<int>(Phase::NeedClaim)==SDGO_STORAGE_GAME_TEST_PHASE_NEED_CLAIM &&
+              static_cast<int>(Phase::Claim)==SDGO_STORAGE_GAME_TEST_PHASE_CLAIM &&
+              static_cast<int>(Phase::Complete)==SDGO_STORAGE_GAME_TEST_PHASE_COMPLETE &&
+              static_cast<int>(Phase::Stopped)==SDGO_STORAGE_GAME_TEST_PHASE_STOPPED &&
+              static_cast<int>(Phase::Unknown)==SDGO_STORAGE_GAME_TEST_PHASE_UNKNOWN,
+              "storage observer phase ABI");
+static_assert(static_cast<int>(Reason::None)==SDGO_STORAGE_GAME_TEST_REASON_NONE &&
+              static_cast<int>(Reason::Cancelled)==SDGO_STORAGE_GAME_TEST_REASON_CANCELLED &&
+              static_cast<int>(Reason::Rejected)==SDGO_STORAGE_GAME_TEST_REASON_REJECTED &&
+              static_cast<int>(Reason::Selection)==SDGO_STORAGE_GAME_TEST_REASON_SELECTION &&
+              static_cast<int>(Reason::Changed)==SDGO_STORAGE_GAME_TEST_REASON_CHANGED &&
+              static_cast<int>(Reason::Timeout)==SDGO_STORAGE_GAME_TEST_REASON_TIMEOUT &&
+              static_cast<int>(Reason::SendFailed)==SDGO_STORAGE_GAME_TEST_REASON_SEND_FAILED &&
+              static_cast<int>(Reason::Limit)==SDGO_STORAGE_GAME_TEST_REASON_LIMIT &&
+              static_cast<int>(Reason::Disconnected)==SDGO_STORAGE_GAME_TEST_REASON_DISCONNECTED &&
+              static_cast<int>(Reason::PageLimit)==SDGO_STORAGE_GAME_TEST_REASON_PAGE_LIMIT,
+              "storage observer reason ABI");
 using NativeInit=void(__thiscall*)(void*);
 using NativeUI=uint32_t(__thiscall*)(void*,void*,uint32_t,uintptr_t,void*);
 using NativePacket=uint32_t(__thiscall*)(void*,uintptr_t,uintptr_t,uintptr_t,uint32_t,const uint8_t*);
@@ -25,11 +51,37 @@ UINT_PTR g_timer=0;DWORD g_thread=0;bool g_armed=false,g_pumping=false;
 bool g_timerObserved=false;
 Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_nextSend=0,g_observedSession=0;
 uint32_t g_interval=200,g_timeout=10000,g_limit=5000;uint16_t g_error=0;
+uint32_t g_generation=0;
 struct RetiredCheck {Tab tab;Key key;};
 std::vector<RetiredCheck> g_retiredChecks;
+struct TestObserverState {
+    uint64_t runHash=0;
+    uint32_t actionSequence=0;
+    uint32_t replySequence=0;
+    uint32_t preflightReplySequence=0;
+    uint32_t lastAction=0;
+};
+TestObserverState g_testObserver;
 
 template<class T>T Read(const void* p,size_t offset=0){T v;memcpy(&v,static_cast<const uint8_t*>(p)+offset,sizeof(v));return v;}
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
+uint64_t CurrentClientRunHash() {
+    char run[64]={},role[16]={};
+    const DWORD runLength=GetEnvironmentVariableA("SDGO_GAME_TEST_RUN",run,sizeof(run));
+    const DWORD roleLength=GetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",role,sizeof(role));
+    if(!runLength || runLength>=sizeof(run) || !roleLength || roleLength>=sizeof(role))return 0;
+    return sdgo::game_test_page_observer::ClientRunHash(run,runLength,role,roleLength);
+}
+uint64_t SyncTestObserver() {
+    const auto runHash=CurrentClientRunHash();
+    if(runHash!=g_testObserver.runHash) {
+        g_testObserver={};
+        g_testObserver.runHash=runHash;
+    }
+    return runHash;
+}
+void RecordTestReply(){if(SyncTestObserver())++g_testObserver.replySequence;}
+void RecordTestPreflightReply(){if(SyncTestObserver())++g_testObserver.preflightReplySequence;}
 uint64_t SessionUnsafe() {
     auto* session=g_session();if(!session || Read<int>(session,0x14)<0)return 0;
     return (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(session))<<32)|Read<uint32_t>(session,0x14);
@@ -138,6 +190,7 @@ void __fastcall Init(void* self,void*) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_timerObserved=false;
     if(g_batch.Busy())g_batch.Stop(Reason::Changed);g_armed=false;g_ui.Detach();
     g_init(self);g_service=self;g_thread=GetCurrentThreadId();
+    ++g_generation;
     try {
         if(Attach(self))g_timer=SetTimer(nullptr,0,75,&Timer);
         if(!g_timer){g_ui.Unpublish();g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"storage UI unavailable; native controls preserved");}
@@ -202,10 +255,10 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
         const auto tab=op==0x4E7?Tab::Items:Tab::Gifts;
         const auto key=ReplyKey(tab,data,{});
         const auto retired=std::find_if(g_retiredChecks.begin(),g_retiredChecks.end(),[&](const RetiredCheck& p){return p.tab==tab && p.key==key;});
-        if(retired!=g_retiredChecks.end()){g_retiredChecks.erase(retired);return 0;}
+        if(retired!=g_retiredChecks.end()){g_retiredChecks.erase(retired);RecordTestPreflightReply();return 0;}
         if(g_batch.Waiting(Operation::Check) && g_batch.tab()==tab && key==g_batch.pending() &&
            (self!=g_owner || Session()!=g_batch.session())) {
-            g_batch.Disconnect();g_batch.CheckReply(key,true);return 0;
+            g_batch.Disconnect();g_batch.CheckReply(key,true);RecordTestPreflightReply();return 0;
         }
     }
     if(op==0x5D9 || op==0x814) {
@@ -216,6 +269,7 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
             // Error replies carry no stable ID. Stop an overlapping new
             // preflight rather than guess which session the error belonged to.
             if(g_batch.Waiting(Operation::Check) && g_batch.tab()==tab)g_batch.Stop(Reason::Changed);
+            RecordTestPreflightReply();
             return 0;
         }
     }
@@ -228,12 +282,13 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
                 const auto key=ReplyKey(tab,data,g_batch.pending());
                 const bool choice=tab==Tab::Gifts && (Read<uint32_t>(data,0x32)!=0);
                 g_batch.CheckReply(key,true,choice);
+                RecordTestPreflightReply();
                 // Our preflight is deliberately not entered into native request
                 // tracking. Consume it here so cancellation/selection can never
                 // fall through to the game's automatic claim sender.
                 return 0;
             }
-            if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();return 0;}
+            if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();RecordTestPreflightReply();return 0;}
         }
     }
     const bool owned=OwnsReply(self);const auto tab=g_batch.tab();
@@ -241,13 +296,16 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
     const bool claim=owned && g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x7E8:0xA23);
     const auto result=g_packet(self,a,b,c,command,data); // native grants, inventory/UI refresh and ownership checks
     if(list) {
-        if(CurrentTab()!=tab || Read<uint32_t>(self,0x160)!=g_batch.page()){g_batch.Reject(Reason::Changed);return result;}
-        uint32_t total=0;const auto entries=Snapshot(self,tab,total);g_batch.ListReply(tab,total,entries);
-    }else if(claim)g_batch.ClaimReply(ReplyKey(tab,data,g_batch.pending(),tab==Tab::Gifts),true);
+        if(CurrentTab()!=tab || Read<uint32_t>(self,0x160)!=g_batch.page()){g_batch.Reject(Reason::Changed);RecordTestReply();return result;}
+        uint32_t total=0;const auto entries=Snapshot(self,tab,total);
+        if(g_batch.ListReply(tab,total,entries))RecordTestReply();
+    }else if(claim) {
+        if(g_batch.ClaimReply(ReplyKey(tab,data,g_batch.pending(),tab==Tab::Gifts),true))RecordTestReply();
+    }
     else if(owned) {
         const bool error=(g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x8AF:0x8B0)) ||
                          (g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x8DA:0x53E));
-        if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();}
+        if(error){g_error=Read<uint16_t>(data,6);g_batch.Reject();RecordTestReply();}
     }
     return result;
 }
@@ -257,8 +315,86 @@ uint32_t PacketGuard(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t com
 uint32_t __fastcall Receive(void* self,void*,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t command,const uint8_t* data) {
     __try{return PacketGuard(self,a,b,c,command,data);}__except(EXCEPTION_EXECUTE_HANDLER){g_batch.Disconnect();return 0;}
 }
+uint32_t PendingOperation() {
+    if(g_batch.Waiting(Operation::List))return 1;
+    if(g_batch.Waiting(Operation::Check))return 2;
+    if(g_batch.Waiting(Operation::Claim))return 3;
+    return 0;
+}
+void ObserverBasicUnsafe(SdgoStorageGameTestSnapshotV1* output) {
+    output->session=SessionUnsafe();
+    if(!g_service || !g_ui.Owns(g_service))return;
+    output->loaded=Read<uint8_t>(g_service,0x190)?1u:0u;
+    output->visible=AvailableUnsafe()?1u:0u;
+    output->current_tab=static_cast<uint32_t>(CurrentTab());
+    output->page=Read<uint32_t>(g_service,0x160);
+    output->total=Read<uint32_t>(g_service,0x168);
+}
+bool ObserverBasic(SdgoStorageGameTestSnapshotV1* output) {
+    __try{ObserverBasicUnsafe(output);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool ObserverActionReady(void*& button) {
+    if(!g_thread || GetCurrentThreadId()!=g_thread || !g_service || !g_ui.Owns(g_service) || !Available())return false;
+    button=g_ui.Button();
+    if(!button || !g_ui.Click(button))return false;
+    if(g_batch.Busy())return true;
+    if(g_batch.Outstanding())return false;
+    return Session()!=0 && Read<uint8_t>(g_service,0x190)!=0 && !g_busy(g_service);
+}
 template<class T>bool Bind(T& fn,const char* name){fn=reinterpret_cast<T>(g_api->Symbol(g_mod,name));return fn!=nullptr;}
 }
+
+static int StorageGameTestGetSnapshot(
+    SdgoStorageGameTestSnapshotV1* output) {
+    if(!output || output->size<sizeof(SdgoStorageGameTestSnapshotV1) ||
+       output->version!=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION)return 0;
+    SdgoStorageGameTestSnapshotV1 result{};
+    result.size=sizeof(result);result.version=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;
+    result.run_hash=SyncTestObserver();result.process_id=GetCurrentProcessId();result.ui_thread_id=g_thread;
+    result.generation=g_generation;result.action_sequence=g_testObserver.actionSequence;
+    result.reply_sequence=g_testObserver.replySequence;
+    result.preflight_reply_sequence=g_testObserver.preflightReplySequence;
+    result.last_action=g_testObserver.lastAction;
+    result.batch_phase=static_cast<uint32_t>(g_batch.phase());
+    result.batch_reason=static_cast<uint32_t>(g_batch.reason());
+    result.completed=g_batch.completed();result.busy=g_batch.Busy()?1u:0u;
+    result.armed=g_armed?1u:0u;result.outstanding=g_batch.Outstanding()?1u:0u;
+    result.timer_observed=g_timerObserved?1u:0u;result.pending_operation=PendingOperation();
+    const auto pending=g_batch.pending();result.pending_id=pending.id;result.pending_stamp=pending.stamp;
+    ObserverBasic(&result);
+    if(result.visible && result.loaded && g_thread && GetCurrentThreadId()==g_thread) {
+        try {
+            uint32_t total=0;
+            const auto entries=Snapshot(g_service,static_cast<Tab>(result.current_tab),total);
+            result.total=total;result.page_entry_count=static_cast<uint32_t>(entries.size());
+        }catch(const std::exception&){}
+    }
+    memcpy(output,&result,sizeof(result));
+    return 1;
+}
+
+static int StorageGameTestAction(
+    uint64_t runHash,uint32_t action) {
+    if(action!=SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL || !runHash || runHash!=SyncTestObserver())return 0;
+    void* button=nullptr;
+    if(!ObserverActionReady(button))return 0;
+    UIEvent(nullptr,nullptr,g_service,0x101,0,button);
+    ++g_testObserver.actionSequence;g_testObserver.lastAction=action;
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoStorageGameTestGetSnapshotV1(
+    SdgoStorageGameTestSnapshotV1* output) {
+    __try{return StorageGameTestGetSnapshot(output);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoStorageGameTestActionV1(
+    uint64_t runHash,uint32_t action) {
+    __try{return StorageGameTestAction(runHash,action);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
     const int interval=api->SettingInt(mod,"RequestIntervalMs",200),timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000),limit=api->SettingInt(mod,"MaxClaims",5000);

@@ -44,6 +44,7 @@ public:
     void State(bool busy,bool confirm);
     void Page(int delta);
     Action Click(void* control) const;
+    void* ControlFor(Action action) const;
     void BeforeNativeRefresh();
     void AfterNativeRefresh();
 private:

@@ -197,8 +197,14 @@ void PageUi::Page(int delta) {
     Render();
 }
 Action PageUi::Click(void* pointer) const {
+    if(!IdentityMatches(service_,serviceVtable_,dialog_,dialogVtable_))return Action::None;
     for(const auto& c:controls_)if(c.pointer==pointer && Read<uint8_t>(pointer,0x162) && Read<uint8_t>(pointer,0x167))return c.action==Action::Sort && busy_?Action::Cancel:c.action;
     return Action::None;
+}
+void* PageUi::ControlFor(Action action) const {
+    if(action==Action::None)return nullptr;
+    for(const auto& control:controls_)if(control.action==action)return control.pointer;
+    return nullptr;
 }
 void PageUi::Render() {
     if(!Connected())return;

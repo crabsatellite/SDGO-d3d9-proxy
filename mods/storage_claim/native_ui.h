@@ -26,6 +26,7 @@ public:
     bool Owns(void* service)const{return service_==service && published_;}
     bool Click(void* pointer)const;
     bool Visible()const;
+    void* Button()const{return button_;}
     void Display(const std::wstring& caption,const std::wstring& status,bool enabled=true);
 private:
     Bindings bindings_;void* service_=nullptr;void* dialog_=nullptr;void* identity_=nullptr;

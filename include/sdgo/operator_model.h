@@ -39,7 +39,10 @@ inline bool PatchOperator(uint8_t* row, size_t size, uint32_t id, const std::wst
 }
 inline bool PatchCategory(uint8_t* row, size_t size, uint32_t category, uint32_t op, const std::wstring& name)
 {
-    if (!row || size != kCategorySize || category != 1219000 + op - 60000 || name.size() > 48) return false;
+    // Apply calls this only for a missing category declared by the same
+    // validated operator entry. Existing native rows are never rewritten.
+    if (!row || size != kCategorySize || category < 1200000 || category >= 1300000 ||
+        op < 60001 || op > 60999 || name.empty() || name.size() > 48) return false;
     WriteId(row, category);
     if (!Text(row + 5, 50, name)) return false;
     WriteId(row + 105, op);

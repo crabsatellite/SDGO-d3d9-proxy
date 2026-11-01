@@ -460,12 +460,48 @@ rva=state
         game_test.atomic_write(run_dir/'run.json',json.dumps(meta))
         with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
 
+    def test_pages_plan_binds_its_own_cases_and_cannot_claim_battle_acceptance(self):
+        run_dir=self.prepare('pages-only',pages_only=True)
+        meta=self.metadata(run_dir)
+        expected=game_test.FLOW_CASES[:3]+('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai')
+        self.assertEqual(meta['suite'],'native-pages')
+        self.assertEqual(game_test.required_flow_cases('1',pages_only=True),expected)
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')['run']['required_cases'],','.join(expected))
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'],meta['plan'])
+        meta['plan']['pages_only']=False
+        (run_dir/'run.json').write_text(json.dumps(meta),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.required_flow_cases('1',bootstrap_only=True,pages_only=True)
+
+    def test_false_enable_does_not_hide_a_nonzero_native_postfx_level(self):
+        run_dir=self.prepare('nonzero-postfx-level')
+        path=run_dir/'client/config.xml'
+        tree=ET.parse(path)
+        tree.getroot().find('Video/PostEffect/Bloom').set('BloomLevel','1')
+        tree.write(path)
+        with self.assertRaises(game_test.GameTestError):game_test.validate_muted_audio(run_dir/'client')
+
     def test_prepare_excludes_the_normal_updaters_private_git_cache(self):
         cache=self.template/'.sdgo-updater/repository.git/objects'
         cache.mkdir(parents=True);(cache/'private-cache').write_bytes(b'preserve-source')
         run_dir=self.prepare('without-updater-cache')
         self.assertFalse((run_dir/'client/.sdgo-updater').exists())
         self.assertEqual((cache/'private-cache').read_bytes(),b'preserve-source')
+
+    def test_only_passed_owned_archives_can_be_shared_readonly_without_linking_player_files(self):
+        (self.template/'GPackData.zdx').write_bytes(b'normal-index')
+        baseline=self.prepare('owned-asset-baseline')
+        self.set_execution(baseline);self.write_events(baseline,game_test.FLOW_CASES,include_end=True)
+        self.assertEqual(game_test.build_report(baseline)['status'],'pass')
+        with mock.patch.object(game_test,'OWNED_BUILD_ROOT',self.root),mock.patch.object(game_test,'process_image_path',return_value=None):
+            linked=self.prepare('linked-assets',asset_baseline=baseline)
+        for name in ('GPackData.zpk','GPackData.zdx'):
+            self.assertTrue((linked/'client'/name).samefile(baseline/'client'/name))
+            self.assertFalse((linked/'client'/name).samefile(self.template/name))
+            self.assertEqual(game_test.sha256(linked/'client'/name),game_test.sha256(self.template/name))
+        self.assertEqual(self.metadata(linked)['assets']['mode'],'owned_readonly_hardlinks')
+        with self.assertRaises(game_test.GameTestError):self.prepare('outside-owned-baseline',asset_baseline=baseline)
 
     def test_native_installer_utf16_manifest_is_read_without_changing_the_source(self):
         manifest=self.template/'sdgo/mods/other_mod/mod.ini'
@@ -484,6 +520,19 @@ rva=state
         with self.assertRaises(game_test.GameTestError):game_test.verify_hashes(self.metadata(run_dir))
         self.assertEqual(source.read_text(encoding='utf-8'),'return { policy = "original" }')
 
+    def test_native_catalog_and_mod_resource_bytes_are_bound_to_the_test_payload(self):
+        for suffix in ('.bin','.gdt','.zsd','.spr','.txr','.uir','.zpk','.zdx'):
+            with self.subTest(suffix=suffix):
+                source=self.template/'sdgo/mods/other_mod/assets'/('catalog'+suffix)
+                source.parent.mkdir(exist_ok=True)
+                source.write_bytes(b'original native content')
+                run_dir=self.prepare('native-content-'+suffix[1:])
+                copied=run_dir/'client/sdgo/mods/other_mod/assets'/source.name
+                self.assertIn('sdgo/mods/other_mod/assets/'+source.name,self.metadata(run_dir)['client']['immutable_hashes'])
+                copied.write_bytes(b'different native content')
+                with self.assertRaises(game_test.GameTestError):game_test.verify_hashes(self.metadata(run_dir))
+                self.assertEqual(source.read_bytes(),b'original native content')
+
     def test_quiet_audio_tampering_fails_without_launching_a_window(self):
         run_dir=self.prepare('audible-copy')
         path=run_dir/'client/config.xml'
@@ -501,6 +550,10 @@ rva=state
         run_dir=self.prepare('quiet-windowed');copy=run_dir/'client/config.xml'
         screen=ET.parse(copy).getroot().find('Video/ScreenMode')
         self.assertEqual((screen.get('mode'),screen.get('windowFull')),('window','0'))
+        for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
+                          ('Bloom','BloomLevel'),('EdgeLine','EdgeLineType'),('DOF','DOFLevel')):
+            self.assertEqual(ET.parse(copy).getroot().find('Video/PostEffect/'+key).get('Enable'),'false')
+            self.assertEqual(ET.parse(copy).getroot().find('Video/PostEffect/'+key).get(level),'0')
         self.assertEqual(path.read_bytes(),original)
         tree=ET.parse(copy);tree.getroot().find('Video/ScreenMode').set('mode','full');tree.write(copy)
         with mock.patch.object(game_test.subprocess,'Popen') as launch:

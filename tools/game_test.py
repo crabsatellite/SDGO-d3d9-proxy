@@ -33,6 +33,7 @@ import importlib.util
 
 
 SCHEMA_VERSION = 2
+OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 HOST_KEY = "GOnline-54BE1568-00C97000"
 GAME_EXE = "GOnline.exe"
 STARTUP_EVENT_NAME = "9YOU SDGO"
@@ -280,6 +281,7 @@ def overlay_observer(root: Path, stage: Path) -> None:
         current_manifest=read_ini(staged_target_manifest)
         if current_manifest.get('mod','id',fallback='')!=TARGET_MOD:
             raise GameTestError('staged production match_ai manifest has the wrong identity')
+        current_manifest['mod']['enabled']='1'
         if previous_manifest.has_section('settings'):
             if not current_manifest.has_section('settings'):current_manifest.add_section('settings')
             for key,value in previous_manifest.items('settings',raw=True):
@@ -300,6 +302,7 @@ def overlay_observer(root: Path, stage: Path) -> None:
         current=read_ini(staged_manifest)
         if current.get('mod','category',fallback='')=='development':continue
         previous=read_ini(installed_manifest)
+        if previous.has_option('mod','enabled'):current['mod']['enabled']=previous['mod']['enabled']
         if current.get('mod','id',fallback='')!=identifier:
             raise GameTestError(f'staged Mod identity mismatch: {identifier}')
         if previous.has_section('settings'):
@@ -358,6 +361,16 @@ def configure_muted_audio(root: Path) -> dict:
         screen=video.find('ScreenMode')
         if screen is None:screen=ET.SubElement(video,'ScreenMode',{'width':'1024','height':'768','bpp':'32'})
         screen.set('mode','window');screen.set('windowFull','0')
+        effects=video.find('PostEffect')
+        if effects is None:effects=ET.SubElement(video,'PostEffect')
+        for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
+                          ('Bloom','BloomLevel'),('EdgeLine','EdgeLineType'),('DOF','DOFLevel')):
+            effect=effects.find(key)
+            if effect is None:effect=ET.SubElement(effects,key)
+            effect.set('Enable','false')
+            # The original settings Apply recomputes Enable from these levels.
+            # Enable=false alone is overwritten as soon as the native app starts.
+            effect.set(level,'0')
         sound=tree.getroot().find('Sound')
         if sound is None:raise ValueError('missing Sound settings')
         for key in ('BGMVolume','EffectVolume','VoiceVolume'):
@@ -378,6 +391,12 @@ def validate_muted_audio(root: Path) -> None:
         screen=document.find('Video/ScreenMode')
         if screen is None or screen.get('mode')!='window' or screen.get('windowFull')!='0':
             raise ValueError('background tests must use a windowed device and may not change the display mode')
+        if any(document.find('Video/PostEffect/'+key) is None or
+               document.find('Video/PostEffect/'+key).get('Enable')!='false' or
+               document.find('Video/PostEffect/'+key).get(level)!='0'
+               for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
+                                 ('Bloom','BloomLevel'),('EdgeLine','EdgeLineType'),('DOF','DOFLevel'))):
+            raise ValueError('headless logic tests require the native no-postprocessing graphics profile')
         sound=document.find('Sound')
         if sound is None or any(sound.find(key) is None or
             sound.find(key).get('Value')!='0' or sound.find(key).get('use') not in ('true','false')
@@ -447,6 +466,7 @@ class QuietRuntime:
             guard.getint('graphics','created_devices',fallback=0)<1):return None
         if guard.getint('graphics','dispatch_failures',fallback=0):raise GameTestError('native background graphics dispatch failed')
         proof['graphics_backend']='native_d3d9_hal_hidden_proxy'
+        proof['graphics_profile']='windowed_native_postfx_disabled'
         opened=guard.getint('audio','opened',fallback=0)
         if guard.getint('audio','active',fallback=0)!=1 or opened<1:return None
         if guard.getint('audio','muted',fallback=0)!=opened or guard.getint('audio','failed',fallback=0):
@@ -646,10 +666,12 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                         battleship_only: bool = False, gift_requests_only: bool = False,
-                        deck_only: bool = False) -> tuple[str, ...]:
+                        deck_only: bool = False, pages_only: bool = False) -> tuple[str, ...]:
     modes = parse_mode_sequence(mode_sequence)
-    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only))) > 1:
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
+    if pages_only:
+        return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai')
     if bootstrap_only:
         return FLOW_CASES[:3]
     if gift_requests_only:
@@ -773,9 +795,9 @@ def write_job(
         "retry_count": str(plan["retry_count"]),
         "expect_first_fail": "1" if plan["expect_first_fail"] else "0",
         "required_cases": ",".join(required_flow_cases(plan["mode_sequence"], plan.get('bootstrap_only', False),
-            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False))),
+            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False),plan.get('pages_only',False))),
     }
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     if 'quiet' in plan:run['run']['quiet']='1' if plan['quiet'] else '0'
@@ -794,7 +816,8 @@ def read_public_plan(root: Path) -> dict:
         battleship_only = run.get('battleship_only', '0') == '1'
         gift_requests_only = run.get('gift_requests_only', '0') == '1'
         deck_only = run.get('deck_only', '0') == '1'
-        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only')):
+        pages_only = run.get('pages_only', '0') == '1'
+        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only')):
             raise ValueError('invalid preparation flag')
         if (
             run["role"] != "client"
@@ -802,7 +825,7 @@ def read_public_plan(root: Path) -> dict:
             or run["normal_flow"] != "1"
             or run["server_channel_selection"] != "native_automatic"
             or run["account_path"] != "private/account.ini"
-            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only))
+            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only))
             or run["auto_nickname"] != "account_name"
             or run["exit_tutorial"] != "1"
             or run["first_unit_draw"] != "1"
@@ -829,7 +852,7 @@ def read_public_plan(root: Path) -> dict:
             "acknowledge_game_windows": run["acknowledge_game_windows"] == "1",
             "launcher_path": "" if process_entry == GAME_EXE else process_entry,
         }
-        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only)):
+        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
             if value:plan[flag] = True
         if 'network_policy' in run:
             if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
@@ -901,8 +924,9 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         if path.is_file() and path.suffix.lower() == ".ini":
             bind(path, immutable)
     mods = root / "sdgo" / "mods"
-    for path in sorted(mods.glob("*/*"), key=lambda item: item.as_posix().lower()):
-        if path.is_file() and (path.name.lower() == "mod.ini" or path.suffix.lower() in {".dll", ".lua"}):
+    for path in sorted(mods.rglob("*"), key=lambda item: item.as_posix().lower()):
+        if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
+                                                      ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
             bind(path, immutable)
     for name in ("config.xml", "配置文件.ini"):
         path = root / name
@@ -973,8 +997,10 @@ def prepare(
     battleship_only: bool = False,
     gift_requests_only: bool = False,
     deck_only: bool = False,
+    pages_only: bool = False,
     network_policy: str = 'direct',
     quiet: bool = True,
+    asset_baseline: Path | None = None,
 ) -> dict:
     client_template = client_template.resolve()
     if quiet and sfx_only:raise GameTestError('SFX capture requires explicit --visible; ordinary tests are background and silent')
@@ -987,6 +1013,26 @@ def prepare(
         except ipaddress.AddressValueError as error:raise GameTestError('direct tests require an explicit IPv4 login endpoint') from error
     stage = stage.resolve()
     run_dir = run_dir.resolve()
+    shared_assets={}
+    asset_owner=None
+    if asset_baseline is not None:
+        asset_baseline=asset_baseline.resolve()
+        if not is_relative_to(asset_baseline,OWNED_BUILD_ROOT.resolve()):
+            raise GameTestError('shared assets must come from an owned local GameTest baseline')
+        baseline=validate_metadata(asset_baseline)
+        if read_json(asset_baseline/'receipts/report.json').get('status')!='pass':
+            raise GameTestError('shared assets require a previously passed owned baseline')
+        asset_owner=baseline['run_id']
+        baseline_pid=(baseline.get('execution') or {}).get('game_pid')
+        if baseline_pid and process_image_path(baseline_pid)==baseline['client']['game']:
+            raise GameTestError('the archive baseline is still in use by its owned game process')
+        for name in ('GPackData.zpk','GPackData.zdx'):
+            owned=Path(baseline['client']['root'])/name
+            expected=baseline['client']['immutable_hashes'].get(name)
+            if not expected or sha256(owned)!=expected or sha256(client_template/name)!=expected:
+                raise GameTestError('owned immutable archive baseline does not match this normal client')
+            os.chmod(owned,stat.S_IREAD)
+            shared_assets[name]=owned
     if not client_template.is_dir() or not (client_template / GAME_EXE).is_file():
         raise GameTestError(f"client template lacks {GAME_EXE}: {client_template}")
     if not (stage / "client").is_dir():
@@ -1030,10 +1076,10 @@ def prepare(
         expected_ai,
         launcher_path,
     )
-    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only)
+    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)
     plan['network_policy']=network_policy
     plan['quiet']=quiet
-    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only)):
+    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only),('pages_only',pages_only)):
         if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
@@ -1046,7 +1092,13 @@ def prepare(
     run_id = str(uuid.uuid4())
     client = preparing / "client"
     try:
-        shutil.copytree(client_template, client, ignore=copy_ignore)
+        def copy_client_file(source,destination):
+            original=Path(source)
+            if original.parent.resolve()==client_template and original.name in shared_assets:
+                os.link(shared_assets[original.name],destination)
+                return str(destination)
+            return shutil.copy2(source,destination)
+        shutil.copytree(client_template, client, ignore=copy_ignore,copy_function=copy_client_file)
         overlay_observer(client, stage)
         configure_test_network(client,network_policy)
         recording = configure_sfx_only(client) if sfx_only else None
@@ -1062,7 +1114,8 @@ def prepare(
             "schema": SCHEMA_VERSION,
             "run_id": run_id,
             "suite": ('account-bootstrap' if bootstrap_only else 'battleship-acquisition' if battleship_only
-                      else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only else 'pvp-ai-normal-flow'),
+                      else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only
+                      else 'native-pages' if pages_only else 'pvp-ai-normal-flow'),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -1087,6 +1140,9 @@ def prepare(
             },
             "execution": None,
         }
+        if shared_assets:
+            metadata['assets']={'mode':'owned_readonly_hardlinks','baseline_run_id':asset_owner,
+                                'baseline':str(asset_baseline),'files':sorted(shared_assets)}
         if recording is not None:
             metadata["recording"] = recording
         atomic_write(preparing / "run.json", json.dumps(metadata, indent=2, sort_keys=True))
@@ -1133,7 +1189,7 @@ def validate_metadata(run_dir: Path) -> dict:
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root)
-    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only'):
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only'):
         if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
             raise GameTestError('run.json cannot change the required bootstrap or battle scope')
     for key, value in public_plan.items():
@@ -1826,6 +1882,12 @@ def build_report(run_dir: Path) -> dict:
                     "timeout": "normal copied client timed out before GameTest completed",
                 }.get(execution_status, f"unexpected execution status: {execution_status!r}")
             )
+            if execution_status=='game_exited':
+                native_log=Path(metadata['client']['root'])/'sdgo/logs/sdgo.log'
+                if native_log.is_file():
+                    faults=[line for line in native_log.read_text(encoding='utf-8',errors='replace').splitlines()
+                            if 'game_test_client: native exception ' in line]
+                    if faults:launch_errors.append(faults[-1])
     launch_status = "fail" if launch_errors else ("pending" if launch_pending else "pass")
     if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('network_policy')=='direct':
         proof=execution.get('network_verified',{})
@@ -1844,7 +1906,7 @@ def build_report(run_dir: Path) -> dict:
             launch_status='fail'
 
     required_cases = required_flow_cases(metadata["plan"]["mode_sequence"], metadata['plan'].get('bootstrap_only', False),
-        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False))
+        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False),metadata['plan'].get('pages_only',False))
     native = evaluate_events(
         Path(metadata["client"]["events"]),
         metadata["run_id"],
@@ -1935,9 +1997,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--battleship-only', action='store_true',help='acquire the initial battleships through native tutorial business')
     prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
     prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
+    prepare_parser.add_argument('--pages-only', action='store_true',help='visit the real hangar and verify Mod inventory, preview and cancel without exchanging units')
     prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
                                 help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
     prepare_parser.add_argument('--visible',action='store_true',help='explicit developer opt-in to a visible client; default tests use an isolated desktop and muted audio')
+    prepare_parser.add_argument('--asset-baseline',type=Path,help='reuse verified read-only native archives from a passed owned build run; never links original player files')
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -1992,8 +2056,10 @@ def main(argv: list[str] | None = None) -> int:
                 battleship_only=args.battleship_only,
                 gift_requests_only=args.gift_requests_only,
                 deck_only=args.deck_only,
+                pages_only=args.pages_only,
                 network_policy=args.network_policy,
                 quiet=not args.visible,
+                asset_baseline=args.asset_baseline,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

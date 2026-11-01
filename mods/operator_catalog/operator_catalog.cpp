@@ -36,6 +36,10 @@ DeleteFn g_delete = nullptr;
 MakeFn g_make = nullptr;
 InsertFn g_insert = nullptr;
 std::vector<Entry> g_entries;
+bool g_applied = false;
+constexpr std::array<uint32_t, 4> kCategoryTemplateCandidates = {
+    1210017, 1210012, 1210006, 1220008
+};
 
 bool FixedToken(const char* text, uint32_t* id)
 {
@@ -81,6 +85,22 @@ bool ReadRecord(uint32_t id, int type, uint8_t* out, size_t size)
         std::memcpy(out, row, size);
         return ReadId(out) == id;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool ReadCategoryTemplate(std::array<uint8_t, kCategorySize>* out)
+{
+    for (const uint32_t id : kCategoryTemplateCandidates) {
+        std::array<uint8_t, kCategorySize> candidate = {};
+        if (!ReadRecord(id, 0x22, candidate.data(), candidate.size()) ||
+            ReadId(candidate.data()) != id || candidate[4] != 0) continue;
+        uint32_t ref = 0, option = 0;
+        std::memcpy(&ref, candidate.data() + 105, sizeof(ref));
+        std::memcpy(&option, candidate.data() + 110, sizeof(option));
+        if (ref < 60001 || ref > 60999 || candidate[109] > 2 || option != 0) continue;
+        *out = candidate;
+        return true;
+    }
+    return false;
 }
 
 bool WriteExisting(uint32_t id, int type, const uint8_t* value, size_t size)
@@ -137,7 +157,7 @@ void Apply()
         }
     }
     std::array<uint8_t, kCategorySize> categoryTemplate = {};
-    if (!ReadRecord(1210001, 0x22, categoryTemplate.data(), categoryTemplate.size())) {
+    if (!ReadCategoryTemplate(&categoryTemplate)) {
         g_api->Log(g_mod, SDGO_LOG_ERROR, "native operator item template unavailable");
         return;
     }
@@ -167,7 +187,10 @@ void Apply()
 uint8_t __fastcall Load(void* self, void*, const wchar_t* filename, int type)
 {
     const uint8_t result = g_originalLoad(self, filename, type);
-    if (type == 0x2C && result) Apply();
+    if (type == 0x2C && result && !g_applied) {
+        g_applied = true;
+        Apply();
+    }
     return result;
 }
 

@@ -10,7 +10,7 @@ room, battle and AI state. Login, server data, room creation and battle loading
 use the normal game flow. Tests must not fabricate profiles, rooms or replies.
 
 Test accounts and registration retry policy live in private local configuration.
-Missing steps, failed assertions, native errors and timeouts fail the run.
+Missing steps, failed assertions, unhandled native errors and timeouts fail the run.
 Results are written as JSON and JUnit XML. Installing this Mod alone does not
 start tests or change ordinary play.
 
@@ -19,8 +19,10 @@ muted in the copied client. Desktop/window ownership is checked separately and
 missing evidence fails the run. A dedicated graphics thread creates the real
 D3D9 device through one invisible, nonactivating proxy; actual game pages stay
 on the private desktop. Fullscreen is rejected. The native Miles WaveOut
-driver's zero master gain is read back independently. These checks do not claim
-visual acceptance. Local direct tests bind only loopback and do
+driver's zero master gain is read back independently. The copied logic-test
+profile disables native postprocessing, sets all five native effect levels to
+zero and checks the effective runtime flags. These checks do not claim visual or
+postprocessing acceptance. Local direct tests bind only loopback and do
 not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.
@@ -71,6 +73,23 @@ processing evidence. Deck setup reads four genuinely owned unit UIDs from
 `[deck] unit_uid0` through `unit_uid3` in the private account profile and waits
 for the original Save and GoOut replies. Log in again with that same account for
 battle tests; no units or gameplay database records are supplemented.
+
+Use `--pages-only` to test the authenticated unit-management page, inventory
+readback, both exchange previews and cancellation. It compares unit UIDs, slots
+and the active unit before and after; it never confirms an exchange with candidates.
+Page cases do not count as battle acceptance.
+The suite requires the hangar and operator/AI catalog Mods plus the server's
+1200-slot capacity Mod. It reads every configured operator and NPC from the
+native grid and compares the configured names, category references, NPC bytes
+and source unit hashes. These catalog checks do not claim shop interaction or
+mission completion.
+
+For a passive server check, run `tools/game_test_server_report.py --run-dir
+build/gametest/pvp --events <server-observer-events.jsonl> --host-pilot <pilot-id>`.
+Repeat `--events` for each Battle host used by the matrix. The report requires a
+matching run, room title, pilot, teams and complete four-event native lifecycle
+for every requested mode. It writes `receipts/server-report.json`; a single
+server scenario summary does not prove a whole client matrix.
 
 Both components register with Mod Manager as development Mods. The Python
 runner is a developer test command for a bounded job; it is not a player launcher

@@ -7,6 +7,9 @@
 #include "battleship_actions.h"
 #include "battleship_deck_actions.h"
 #include "hangar_navigation.h"
+#include "page_test_actions.h"
+#include "operator_catalog_actions.h"
+#include "ai_catalog_actions.h"
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "tutorial_actions.h"
@@ -33,6 +36,9 @@ ChannelActions channels;
 BattleShipActions battleships;
 BattleShipDeckActions decks;
 HangarNavigation hangarNavigation;
+PageTestActions pages;
+OperatorCatalogActions operatorCatalog;
+AiCatalogActions aiCatalog;
 GiftActions gifts;
 RoomActions rooms;
 TutorialActions tutorial;
@@ -52,8 +58,8 @@ bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
 QuietGraphics quietGraphics;
-void PublishQuietSocketReceipt();
-bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false;
+void PublishQuietSocketReceipt(bool force=false);
+bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -91,7 +97,8 @@ bool LoadPlan() {
     battleshipOnly = GetPrivateProfileIntW(L"run", L"battleship_only", 0, job.c_str()) != 0;
     giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
     deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
-    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly > 1) return false;
+    pagesOnly = GetPrivateProfileIntW(L"run", L"pages_only", 0, job.c_str()) != 0;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -249,8 +256,8 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
         const auto state = actions.OnboardingState();
         if (!state.profile_pilot_id || actions.AppState() == 4 || actions.AppState() == 25) return SDGO_GAME_TEST_WAIT;
         {
-            const uint32_t requiredGroup = RequestedMode() == 6 || RequestedMode() == 7 ? 2 : 1;
-            const ChannelActions::Result result = channels.EnsureVsGroup(requiredGroup);
+            const uint32_t requiredType = RequestedMode() == 6 || RequestedMode() == 7 ? 2 : 1;
+            const ChannelActions::Result result = channels.EnsureVsType(requiredType);
             const auto channel = channels.State();
             static uint32_t lastResult = UINT32_MAX;
             static uint32_t lastReplySequence = UINT32_MAX;
@@ -297,10 +304,10 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
                 return SDGO_GAME_TEST_FAIL;
             }
             context->Assert(
-                channel.selected_group == requiredGroup &&
+                channel.selected_group == channel.target_group &&
                     channel.selected_channel != 0 &&
                     channel.selected_channel == channel.target_channel,
-                "the original selector reply placed the real profile in the server-owned VS group required by this mode");
+                "the original selector reply placed the real profile in a server-provided VS channel with the type required by this mode");
         }
         if (!rooms.SetRoomMode(RequestedMode())) { context->Assert(0, "invalid PvP mode in test plan"); return SDGO_GAME_TEST_FAIL; }
         SdgoPvpAiClientSnapshotV1 before{};
@@ -770,6 +777,81 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
 const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
 const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
+int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result result,
+               PageTestActions::Result expected) {
+    const auto state=pages.State();
+    static uint32_t lastResult=UINT32_MAX,lastReceipt=UINT32_MAX;
+    if (state.result!=lastResult || state.receipt_count!=lastReceipt) {
+        char message[384];
+        sprintf_s(message,"native hangar page result=%s stage=%u scope=%u units=%u/%u capacity=%u layout=%u active=%u gb/item=%u/%u rejected=%u actions=%u replies=%u receipts=%u",
+            PageTestActions::ResultName(result),state.stage,state.scope,state.before_unit_count,state.current_unit_count,
+            state.snapshot.capacity,state.layout_unchanged,state.active_slot_unchanged,state.gb_preview_removed,
+            state.item_preview_removed,state.confirm_rejections,state.snapshot.action_sequence,state.snapshot.reply_sequence,state.receipt_count);
+        context->Observe(message);lastResult=state.result;lastReceipt=state.receipt_count;
+    }
+    if (result>=PageTestActions::kInvalidContext || result==PageTestActions::kHangarUnavailable) {
+        context->Assert(0,"the native hangar Mod observer rejected the same-run page or original action");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (result!=expected)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.snapshot.loaded && state.snapshot.visible && state.current_unit_count>0,
+        "the authenticated native unit-management page exposes genuine inventory through the Mod observer");
+    context->Assert(state.layout_unchanged && state.active_slot_unchanged,
+        "the preview and cancel flow preserves every owned unit UID, slot and active unit");
+    if (expected==PageTestActions::kReadReady)
+        context->Assert(state.snapshot.capacity>=1200,"the genuine server inventory response exposes the automatic minimum 1200-slot hangar capacity");
+    if (expected==PageTestActions::kPreviewReady && state.scope==PageTestActions::kScopeProtectedOrNoDuplicateNegative)
+        context->Assert(state.confirm_rejections==2,"both empty exchange previews reject confirmation through the original in-game handlers");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ReadHangarPage(const SdgoGameTestContextV1* context) {
+    const auto navigation=hangarNavigation.EnsureHangar();
+    if (navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+        context->Assert(0,"native page navigation rejected a service or control identity");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (navigation!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    return PageResult(context,pages.PollHangarRead(context),PageTestActions::kReadReady);
+}
+int __cdecl PreviewHangarPage(const SdgoGameTestContextV1* context) {
+    return PageResult(context,pages.PollHangarPreview(context),PageTestActions::kPreviewReady);
+}
+int __cdecl CancelHangarPage(const SdgoGameTestContextV1* context) {
+    return PageResult(context,pages.PollHangarCancel(context),PageTestActions::kCancelled);
+}
+int __cdecl ReadOperatorCatalog(const SdgoGameTestContextV1* context) {
+    if (!GetModuleHandleW(L"operator_catalog.dll")) {
+        context->Assert(0,"configured operator catalog Mod is required for native catalog acceptance");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const bool ready=operatorCatalog.Check(sdgo_test::directory+L"\\..\\mods\\operator_catalog\\display.ini");
+    const auto state=operatorCatalog.State();char message[160];
+    sprintf_s(message,"native operator catalog configured=%u verified=%u last=%u/%u error=%u",
+        state.configured,state.verified,state.operator_id,state.category_id,state.error);
+    context->Observe(message);
+    context->Assert(ready,"every configured operator name and enabled category reference exists in the real native grid after normal loading");
+    return ready ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
+    if (!GetModuleHandleW(L"ai_catalog.dll")) {
+        context->Assert(0,"owner-provided AI catalog Mod is required for native record acceptance");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const bool ready=aiCatalog.Check(sdgo_test::directory+L"\\..\\mods\\ai_catalog\\catalog.bin");
+    const auto state=aiCatalog.State();char message[160];
+    sprintf_s(message,"native AI catalog configured=%u verified=%u levels=%u last=%u/%u error=%u",
+        state.configured,state.verified,state.levels,state.npc_id,state.unit_id,state.error);
+    context->Observe(message);
+    context->Assert(ready,"every owner-provided NPC and its source unit resolve from the real native grid with the exact catalog bytes and unit hash");
+    return ready ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+const SdgoGameTestCaseV1 pageCases[]={
+    {"pages.hangar.read",120000,&ReadHangarPage},
+    {"pages.hangar.preview",60000,&PreviewHangarPage},
+    {"pages.hangar.cancel",60000,&CancelHangarPage},
+    {"catalog.operator",60000,&ReadOperatorCatalog},
+    {"catalog.ai",60000,&ReadAiCatalog},
+};
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
     {"flow.login", 120000, &Login},
@@ -784,6 +866,11 @@ std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
     if (bootstrapOnly) { provider.count = 3; return; }
+    if (pagesOnly) {
+        plannedCases.assign(realCases,realCases+3);
+        plannedCases.insert(plannedCases.end(),std::begin(pageCases),std::end(pageCases));
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
         std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
     if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly) return;
@@ -827,7 +914,7 @@ int WINAPI QuietMessageBoxA(HWND owner,LPCSTR text,LPCSTR caption,UINT type) {
     sdgo_test::Fail(text ? text:"native Windows dialog during quiet test");
     return IDCANCEL;
 }
-void PublishQuietSocketReceipt() {
+void PublishQuietSocketReceipt(bool force) {
     if (!verifyQuietRuntime) return;
     const auto observed=quietSockets.State();
     const auto audio=quietAudio.State();
@@ -838,7 +925,7 @@ void PublishQuietSocketReceipt() {
     static bool written=false;
     static uint64_t lastWritten=0;
     const auto now=GetTickCount64();
-    if (written && now-lastWritten<250 && observed.escaped==previous.escaped && audio.failed==previousAudio.failed &&
+    if (!force && written && now-lastWritten<250 && observed.escaped==previous.escaped && audio.failed==previousAudio.failed &&
         graphics.dispatch_failures==previousGraphics.dispatch_failures && !graphics.proxy_visible && !graphics.proxy_appwindow)return;
     if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)) &&
         !memcmp(&previousGraphics,&graphics,sizeof(graphics)))return;
@@ -853,6 +940,15 @@ void PublishQuietSocketReceipt() {
         graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
         static_cast<long>(graphics.last_create_hresult),graphics.presents,reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
         graphics.proxy_visible,graphics.proxy_noactivate,graphics.proxy_toolwindow,graphics.proxy_appwindow);
+    fprintf(file,"ime_disabled=%u\nrequested_width=%u\nrequested_height=%u\nclient_width=%u\nclient_height=%u\nresolved_width=%u\nresolved_height=%u\nactual_width=%u\nactual_height=%u\nbackbuffer_hresult=%ld\ncooperative_checks=%u\ncooperative_hresult=%ld\n",
+        graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
+        graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
+        static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
+    fprintf(file,"texture_calls=%u\ntexture_failures=%u\nrender_target_calls=%u\nrender_target_failures=%u\nrender_target_null=%u\nlast_rt_width=%u\nlast_rt_height=%u\nlast_rt_format=%u\nlast_rt_usage=%u\nlast_rt_hresult=%ld\nlast_rt_return_address=%lu\n",
+        graphics.texture_calls,graphics.texture_failures,graphics.render_target_texture_calls,graphics.render_target_texture_failures,
+        graphics.render_target_texture_null_results,graphics.last_render_target_width,graphics.last_render_target_height,
+        graphics.last_render_target_format,graphics.last_render_target_usage,static_cast<long>(graphics.last_render_target_hresult),
+        static_cast<unsigned long>(graphics.last_render_target_return_address));
     fclose(file);
     if (MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
         previous=observed;previousAudio=audio;previousGraphics=graphics;written=true;lastWritten=now;
@@ -865,11 +961,32 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
         code == EXCEPTION_INT_OVERFLOW || code == EXCEPTION_FLT_DIVIDE_BY_ZERO || code == EXCEPTION_ILLEGAL_INSTRUCTION) {
         static LONG reported = 0;
         if (InterlockedIncrement(&reported) <= 8) {
+            PublishQuietSocketReceipt(true);
             const auto* c = fault->ContextRecord;
             sdgo_test::api->Log(sdgo_test::mod, SDGO_LOG_ERROR,
-                "native exception %08lX at %p: eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX",
-                code, fault->ExceptionRecord->ExceptionAddress, c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+                "native exception %08lX at %p thread=%lu: eax %08lX ebx %08lX ecx %08lX edx %08lX esi %08lX edi %08lX ebp %08lX esp %08lX",
+                code, fault->ExceptionRecord->ExceptionAddress, GetCurrentThreadId(),c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi, c->Ebp, c->Esp);
+            HMODULE faultModule=nullptr;
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(fault->ExceptionRecord->ExceptionAddress),&faultModule)) {
+                wchar_t filename[MAX_PATH]{};
+                if (GetModuleFileNameW(faultModule,filename,MAX_PATH)) {
+                    const wchar_t* leaf=wcsrchr(filename,L'\\');
+                    sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native exception module=%ls rva=%08lX",
+                        leaf ? leaf+1:filename,static_cast<DWORD>(reinterpret_cast<uintptr_t>(fault->ExceptionRecord->ExceptionAddress)-reinterpret_cast<uintptr_t>(faultModule)));
+                }
+            }
             __try {
+                using AppFn=uint8_t*(__cdecl*)();
+                const auto appFn=reinterpret_cast<AppFn>(sdgo_test::api->Symbol(sdgo_test::mod,"game.app"));
+                const auto app=appFn ? appFn():nullptr;
+                if (app && *reinterpret_cast<uint32_t*>(app+0x4A0)==22) {
+                    const auto renderer=*reinterpret_cast<const uint8_t* const*>(app+0x4A4);
+                    sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_ERROR,"native postfx app=%u/%u/%u/%u/%u renderer=%p aggregate=%u flags=%u/%u/%u/%u/%u",
+                        app[0xA7],app[0xA8],app[0xA9],app[0xAA],app[0xAB],renderer,renderer ? renderer[0x19C]:255,
+                        renderer ? renderer[0x19D]:255,renderer ? renderer[0x19E]:255,renderer ? renderer[0x19F]:255,
+                        renderer ? renderer[0x1A0]:255,renderer ? renderer[0x1A1]:255);
+                }
                 const auto* stack=reinterpret_cast<const uint32_t*>(c->Esp);
                 for (unsigned i=0;i<16;++i) {
                     HMODULE owner=nullptr;
@@ -884,6 +1001,12 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 void __fastcall Update(uint8_t* app, void*) {
+    if (verifyQuietRuntime && !quietGraphics.RefreshDeviceHooks()) {
+        sdgo_test::Fail("quiet graphics could not preserve the real device's native dispatch chain");
+        PublishQuietSocketReceipt(true);
+        sdgo_test::Poll();
+        return;
+    }
     originalUpdate(app);
     PublishQuietSocketReceipt();
     if (!mainThread) mainThread = GetCurrentThreadId();
@@ -893,6 +1016,15 @@ void __fastcall Update(uint8_t* app, void*) {
     if (state != previousState) {
         char text[96]; sprintf_s(text, "observed normal client state=%lu", static_cast<unsigned long>(state));
         sdgo_test::Observe(text); previousState = state;
+        if (verifyQuietRuntime && state==22) {
+            const auto renderer=*reinterpret_cast<const uint8_t* const*>(app+0x4A4);
+            sdgo_test::api->Log(sdgo_test::mod,SDGO_LOG_INFO,
+                "quiet native graphics effective postfx=%u/%u/%u/%u/%u aggregate=%u thread=%lu",
+                app[0xA7],app[0xA8],app[0xA9],app[0xAA],app[0xAB],renderer ? renderer[0x19C]:255,
+                GetCurrentThreadId());
+            if (!renderer || app[0xA7] || app[0xA8] || app[0xA9] || app[0xAA] || app[0xAB] || renderer[0x19C])
+                sdgo_test::Fail("native graphics did not apply the copied no-postprocessing profile");
+        }
     }
     sdgo_test::Poll();
 }
@@ -922,7 +1054,10 @@ SDGO_MOD_ENTRY {
         !channels.Bind(api, mod, &actions) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
-        (deckOnly && !hangarNavigation.Bind(api,mod,&actions)) ||
+        ((deckOnly || pagesOnly) && !hangarNavigation.Bind(api,mod,&actions)) ||
+        (pagesOnly && !pages.Bind()) ||
+        (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
+        (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");

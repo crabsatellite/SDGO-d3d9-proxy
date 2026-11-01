@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <thread>
 namespace fixture {
 using namespace storage_fixture;
 using storage_fixture::Put;
@@ -12,6 +13,7 @@ std::vector<Entry> rewards;std::vector<uint8_t> pending;
 std::vector<uint8_t> rows;uint32_t total=0;int sends=0,grants=0,nativeChecks=0,manual=0;
 int appCalls=0;
 bool rejected=false,selection=false;
+std::vector<uint32_t> originalReplySequences;
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 uint8_t* __cdecl Session(){return connection.data();}
 uint8_t* __cdecl App(){++appCalls;return app.data();}
@@ -20,6 +22,8 @@ uint8_t __fastcall Busy(void*,void*){return 0;}
 int __fastcall Send(void*,void*,int socket,const uint8_t* data,int size,int flags){assert(socket==7 && !flags && pending.empty());pending.assign(data,data+size);++sends;return 1;}
 uint32_t __fastcall Event(void*,void*,void*,uint32_t,uintptr_t,void*){++manual;return 0;}
 uint32_t __fastcall Original(void* self,void*,uintptr_t,uintptr_t,uintptr_t,uint32_t opcode,const uint8_t* data) {
+    if(opcode==0x7BD || opcode==0x7BE || opcode==0x7E8 || opcode==0xA23)
+        originalReplySequences.push_back(g_testObserver.replySequence);
     if(opcode==0x4E7 || opcode==0x722){++nativeChecks;return 0;}
     if(opcode==0x7E8 || opcode==0xA23){++grants;return 0;}
     if(opcode==0x7BD || opcode==0x7BE) {
@@ -34,7 +38,7 @@ SdgoApi api{};
 void Setup(Tab tab=Tab::Items) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_ui.Detach();storage_fixture::Setup();
     rewards.clear();for(uint64_t i=1;i<=12;++i)rewards.push_back({{i+(tab==Tab::Items?0x100000000ULL:0),tab==Tab::Gifts?i*1234567890123ULL:0},false});
-    total=12;pending.clear();sends=grants=nativeChecks=manual=appCalls=0;rejected=selection=false;g_retiredChecks.clear();
+    total=12;pending.clear();sends=grants=nativeChecks=manual=appCalls=0;rejected=selection=false;g_retiredChecks.clear();originalReplySequences.clear();
     app={};connection={};Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,reinterpret_cast<void*>(1));
     Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
@@ -105,5 +109,76 @@ int main() {
     const auto until=GetTickCount64()+250;const int calls=appCalls;
     while(GetTickCount64()<until){MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}Sleep(1);}
     assert(appCalls>calls && sends==0);KillTimer(nullptr,g_timer);g_timer=0;
+
+    // The observer can report aggregate native state without a test run, but
+    // actions stay inert until a canonical client run hash, the attached UI
+    // thread and the real enabled button all agree.
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
+    fixture::Setup();
+    SdgoStorageGameTestSnapshotV1 observed{sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed));
+    assert(!observed.run_hash && observed.process_id==GetCurrentProcessId() &&
+           observed.ui_thread_id==GetCurrentThreadId() && observed.loaded && observed.visible &&
+           observed.total==12 && !observed.page_entry_count);
+    assert(!SdgoStorageGameTestActionV1(1,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN","12345678-1234-1234-1234-123456789abc");
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","server");
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && !observed.run_hash);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","client");
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.run_hash);
+    const auto runHash=observed.run_hash;
+
+    SdgoStorageGameTestSnapshotV1 tooSmall{};
+    tooSmall.size=sizeof(tooSmall)-1;tooSmall.version=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;tooSmall.session=UINT64_MAX;
+    assert(!SdgoStorageGameTestGetSnapshotV1(&tooSmall) && tooSmall.session==UINT64_MAX);
+    assert(!SdgoStorageGameTestGetSnapshotV1(reinterpret_cast<SdgoStorageGameTestSnapshotV1*>(1)));
+    auto* observerButton=Pointer(L"ModStorageClaimAll");
+    storage_fixture::Put<uint8_t>(observerButton,0x167,0);
+    assert(!SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+    storage_fixture::Put<uint8_t>(observerButton,0x167,1);
+    int otherThreadAccepted=1;
+    std::thread other([&]{otherThreadAccepted=SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL);});
+    other.join();assert(!otherThreadAccepted);
+    assert(!SdgoStorageGameTestActionV1(runHash^1,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+    auto* savedService=g_service;g_service=connection.data();
+    assert(!SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));g_service=savedService;
+    storage_fixture::Put<uint8_t>(dialog.data(),0x162,0);
+    assert(!SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+    storage_fixture::Put<uint8_t>(dialog.data(),0x162,1);
+
+    assert(SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.action_sequence==1 &&
+           observed.last_action==SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL && observed.armed &&
+           !observed.busy && !observed.reply_sequence && !observed.preflight_reply_sequence);
+    assert(SdgoStorageGameTestActionV1(runHash,SDGO_STORAGE_GAME_TEST_ACTION_CLAIM_ALL));
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.action_sequence==2 &&
+           observed.busy && !observed.completed && !observed.reply_sequence);
+
+    Step();
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.outstanding &&
+           observed.pending_operation==1 && !observed.reply_sequence);
+    Deliver();
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1 &&
+           observed.page_entry_count==5 && originalReplySequences.size()==1 &&
+           originalReplySequences[0]==0);
+    Step();Deliver();
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1 &&
+           observed.preflight_reply_sequence==1);
+    Step();Deliver();
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoStorageGameTestGetSnapshotV1(&observed) && observed.completed==1 &&
+           observed.reply_sequence==2 && observed.preflight_reply_sequence==1 &&
+           originalReplySequences.size()==2 && originalReplySequences[1]==1);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
     std::cout<<"STORAGE NATIVE ADAPTER PASSED: native page placement/skins, one confirmation, 12-item and gift pagination, preflight cancellation, in-flight stop, choice/capacity refusal, hidden page, timeout/late grant and original UI fallback\n";
 }

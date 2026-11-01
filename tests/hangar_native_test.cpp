@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <thread>
 
 namespace fixture {
 std::array<uint8_t,64> info{},mode{};
@@ -165,5 +166,84 @@ int main(){
     assert(!g_hasPreview && !g_mutating && fixture::sends==beforeChange && !g_ui.Armed());
     g_ui.Open();g_ui.Arm(true);page_fixture::dialog[0x162]=0;g_nextTick=0;Pump();
     assert(!g_ui.Exchange() && !g_ui.Armed());
+
+    // The exported observer is read-only without a valid run. Mutating actions
+    // require the exact canonical client run hash, native UI thread and real
+    // visible/enabled control.
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    SdgoHangarGameTestSnapshotV1 observed{sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed));
+    assert(!observed.run_hash && observed.process_id==GetCurrentProcessId() &&
+           observed.ui_thread_id==GetCurrentThreadId() && observed.loaded && observed.visible &&
+           observed.unit_count==5 && observed.capacity==8 && observed.active_slot==8);
+    assert(!SdgoHangarGameTestActionV1(1,SDGO_HANGAR_GAME_TEST_ACTION_OPEN));
+    SdgoHangarGameTestUnitV1 untouched{};untouched.uid=UINT64_MAX;
+    assert(!SdgoHangarGameTestGetUnitsV1(1,0,&untouched,sizeof(untouched),1) && untouched.uid==UINT64_MAX);
+
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN","not-a-uuid");
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","client");
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && !observed.run_hash);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN","12345678-1234-1234-1234-123456789abc");
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","server");
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && !observed.run_hash);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","client");
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && observed.run_hash);
+    const auto runHash=observed.run_hash;
+
+    SdgoHangarGameTestSnapshotV1 tooSmall{};
+    tooSmall.size=sizeof(tooSmall)-1;tooSmall.version=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;tooSmall.session=UINT64_MAX;
+    assert(!SdgoHangarGameTestGetSnapshotV1(&tooSmall) && tooSmall.session==UINT64_MAX);
+    assert(!SdgoHangarGameTestGetSnapshotV1(reinterpret_cast<SdgoHangarGameTestSnapshotV1*>(1)));
+    std::array<SdgoHangarGameTestUnitV1,5> unitPage{};
+    unitPage[0].uid=UINT64_MAX;
+    assert(!SdgoHangarGameTestGetUnitsV1(runHash,5,unitPage.data(),sizeof(unitPage[0]),5) && unitPage[0].uid==UINT64_MAX);
+    assert(!SdgoHangarGameTestGetUnitsV1(runHash,0,unitPage.data(),sizeof(unitPage[0])-1,5) && unitPage[0].uid==UINT64_MAX);
+    assert(SdgoHangarGameTestGetUnitsV1(runHash,0,unitPage.data(),sizeof(unitPage[0]),5)==5);
+    assert(unitPage[0].uid==101 && unitPage[0].unit_id==10 && unitPage[0].slot==1);
+    assert(unitPage[4].uid==105 && unitPage[4].slot==8 &&
+           (unitPage[4].protection_flags&SDGO_HANGAR_GAME_TEST_PROTECTED_ACTIVE));
+
+    int otherThreadAccepted=1;
+    std::thread other([&]{otherThreadAccepted=SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_OPEN);});
+    other.join();assert(!otherThreadAccepted);
+    assert(!SdgoHangarGameTestActionV1(runHash^1,SDGO_HANGAR_GAME_TEST_ACTION_OPEN));
+    auto* savedGrid=g_grid;g_grid=fixture::panel.data();
+    assert(!SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_OPEN));g_grid=savedGrid;
+    const auto dialogIdentity=Read<void*>(page_fixture::dialog.data());
+    page_fixture::Put(page_fixture::dialog.data(),0,reinterpret_cast<void*>(0xBAD));
+    assert(!SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_OPEN));
+    page_fixture::Put(page_fixture::dialog.data(),0,dialogIdentity);
+    assert(SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_OPEN));
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && observed.action_sequence==1 &&
+           observed.last_action==SDGO_HANGAR_GAME_TEST_ACTION_OPEN && !observed.reply_sequence);
+    assert(!SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_SORT)); // hidden after Open
+    assert(!SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM)); // disabled before preview
+    assert(SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_GB));
+    assert(SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM));
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && observed.action_sequence==3 &&
+           observed.armed && !observed.busy && !observed.reply_sequence);
+    assert(SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM));
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && observed.action_sequence==4 &&
+           observed.busy && !observed.reply_sequence && !observed.needs_relog);
+    assert(SdgoHangarGameTestActionV1(runHash,SDGO_HANGAR_GAME_TEST_ACTION_CANCEL));
+
+    uint8_t detailReply[153]={};fixture::Put(detailReply,8,uint64_t{101});
+    g_detailPending=101;g_detailObserved=false;
+    ::Sync(fixture::info.data(),nullptr,detailReply);
+    observed={sizeof(observed),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&observed) && observed.reply_sequence==1);
+    ::Sync(fixture::info.data(),nullptr,detailReply);
+    SdgoHangarGameTestSnapshotV1 duplicateReply{sizeof(duplicateReply),SDGO_GAME_TEST_PAGE_OBSERVER_VERSION};
+    assert(SdgoHangarGameTestGetSnapshotV1(&duplicateReply) && duplicateReply.reply_sequence==1);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);
+    SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
     std::cout<<"HANGAR NATIVE ADAPTER FIXTURE PASSED (production snapshot, sends, native acknowledgements, GB/item, detail freshness, logout, hidden/battle gates)\n";
 }

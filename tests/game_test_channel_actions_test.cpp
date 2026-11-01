@@ -5,6 +5,7 @@
 // contacts a server, writes a database, or claims gameplay/runtime evidence.
 
 #include <windows.h>
+#include <array>
 
 #include <cstdint>
 #include <cstdio>
@@ -42,7 +43,7 @@ int g_failures = 0;
 uint8_t g_app[0x500] = {};
 uint8_t g_profileStorage[0x6000] = {};
 uint8_t* g_profile = g_profileStorage;
-uint8_t g_groups[kGroupStride * 3] = {};
+uint8_t g_groups[kGroupStride * 4] = {};
 uint8_t g_service[0x200] = {};
 uint8_t g_lobbyService[0x100] = {};
 uint8_t g_root[4] = {};
@@ -149,7 +150,8 @@ void PutChannel(
 {
     std::memset(entry, 0, kChannelStride);
     *reinterpret_cast<uint16_t*>(entry) = id;
-    *reinterpret_cast<uint32_t*>(entry + 0x02) = category;
+    *reinterpret_cast<uint32_t*>(entry + 0x02) = 1;
+    *reinterpret_cast<uint32_t*>(entry + 0x06) = 1;
     *reinterpret_cast<uint32_t*>(entry + 0x0A) = capacity;
     *reinterpret_cast<uint32_t*>(entry + 0x0E) = population;
     *reinterpret_cast<uint32_t*>(entry + 0x16) = category;
@@ -204,9 +206,12 @@ void ResetFixture(
         g_groups + kGroupStride + 0x22) = 1;
     *reinterpret_cast<uint16_t*>(
         g_groups + 2 * kGroupStride + 0x22) = 1;
+    *reinterpret_cast<uint16_t*>(g_groups+3*kGroupStride+0x22)=1;
     PutChannel(GroupChannel(0, 0), 100, 100, 1, 1);
-    PutChannel(GroupChannel(1, 0), 200, 100, 1, 2);
+    PutChannel(GroupChannel(1, 0), 200, 100, 1, 3);
     PutChannel(GroupChannel(2, 0), kTargetChannel, 100, 1, 3);
+    PutChannel(GroupChannel(3,0),400,100,1,3);
+    *reinterpret_cast<uint32_t*>(GroupChannel(3,0)+0x06)=2;
     SetSelectedChannel(selectedGroup, selectedChannel);
 
     uint8_t* row = g_rows + targetRow * kRowStride;
@@ -452,7 +457,7 @@ void __fastcall FakeLobbyJoinChannel(
 
 uint32_t FindGroupForChannel(uint16_t channel)
 {
-    for (uint32_t group = 0; group < 3; ++group) {
+    for (uint32_t group = 0; group < 4; ++group) {
         const uint16_t count = *reinterpret_cast<const uint16_t*>(
             g_groups + group * kGroupStride + 0x22);
         for (uint16_t index = 0; index < count; ++index) {
@@ -891,10 +896,13 @@ void TestLobbyFailureBoundaries(ChannelActions& channels)
 void TestReturnToNormalVsGroup(ChannelActions& channels)
 {
     ResetFixture(channels,2,kTargetChannel);
+    *reinterpret_cast<uint16_t*>(g_groups+kGroupStride+0x22)=2;
+    PutChannel(GroupChannel(1,0),199,100,1,2);
+    PutChannel(GroupChannel(1,1),200,100,1,3);
     Check(channels.EnsureVsGroup(1)==ChannelActions::kRequestSent,
         "normal modes switch back from battleship channels through native lobby business");
     Check(g_lobbyRequestedChannel==200 && g_openCalls==0 && g_clickCalls==0,
-        "normal group uses its real available channel without the battleship selector");
+        "normal group skips its mission channel and uses the real VS channel without the battleship selector");
     uint8_t* packet=AllocateGuardedReply(200,0);
     Check(packet!=nullptr,"normal group reply allocated at guarded boundary");
     if (!packet) return;
@@ -902,6 +910,35 @@ void TestReturnToNormalVsGroup(ChannelActions& channels)
     Check(g_lobbyReplyDetour(g_lobbyService,nullptr,1,2,3,0x09DF,packet)==73 &&
         channels.EnsureVsGroup(1)==ChannelActions::kAccepted,
         "return to normal VS requires original consumption and matching profile group");
+}
+
+void TestSemanticChannelType(ChannelActions& channels)
+{
+    ResetFixture(channels);
+    Check(channels.EnsureVsType(2)==ChannelActions::kRequestSent && g_lobbyRequestedChannel==400 && channels.State().target_group==3,
+        "ship mode skips the second normal VS group and chooses native channel type2 in group3");
+    uint8_t* reply=AllocateGuardedReply(400,0);
+    Check(reply!=nullptr,"semantic channel reply allocated");
+    if (reply) {
+        g_replyUpdateProfile=true;
+        Check(g_lobbyReplyDetour(g_lobbyService,nullptr,0,0,0,0x09DF,reply)==73 &&
+            channels.EnsureVsType(2)==ChannelActions::kAccepted && channels.State().selected_group==3,
+            "type-based selection still requires genuine native consumer and matching profile");
+    }
+    ResetFixture(channels);
+    std::array<uint8_t,kGroupStride> temporary{};
+    memcpy(temporary.data(),g_groups+2*kGroupStride,kGroupStride);
+    memcpy(g_groups+2*kGroupStride,g_groups+3*kGroupStride,kGroupStride);
+    memcpy(g_groups+3*kGroupStride,temporary.data(),kGroupStride);
+    Check(channels.EnsureVsType(2)==ChannelActions::kRequestSent && channels.State().target_group==2 && g_lobbyRequestedChannel==400,
+        "reordering the server-provided groups does not change semantic type selection");
+    ResetFixture(channels);
+    *reinterpret_cast<uint32_t*>(GroupChannel(3,0)+0x06)=1;
+    Check(channels.EnsureVsType(2)==ChannelActions::kNoAvailableChannel && g_networkOriginalCalls==0,
+        "no ship channel cannot silently fall back to a normal VS channel");
+    ResetFixture(channels);
+    Check(channels.EnsureVsType(1)==ChannelActions::kAlreadySelected && g_networkOriginalCalls==0,
+        "an already selected normal VS channel needs no native request");
 }
 
 void TestLobbyReplyStateGuard(ChannelActions& channels)
@@ -1176,6 +1213,7 @@ int main()
         TestAlreadySelected(channels);
         TestLobbyFallback(channels);
         TestReturnToNormalVsGroup(channels);
+        TestSemanticChannelType(channels);
         TestLobbyFailureBoundaries(channels);
         TestLobbyReplyStateGuard(channels);
         TestOpenPageRequestAndReplyLifetime(channels);

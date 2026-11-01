@@ -160,11 +160,25 @@ public:
 
     // Poll this from the normal client update thread. Each call performs at
     // most one native UI action: Open, one page click, or one channel click.
+    Result EnsureVsType(uint32_t channelType)
+    {
+        if (!bound_ || !native_)return Publish(kUnbound,0);
+        if (channelType!=1 && channelType!=2)return Publish(kInvalidTarget,0);
+        requiredType_=channelType;
+        const auto selected=native_->OnboardingState();
+        if (selected.native_app_state!=kLobbyAppState)return Publish(kWaitingForLobby,0);
+        if (RequestSent())return EnsureVsGroup(static_cast<uint32_t>(InterlockedCompareExchange(&requestTargetGroup_,0,0)));
+        uint32_t target=0;
+        const auto found=FindGroupForType(selected.channel_group,selected.channel_id,&target);
+        if (found!=kAccepted)return Publish(found,target);
+        return EnsureVsGroup(target);
+    }
+
     Result EnsureVsGroup(uint32_t targetGroup)
     {
         if (!bound_ || !native_)
             return Publish(kUnbound, targetGroup);
-        if (targetGroup != kSupportedVsGroup && targetGroup != kNormalVsGroup)
+        if (targetGroup>=kMaxGroups || (!requiredType_ && targetGroup==0))
             return Publish(kInvalidTarget, targetGroup);
 
         const NativeActions::OnboardingObservation selected =
@@ -195,7 +209,7 @@ public:
 
             // The loaded lobby's native channel worker supports both groups.
             // The specialized pre-channel selector lists battleship channels.
-            if (targetGroup == kNormalVsGroup)
+            if (requiredType_ || targetGroup == kNormalVsGroup)
                 return SendThroughLobby(group,targetGroup);
 
             void* service = ResolveVsChannelService();
@@ -331,6 +345,7 @@ public:
         targetPage_ = 0;
         currentPage_ = 0;
         maxPage_ = 0;
+        requiredType_ = 0;
     }
 
     Observation State() const
@@ -402,7 +417,6 @@ public:
 
 private:
     static constexpr uint32_t kLobbyAppState = 6;
-    static constexpr uint32_t kSupportedVsGroup = 2;
     static constexpr uint32_t kNormalVsGroup = 1;
     static constexpr uint32_t kRowsPerPage = 7;
     static constexpr uint32_t kMaxGroups = 16;
@@ -423,6 +437,9 @@ private:
     static constexpr size_t kGroupChannels = 0x24;
     static constexpr size_t kChannelStride = 0x1D;
     static constexpr size_t kChannelId = 0x00;
+    // Native channel row: id16, address32, channel-type32, capacity32, ...
+    // FUN_006EAA60 reads this field at group+0x2A (channel+0x06).
+    static constexpr size_t kChannelType = 0x06;
     static constexpr size_t kChannelCapacity = 0x0A;
     static constexpr size_t kChannelPopulation = 0x0E;
     static constexpr size_t kChannelCategory = 0x16;
@@ -566,7 +583,8 @@ private:
         if (channelCount > kMaxChannelsPerGroup)
             return kTargetGroupMalformed;
         out->group = group;
-        out->category = targetGroup == kNormalVsGroup ? 2 : kVsCategory;
+        // A group index is neither the channel's mode nor its channel type.
+        out->category = kVsCategory;
         out->channel_count = channelCount;
         return kAccepted;
     }
@@ -581,7 +599,8 @@ private:
             if (*reinterpret_cast<const uint16_t*>(
                     entry + kChannelId) == channelId &&
                 *reinterpret_cast<const uint32_t*>(
-                    entry + kChannelCategory) == group.category)
+                    entry + kChannelCategory) == group.category &&
+                (!requiredType_ || *reinterpret_cast<const uint32_t*>(entry+kChannelType)==requiredType_))
                 return true;
         }
         return false;
@@ -610,6 +629,7 @@ private:
                     entry + kChannelPopulation);
             if (channelId &&
                 category == group.category &&
+                (!requiredType_ || *reinterpret_cast<const uint32_t*>(entry+kChannelType)==requiredType_) &&
                 capacity != 0 &&
                 population < capacity) {
                 *out = channelId;
@@ -617,6 +637,26 @@ private:
             }
         }
         return kNoAvailableChannel;
+    }
+
+    Result FindGroupForType(uint32_t preferred,uint16_t selected,uint32_t* target) const
+    {
+        __try {
+            const uint8_t* profile=profilePointer_ ? *profilePointer_:nullptr;
+            if (!profile)return kProfileUnavailable;
+            GroupView group{};
+            if (ReadGroup(profile,preferred,&group)==kAccepted && GroupContainsChannel(group,selected)) {
+                *target=preferred;return kAccepted;
+            }
+            for (uint32_t index=0;index<kMaxGroups;++index) {
+                const auto result=ReadGroup(profile,index,&group);
+                if (result==kTargetGroupMissing)break;
+                if (result!=kAccepted)return result;
+                uint16_t channel=0;
+                if (FindAvailableChannel(group,&channel)==kAccepted){*target=index;return kAccepted;}
+            }
+            return kNoAvailableChannel;
+        }__except(EXCEPTION_EXECUTE_HANDLER){return kNativeFault;}
     }
 
     Result FindCandidate(
@@ -1022,6 +1062,7 @@ private:
     mutable volatile LONG replyProfileGroup_ = 0;
     mutable volatile LONG replyConsumed_ = 0;
     uint16_t targetChannel_ = 0;
+    uint32_t requiredType_ = 0;
     uint32_t targetRow_ = 0;
     uint32_t targetPage_ = 0;
     uint32_t currentPage_ = 0;

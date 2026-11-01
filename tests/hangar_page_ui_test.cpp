@@ -4,6 +4,9 @@
 int main() {
     using namespace page_fixture;
     PageUi ui;Setup();assert(ui.Attach(service.data(),Bind()));
+    assert(ui.ControlFor(Action::Sort)==Pointer(L"ModHangarSort") &&
+           ui.ControlFor(Action::Confirm)==Pointer(L"ModHangarConfirm") &&
+           !ui.ControlFor(Action::None));
     assert(Shown(L"ModHangarSort") && Shown(L"ModHangarOpen"));
     assert(children.at(L"ModHangarSort")->text==L"一键整理" && children.at(L"ModHangarSort")->align==2);
     for(const auto* name:{L"ModHangarSort",L"ModHangarOpen",L"ModHangarGB",L"ModHangarItem",L"ModHangarConfirm",L"ModHangarCancel"}) {

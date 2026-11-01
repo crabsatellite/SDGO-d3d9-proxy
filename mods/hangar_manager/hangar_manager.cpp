@@ -14,10 +14,18 @@
 #include "sdgo/hangar_model.h"
 #include "sdgo/hangar_sort_request.h"
 #include "sdgo/inventory_app_state.h"
+#include "sdgo/game_test_page_observer.h"
 #include "native_ui.h"
 
 namespace {
 using namespace sdgo::hangar;
+static_assert(static_cast<int>(State::Idle)==SDGO_HANGAR_GAME_TEST_RUNNER_IDLE &&
+              static_cast<int>(State::Ready)==SDGO_HANGAR_GAME_TEST_RUNNER_READY &&
+              static_cast<int>(State::Waiting)==SDGO_HANGAR_GAME_TEST_RUNNER_WAITING &&
+              static_cast<int>(State::Complete)==SDGO_HANGAR_GAME_TEST_RUNNER_COMPLETE &&
+              static_cast<int>(State::Stopped)==SDGO_HANGAR_GAME_TEST_RUNNER_STOPPED &&
+              static_cast<int>(State::Unknown)==SDGO_HANGAR_GAME_TEST_RUNNER_UNKNOWN,
+              "hangar observer runner-state ABI");
 using NativeVoid=void(__thiscall*)(void*);
 using NativeGet=void(__thiscall*)(void*,void*,uint16_t);
 using NativeSync=void(__thiscall*)(void*,const uint8_t*);
@@ -59,7 +67,33 @@ bool g_detailObserved=false;
 size_t g_scanIndex=0;
 std::vector<uint64_t> g_scanIds;
 Snapshot g_scanBefore;
+struct TestObserverState {
+    uint64_t runHash=0;
+    uint32_t actionSequence=0;
+    uint32_t replySequence=0;
+    uint32_t lastAction=0;
+};
+TestObserverState g_testObserver;
 template<class T>T Read(const void* p,size_t offset=0) {T result;memcpy(&result,static_cast<const uint8_t*>(p)+offset,sizeof(T));return result;}
+uint64_t CurrentClientRunHash() {
+    char run[64]={},role[16]={};
+    const DWORD runLength=GetEnvironmentVariableA("SDGO_GAME_TEST_RUN",run,sizeof(run));
+    const DWORD roleLength=GetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",role,sizeof(role));
+    if(!runLength || runLength>=sizeof(run) || !roleLength || roleLength>=sizeof(role))return 0;
+    return sdgo::game_test_page_observer::ClientRunHash(run,runLength,role,roleLength);
+}
+uint64_t SyncTestObserver() {
+    const auto runHash=CurrentClientRunHash();
+    if(runHash!=g_testObserver.runHash) {
+        g_testObserver={};
+        g_testObserver.runHash=runHash;
+    }
+    return runHash;
+}
+void RecordTestReply(uint32_t count=1) {
+    if(SyncTestObserver())g_testObserver.replySequence+=count;
+}
+uint32_t Count32(size_t value){return value>UINT32_MAX?UINT32_MAX:static_cast<uint32_t>(value);}
 std::wstring Wide(const std::string& s) {
     if(s.empty())return {};
     int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0);
@@ -345,7 +379,9 @@ void Pump() {
                     g_scanning=false;Preview(Duplicates(s,g_rules,g_keep,g_scanReward,false));
                 }
             } else {
+                const auto completedBefore=g_runner.completed();
                 g_runner.Observe(s,now,g_timeout);
+                if(g_runner.completed()>completedBefore)RecordTestReply(Count32(g_runner.completed()-completedBefore));
                 if(g_runner.state()==State::Ready && now>=g_nextSend) {
                     if(const auto* a=g_runner.Next(s)) {
                         const auto bytes=Packet(*a);
@@ -388,8 +424,10 @@ void __fastcall Clear(void* self,void*) {
 }
 void __fastcall Sync(void* self,void*,const uint8_t* data) {
     g_sync(self,data);
-    if(GetCurrentThreadId()==g_thread && data && g_detailPending && Read<uint64_t>(data,8)==g_detailPending)
+    if(GetCurrentThreadId()==g_thread && data && g_detailPending && Read<uint64_t>(data,8)==g_detailPending && !g_detailObserved) {
         g_detailObserved=true;
+        RecordTestReply();
+    }
 }
 bool LoadRules(const std::wstring& path) {
     std::ifstream f(path,std::ios::binary);if(!f)return false;
@@ -406,6 +444,145 @@ bool LoadRules(const std::wstring& path) {
     return !g_rules.empty();
 }
 template<class T>bool Bind(T& fn,const char* name){fn=reinterpret_cast<T>(g_api->Symbol(g_mod,name));return fn!=nullptr;}
+
+void ObserverBasicUnsafe(SdgoHangarGameTestSnapshotV1* output) {
+    output->visible=VisibleUnsafe()?1u:0u;
+    if(g_info && *g_info) {
+        auto* info=*g_info;
+        output->loaded=Read<uint8_t>(info,0x20)==1?1u:0u;
+        const int capacity=Read<int>(info,0x0C);
+        if(capacity>0 && capacity<=65535)output->capacity=static_cast<uint32_t>(capacity);
+    }
+    if(g_profile && *g_profile)output->active_slot=Read<uint16_t>(*g_profile,0x1AD);
+    if(g_session) {
+        auto* session=g_session();
+        if(session && Read<int>(session,0x14)>=0)
+            output->session=(static_cast<uint64_t>(g_epoch)<<32)^reinterpret_cast<uintptr_t>(session)^static_cast<uint32_t>(Read<int>(session,0x14));
+    }
+}
+bool ObserverBasic(SdgoHangarGameTestSnapshotV1* output) {
+    __try{ObserverBasicUnsafe(output);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+ui::Action ObserverAction(uint32_t action) {
+    switch(action) {
+    case SDGO_HANGAR_GAME_TEST_ACTION_SORT:return ui::Action::Sort;
+    case SDGO_HANGAR_GAME_TEST_ACTION_OPEN:return ui::Action::Open;
+    case SDGO_HANGAR_GAME_TEST_ACTION_GB:return ui::Action::GB;
+    case SDGO_HANGAR_GAME_TEST_ACTION_ITEM:return ui::Action::Item;
+    case SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM:return ui::Action::Confirm;
+    case SDGO_HANGAR_GAME_TEST_ACTION_CANCEL:return ui::Action::Cancel;
+    default:return ui::Action::None;
+    }
+}
+bool ObserverActionReady(ui::Action action,void*& control) {
+    if(!g_grid || !g_thread || GetCurrentThreadId()!=g_thread || !g_ui.Owns(g_grid) || !Visible())return false;
+    control=g_ui.ControlFor(action);
+    if(!control || g_ui.Click(control)!=action)return false;
+    if(action==ui::Action::Sort)return !Busy() && !g_needsRelog && !g_ui.Exchange();
+    if(action==ui::Action::Open)return !Busy() && !g_ui.Exchange();
+    if(action==ui::Action::GB || action==ui::Action::Item) {
+        if(Busy() || g_needsRelog || !g_ui.Exchange())return false;
+        Snapshot snapshot;return GetSnapshot(snapshot);
+    }
+    if(action==ui::Action::Confirm) {
+        if(Busy() || !g_ui.Exchange() || !g_hasPreview || !g_preview.removed)return false;
+        Snapshot snapshot;
+        return GetSnapshot(snapshot) &&
+            (g_preview.serverBatch?SameGBPreview(g_preview.before,snapshot):SamePreview(g_preview.before,snapshot));
+    }
+    return action==ui::Action::Cancel;
+}
+uint8_t ObserverUnitFlags(const Unit& unit) {
+    return static_cast<uint8_t>(
+        (unit.rental?SDGO_HANGAR_GAME_TEST_UNIT_RENTAL:0) |
+        (unit.ship?SDGO_HANGAR_GAME_TEST_UNIT_SHIP:0) |
+        (unit.lock?SDGO_HANGAR_GAME_TEST_UNIT_LOCKED:0) |
+        (unit.special?SDGO_HANGAR_GAME_TEST_UNIT_SPECIAL:0) |
+        (unit.fullReady?SDGO_HANGAR_GAME_TEST_UNIT_FULL_READY:0));
+}
+uint32_t ObserverProtection(const Unit& unit,uint16_t activeSlot) {
+    return (unit.slot==activeSlot?SDGO_HANGAR_GAME_TEST_PROTECTED_ACTIVE:0) |
+        (unit.rental?SDGO_HANGAR_GAME_TEST_PROTECTED_RENTAL:0) |
+        (unit.ship?SDGO_HANGAR_GAME_TEST_PROTECTED_SHIP:0) |
+        (unit.lock?SDGO_HANGAR_GAME_TEST_PROTECTED_LOCKED:0) |
+        (unit.special?SDGO_HANGAR_GAME_TEST_PROTECTED_SPECIAL:0) |
+        (unit.level>1?SDGO_HANGAR_GAME_TEST_PROTECTED_DEVELOPED:0) |
+        (!unit.fullReady?SDGO_HANGAR_GAME_TEST_PROTECTED_DETAIL_MISSING:0);
+}
+}
+
+static int HangarGameTestGetSnapshot(
+    SdgoHangarGameTestSnapshotV1* output) {
+    if(!output || output->size<sizeof(SdgoHangarGameTestSnapshotV1) ||
+       output->version!=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION)return 0;
+    SdgoHangarGameTestSnapshotV1 result{};
+    result.size=sizeof(result);result.version=SDGO_GAME_TEST_PAGE_OBSERVER_VERSION;
+    result.run_hash=SyncTestObserver();result.process_id=GetCurrentProcessId();result.ui_thread_id=g_thread;
+    result.generation=g_epoch;result.action_sequence=g_testObserver.actionSequence;
+    result.reply_sequence=g_testObserver.replySequence;result.last_action=g_testObserver.lastAction;
+    result.preview_removed=Count32(g_preview.removed);result.busy=Busy()?1u:0u;
+    result.armed=g_ui.Armed()?1u:0u;result.needs_relog=g_needsRelog?1u:0u;
+    result.runner_state=static_cast<uint32_t>(g_runner.state());
+    result.runner_completed=Count32(g_runner.completed());result.runner_total=Count32(g_runner.total());
+    result.submit_index=Count32(g_gbIndex);result.submit_total=Count32(g_gbRequests.size());
+    ObserverBasic(&result);
+    if(result.visible && g_thread && GetCurrentThreadId()==g_thread) {
+        Snapshot snapshot;
+        if(GetSnapshot(snapshot)) {
+            result.loaded=1;result.session=snapshot.session;result.capacity=snapshot.capacity;
+            result.active_slot=snapshot.activeSlot;result.unit_count=Count32(snapshot.units.size());
+        }
+    }
+    memcpy(output,&result,sizeof(result));
+    return 1;
+}
+
+static int HangarGameTestGetUnits(
+    uint64_t runHash,uint32_t offset,SdgoHangarGameTestUnitV1* output,
+    uint32_t elementSize,uint32_t capacity) {
+    if(!runHash || runHash!=SyncTestObserver() || !output || !capacity ||
+       elementSize!=sizeof(SdgoHangarGameTestUnitV1) || !g_thread ||
+       GetCurrentThreadId()!=g_thread || !g_grid || !g_ui.Owns(g_grid) || !Visible())return 0;
+    Snapshot snapshot;
+    if(!GetSnapshot(snapshot) || offset>=snapshot.units.size())return 0;
+    const size_t count=std::min<size_t>(capacity,snapshot.units.size()-offset);
+    for(size_t i=0;i<count;++i) {
+        const auto& source=snapshot.units[offset+i];
+        SdgoHangarGameTestUnitV1 unit{};
+        unit.uid=source.uid;unit.unit_id=source.type;unit.slot=source.slot;unit.level=source.level;
+        unit.flags=ObserverUnitFlags(source);
+        unit.protection_flags=ObserverProtection(source,snapshot.activeSlot);
+        output[i]=unit;
+    }
+    return static_cast<int>(count);
+}
+
+static int HangarGameTestAction(
+    uint64_t runHash,uint32_t actionValue) {
+    if(!runHash || runHash!=SyncTestObserver())return 0;
+    const auto action=ObserverAction(actionValue);void* control=nullptr;
+    if(action==ui::Action::None || !ObserverActionReady(action,control))return 0;
+    ButtonClicked(g_grid,nullptr,control);
+    ++g_testObserver.actionSequence;g_testObserver.lastAction=actionValue;
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoHangarGameTestGetSnapshotV1(
+    SdgoHangarGameTestSnapshotV1* output) {
+    __try{return HangarGameTestGetSnapshot(output);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoHangarGameTestGetUnitsV1(
+    uint64_t runHash,uint32_t offset,SdgoHangarGameTestUnitV1* output,
+    uint32_t elementSize,uint32_t capacity) {
+    __try{return HangarGameTestGetUnits(runHash,offset,output,elementSize,capacity);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+}
+extern "C" __declspec(dllexport) int __cdecl SdgoHangarGameTestActionV1(
+    uint64_t runHash,uint32_t actionValue) {
+    __try{return HangarGameTestAction(runHash,actionValue);}
+    __except(EXCEPTION_EXECUTE_HANDLER){return 0;}
 }
 
 SDGO_MOD_ENTRY {
