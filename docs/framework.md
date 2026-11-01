@@ -196,6 +196,7 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
 | `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
 
 The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
