@@ -1,6 +1,7 @@
 #include "ai_test_support.h"
 #include "../mods/pvp_ai/pvp_ai.cpp"
 #include <algorithm>
+#include <filesystem>
 #include <limits>
 #include <set>
 #include <thread>
@@ -17,6 +18,8 @@ int originals = 0;
 bool revive = true;
 std::vector<uint32_t> npcIds = {100, 101, 102, 103, 104};
 std::vector<uint8_t> points = {4, 3, 2, 5, 0};
+std::wstring modDirectory;
+const wchar_t* ModDirectory(SdgoMod*) {return modDirectory.c_str();}
 
 void Human(int slot, int team, int colour = 0) {
     SlotPilotId(room.data(), slot) = 10u + slot;
@@ -76,6 +79,11 @@ void Reset(int mode = 1) {
     g_settings.logRoom = 0;
     g_random = 1234567;
     g_api = &ai_test::api;
+    g_mod = nullptr;
+    g_battleAiServerModule = nullptr;
+    g_applyServerLoadout = nullptr;
+    g_battleAiServerPath.clear();
+    g_loadoutBridgeFaultLogged = 0;
     g_buildAiPilot = reinterpret_cast<BuildAiPilotFn>(&Build);
     g_setupAiPilot = reinterpret_cast<SetupAiPilotFn>(&Setup);
     g_pilotReset = reinterpret_cast<PilotResetFn>(&ResetPart);
@@ -94,11 +102,67 @@ void Reset(int mode = 1) {
 }
 }
 
-int main() {
+int wmain(int argc,wchar_t** argv) {
     using namespace fixture;
+    CHECK(argc==2);
+    if(argc!=2) return 2;
     // The production ModLoad initializes the new item lifecycle lock. This
     // fixture calls the included implementation directly instead of ModLoad.
     InitializeCriticalSection(&g_itemsLock);
+    SCENARIO("optional post-build server bridge is absent-safe and covers initial and deck builds");
+    namespace fs=std::filesystem;
+    const fs::path bridgeRoot=fs::temp_directory_path()/
+        (L"sdgo-pvp-ai-bridge-"+std::to_wstring(GetCurrentProcessId()));
+    std::error_code removeError;
+    fs::remove_all(bridgeRoot,removeError);
+    const fs::path pvpDirectory=bridgeRoot/L"sdgo/mods/pvp_ai";
+    const fs::path serverDirectory=bridgeRoot/L"sdgo/mods/battle_ai_server";
+    fs::create_directories(pvpDirectory);
+    fs::create_directories(serverDirectory);
+    modDirectory=pvpDirectory.wstring();
+    auto bridgeApi=ai_test::api;
+    bridgeApi.ModDirectory=&ModDirectory;
+    Reset();
+    g_api=&bridgeApi;
+    Title("!ai hard");
+    CHECK(AddAiPilot(room.data(),6,100,2,2));
+    CHECK(g_battleAiServerModule==nullptr&&g_applyServerLoadout==nullptr);
+    const fs::path staged=serverDirectory/L"battle_ai_server.dll";
+    fs::copy_file(argv[1],staged,fs::copy_options::overwrite_existing);
+    HMODULE bridge=LoadLibraryW(staged.c_str());
+    CHECK(bridge!=nullptr);
+    using GetInt=int(__cdecl*)();
+    using GetPointer=void*(__cdecl*)();
+    auto calls=bridge?reinterpret_cast<GetInt>(GetProcAddress(bridge,"TestCalls")):nullptr;
+    auto lastNpc=bridge?reinterpret_cast<GetInt>(GetProcAddress(bridge,"TestLastNpc")):nullptr;
+    auto lastRoom=bridge?reinterpret_cast<GetPointer>(GetProcAddress(bridge,"TestLastRoom")):nullptr;
+    auto lastPilot=bridge?reinterpret_cast<GetPointer>(GetProcAddress(bridge,"TestLastPilot")):nullptr;
+    auto lastUnit=bridge?reinterpret_cast<GetPointer>(GetProcAddress(bridge,"TestLastUnit")):nullptr;
+    CHECK(calls&&lastNpc&&lastRoom&&lastPilot&&lastUnit);
+    Reset(7);
+    g_api=&bridgeApi;
+    Title("!ai hard");
+    CHECK(AddAiPilot(room.data(),6,100,2,2));
+    CHECK(calls&&calls()==1&&lastNpc&&lastNpc()==100&&lastRoom&&lastRoom()==room.data()&&
+          lastPilot&&lastPilot()==Pilot(6)&&lastUnit&&lastUnit()==Unit(6)&&Unit(6)[0x30]==0xA5);
+    auto poolPoints=PoolPoints(room.data(),npcIds);
+    CHECK(poolPoints==points&&calls&&calls()==1+static_cast<int>(npcIds.size()));
+    Put<uint16_t>(Pilot(6),kPilotPower,321);Put<uint16_t>(Pilot(6),kPilotLifeCost,654);
+    BuildDeck(room.data(),6,100,npcIds,poolPoints);
+    CHECK(calls&&calls()>1+static_cast<int>(npcIds.size()));
+    for(int form=1;form<Pilot(6)[kPilotTagUnits];++form) CHECK(Unit(6,form)[0x30]==0xA5);
+    const int callsBeforeRespawn=calls?calls():0;
+    Pilot(6)[kPilotForm]=1;Put<uint32_t>(Unit(6,1),kUnitHp,0);
+    RespawnAiPilots(room.data(),123);
+    CHECK(Unit(6,1)[0x30]==0xA5&&Get<uint32_t>(Unit(6,1),kUnitHp)==9000&&
+          calls&&calls()==callsBeforeRespawn);
+    FreeLibrary(bridge);
+    Reset();
+    g_api=&bridgeApi;
+    CHECK(AddAiPilot(room.data(),6,100,2,2));
+    CHECK(g_battleAiServerModule==nullptr&&g_applyServerLoadout==nullptr);
+    fs::remove_all(bridgeRoot,removeError);
+
     Reset();
     SCENARIO("room commands and bounded numbers");
     CHECK(!ParseTitle("normal room").enabled);

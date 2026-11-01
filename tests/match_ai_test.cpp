@@ -21,6 +21,10 @@ char seenSearchP2 = -1, seenSearchP3 = -1;
 void* fixtureTeamTrampoline = nullptr;
 uint32_t gateFrameFlags = 0, gateFrameEbx = 0, gateFrameEsi = 0, gateFrameEdi = 0, gateFrameEcx = 0;
 uint32_t gateFrameFallback = 0;
+uint32_t scoreboardFrameFlags = 0, scoreboardFrameEax = 0, scoreboardFrameEbx = 0;
+uint32_t scoreboardFrameEcx = 0, scoreboardFrameEdx = 0, scoreboardFrameEsi = 0, scoreboardFrameEdi = 0;
+uint32_t scoreboardFrameEbp = 0, scoreboardExpectedEbp = 0;
+uint8_t* scoreboardFrameUnit = nullptr;
 std::array<std::array<uint8_t, 0xA0>, 12> nodes{};
 std::array<std::array<uint8_t, 0x200>, 12> npcs{};
 std::array<std::array<uint8_t, 0x70>, 12> slots{};
@@ -129,6 +133,61 @@ __declspec(naked) int InvokeTeamGate(uint8_t*) {
         mov gateFrameEcx, ecx
         mov edx, [ebp-3Ch]
         mov gateFrameFallback, edx
+        pop edi
+        pop esi
+        pop ebx
+        mov esp, ebp
+        pop ebp
+        ret
+    }
+}
+__declspec(naked) int ScoreboardGateContinuation() {
+    __asm {
+        push eax
+        pushfd
+        pop eax
+        mov scoreboardFrameFlags, eax
+        pop eax
+        mov scoreboardFrameEax, eax
+        mov scoreboardFrameEbx, ebx
+        mov scoreboardFrameEcx, ecx
+        mov scoreboardFrameEdx, edx
+        mov scoreboardFrameEsi, esi
+        mov scoreboardFrameEdi, edi
+        mov scoreboardFrameEbp, ebp
+        push eax
+        mov eax, [ebp-84h]
+        mov scoreboardFrameUnit, eax
+        pop eax
+        test al, al
+        jne hide_npc
+        mov eax, 1
+        ret
+    hide_npc:
+        xor eax, eax
+        ret
+    }
+}
+__declspec(naked) int InvokeScoreboardGate(uint8_t*, int) {
+    __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 90h
+        push ebx
+        push esi
+        push edi
+        mov edx, [ebp+8]
+        mov [ebp-84h], edx
+        mov scoreboardExpectedEbp, ebp
+        mov eax, 0A5A5A500h
+        mov al, byte ptr [ebp+0Ch]
+        mov ebx, 11223344h
+        mov ecx, 55667788h
+        mov edx, 22334455h
+        mov esi, 66778899h
+        mov edi, 33445566h
+        stc
+        call ScoreboardNpcGate
         pop edi
         pop esi
         pop ebx
@@ -267,6 +326,7 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_targetSearchUm = nullptr; g_lockFaults = 0;
     g_targetTeamOriginal = fixtureTeamTrampoline ? fixtureTeamTrampoline : reinterpret_cast<void*>(&NativeTeamOnlyGate);
     g_targetParticipants = reinterpret_cast<void*>(&NativeParticipantContinuation);
+    g_scoreboardNpcGateOriginal = reinterpret_cast<void*>(&ScoreboardGateContinuation);
     network = true; observer = failAppend = throwCamera = throwUdp = false; starts.clear();
 }
 void StartEntry(int slot, uint32_t id, int count, std::initializer_list<uint32_t> ids) {
@@ -325,6 +385,28 @@ int main() {
     CHECK(PlayerSlot(um, nullptr, 9999) == g_scratchSlot);
     CHECK(nativeSlotCalls <= slotCalls + static_cast<int>(g_botTable.size()));
     SetSlotColour(um, nullptr, 9999, 2); CHECK(slotColourIndex == -1);
+
+    SCENARIO("scoreboard includes registered AI on both teams but preserves the native NPC filter");
+    Reset(); Records(1, 2);
+    ais[kRecordTeam] = 1;
+    ais[kRecordSize + kRecordTeam] = 2;
+    SpawnAiPlayers(mode.data(), "scoreboard");
+    CHECK(g_botTable.size() == 2);
+    for (const Bot& scoreboardBot : g_botTable) {
+        CHECK(InvokeScoreboardGate(scoreboardBot.unit, 1) == 1);
+        CHECK(scoreboardFrameUnit == scoreboardBot.unit && scoreboardFrameEbp == scoreboardExpectedEbp);
+        CHECK(scoreboardFrameEax == 0xA5A5A500 && scoreboardFrameEbx == 0x11223344);
+        CHECK(scoreboardFrameEcx == 0x55667788 && scoreboardFrameEdx == 0x22334455);
+        CHECK(scoreboardFrameEsi == 0x66778899 && scoreboardFrameEdi == 0x33445566);
+        CHECK((scoreboardFrameFlags & 1) != 0);
+    }
+    Put<uint32_t>(units[10].data(), kUnitObjectId, 1011);
+    CHECK(InvokeScoreboardGate(units[10].data(), 1) == 0);
+    CHECK(scoreboardFrameEax == 0xA5A5A501 && scoreboardFrameUnit == units[10].data());
+    CHECK(InvokeScoreboardGate(searchHumans[0].data(), 0) == 1);
+    const Bot staleScoreboardBot = g_botTable[0];
+    Put<uint32_t>(slots[staleScoreboardBot.slot].data(), kSlotObjectId, 9999);
+    CHECK(InvokeScoreboardGate(staleScoreboardBot.unit, 1) == 0);
 
     SCENARIO("native search sees real human and AI ids through a scoped participant adapter");
     Spawn(0, 1, 2, 2); searchHumanLookup = true;

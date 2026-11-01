@@ -84,11 +84,14 @@ int main() {
     fixture::Reset(1, 3, true); MissionInit(fixture::mode.data(), nullptr);
     CHECK(fixture::initialized == 1 && fixture::created == 3 && fixture::remote == 0 && fixture::calculated == 1);
     CHECK(g_wingmen == (std::vector<uint32_t>{1001, 1002, 1003}));
+    CHECK(g_localWingmen == g_wingmen);
     CHECK(fixture::slots == (std::vector<int>{1, 2, 3}));
     fixture::Reset(1, 2, false); MissionInit(fixture::mode.data(), nullptr);
     CHECK(fixture::remote == 2);
+    CHECK(g_localWingmen.empty());
     fixture::Reset(1, 2, true); fixture::observer = true; MissionInit(fixture::mode.data(), nullptr);
     CHECK(fixture::remote == 2);
+    CHECK(g_localWingmen.empty());
 
     SCENARIO("mission slot limit and derived mode isolation");
     fixture::Reset(11, 3, true); MissionInit(fixture::mode.data(), nullptr);
