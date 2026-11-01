@@ -70,6 +70,10 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
     & python (Join-Path $PSScriptRoot 'package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'FRP toolkit packaging failed' }
 }
+if ($catalog.features.PSObject.Properties.Name -contains 'battle-rewards') {
+    & python (Join-Path $PSScriptRoot 'package_rewards.py') --out (Join-Path $out 'rewards') --binaries (Join-Path $buildRoot $Config) --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Battle reward owner toolkit packaging failed' }
+}
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
