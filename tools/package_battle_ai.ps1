@@ -2,7 +2,7 @@ param([string]$Config='Release')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $tag=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-$name='SDGO-BattleAI-0.3.0-preview-'+$tag
+$name='SDGO-BattleAI-0.3.1-preview-'+$tag
 $out=Join-Path $repo ('dist\'+$name)
 if(Test-Path -LiteralPath $out) { throw 'Package destination already exists' }
 $products=@{
@@ -42,7 +42,7 @@ Get-ChildItem -LiteralPath $out -Recurse -File | ForEach-Object {
     $relative=$_.FullName.Substring($out.Length+1).Replace('\','/')
     $files[$relative]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$manifest=[ordered]@{schema=1;version='0.3.0-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','battle_ai_server','pvp_ai');files=$files}
+$manifest=[ordered]@{schema=1;version='0.3.1-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','battle_ai_server','pvp_ai');files=$files}
 [IO.File]::WriteAllText((Join-Path $out 'package-manifest.json'),($manifest | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=$out+'.zip'

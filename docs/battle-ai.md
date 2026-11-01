@@ -1,4 +1,4 @@
-# Battle AI 0.3 / 通用战斗 AI（开发预览）
+# Battle AI 0.3.1 / 通用战斗 AI（开发预览）
 
 这套插件为现有对战 Mod 的机器人提供三档 AI，按当前机体、形态、武装数据选择打法。
 随正常游戏启动生效，没有额外的“开始联机”入口。插件不保存 FRP 地址、账号或本机专用路径。
@@ -11,7 +11,7 @@
 |---|---|
 | `!ai` / `!ai3` | 原有机器人数量规则，默认 Medium |
 | `!ai3 easy` | Easy：原版 AI |
-| `!ai e3 a1 medium` | Medium：Lv12、瞄准/预判、合法必杀、防背击；基础进攻决策沿用原版 |
+| `!ai e3 a1 medium` | Medium：Lv12、连续进攻决策、瞄准/预判、合法必杀、移动防背击 |
 | `!ai3 hard` | Hard：EX13、通用战术、高级动作、盾面防御、一个合法部件和一种限次道具 |
 
 `lv1`–`lv5` 仍是既有 NPC 池筛选，不代表机体真实等级，也不代表难度。
@@ -40,8 +40,9 @@ Easy 保留原生机体等级、决策、瞄准与资源规则。新等级、部
   遮挡后使用最后可见位置，重新取得真实射线后才射击。
 - 走 A 使用真实出枪回执与原生动画开放的移动取消窗口；近战敌人接近或敌人正被牵制时，短步/推进与射击交替。
   它不改写真实武器 CD，也不伪造弹药。
-- Medium 以上遇到背后威胁或夹击时，选择降低最坏背击风险的朝向及短途移位。
-  Hard 按当前形态、武器姿态、盾的方向和命中类型使用完好盾；包括背盾、侧盾。
+- Medium 以上持续维持对敌朝向，移动目标与转向分开处理，后退、侧移不会因寻路主动转身露背。
+  前后夹击时优先选能把所有已知威胁放在正面半球的朝向，并持续短途脱离；无法完全避免时减少最坏背击暴露。
+  合法移动时优先维持正面；被刀抓住等不能移动的防御窗口，Hard 按当前形态、武器姿态、盾的方向和命中类型使用完好背盾、侧盾。
   盾值归零后立即放弃盾面朝向，分步快速转回正面防御。位移继续受原生硬直限制。
 - Medium 以上按玩家资源和动作许可请求必杀，普通攻击不会被 SP 门槛阻挡。
   开局 SP 为零，通过原生攻/受击收益积累，复活不清掉已积累的 SP。
@@ -63,7 +64,9 @@ Easy 保留原生机体等级、决策、瞄准与资源规则。新等级、部
 - **通用武器选择**：读取当前形态的真实 0-based 武器槽、射程、弹量、冷却、估计伤害和移动射击标志，
   比较当前距离与武器输出；空弹切换其它可用武器。原生切枪是请求，必须观察到实际提交后才发起攻击。
   不按 Gunfighter/Infighter 等脚本名决定远近战，不要求为每台机体手写配置。
-- **攻击频率与意图**：减少 NPC 额外等待，提供反应时间、攻击间隔、连续进攻与短暂停顿设置。
+- **攻击频率与意图**：Medium／Hard 每次原生 Think 都决策，取消反应等待、爆发停顿、
+  目标／武器保持时间和额外发起攻击间隔；合法换武器、受击恢复后首个可行动帧继续进攻。
+  没有目标时巡逻、冷却或弹药不足时寻找走位；原生硬直、前摇、武器冷却和真实换武器提交仍执行。
   只在原生中立状态调节发起下一次攻击的意图；充能、持续光束、funnel、rush、连段等活动状态保留原生按住输入。
   实际弹药、武器冷却、动作和伤害仍由原生 FSM 执行。
 - **低血量集火**：在可见、可攻击、处于可用武器有效射程的候选中，优先剩余 HP 少的敌人。
@@ -110,9 +113,9 @@ Easy 保留原生机体等级、决策、瞄准与资源规则。新等级、部
 | 设置 | 含义 |
 |---|---|
 | `Difficulty=Medium` | 默认；可写 Easy/Medium/Hard，房名有明确难度时优先使用房名 |
-| `ReactionMs` / `AttackIntervalMs` | 反应时间与发起攻击的额外间隔；不是改写武器冷却 |
-| `BurstMs` / `BurstPauseMs` | 连续进攻与暂停时间；活动充能/持续攻击不会被此项截断 |
-| `TargetHoldMs` | 目标保持时间，减少抖动 |
+| `DecisionMs` / `ReactionMs` / `AttackIntervalMs` | Medium／Hard 强制为零，旧配置也不会加回决策／攻击等待 |
+| `BurstMs` / `BurstPauseMs` | Medium／Hard 取消人为爆发停顿，保持原生连续／充能攻击 |
+| `TargetHoldMs` / `WeaponHoldMs` | Medium／Hard 不按时间锁定目标或武器，立即响应新状态；原生攻击动作仍优先 |
 | `FarTargetSlack` / `FarTargetRatioPercent` | 防止极远残血引走正在近距离交战的 AI |
 | `AirStrafe` / `StrafeSwitchMs` | 对射横移与换向间隔 |
 | `SwingCancelChance` / `CoverChance` | Hard 每次近战起手/掩体机会的概率，默认 80/90 |
@@ -183,7 +186,8 @@ python tools/verify_symbols.py D:/Games/SDGO/GOnline.exe
 ## English summary
 
 The matching client/host add-ons default to Medium and accept room-title difficulty.
-Medium uses level 12, accurate aim, legal specials and rear-threat defence. Hard adds
+Medium uses level 12, continuous decisions without artificial idle, accurate aim,
+legal specials and front-facing movement. Hard adds
 EX13, teamwork, melee weaving, dash cancellation, cover/orbwalking, live shield posture,
 one ordinary player part and one limited native consumable. Native player SP checks,
 costs and activation rules apply. Ammo, cooldowns, physics and damage remain native.

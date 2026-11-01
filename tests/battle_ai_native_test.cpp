@@ -126,12 +126,37 @@ int wmain(int argc,wchar_t** argv) {
     lua_pushnumber(g_L,987);
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
+    if(generic||medium) {
+        Eval("motionProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe(); n:SetMoveTargetPos_Dir(2,400,2,false); n:SetMoveType(1); n:SetAttackOnOff(true); return 123 end");
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+        native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,1000});
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,-1});
+        native_world::Put(unit.bytes,0x3078,native_world::Vec3{0,0,-400});
+        unit.Think();
+        const auto protectedFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(protectedFacing.z>0.99f&&unit.bytes[0x30DC]!=0&&reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->z==-400,
+              "Medium/Hard backward movement retains its waypoint and front facing despite a reversed path yaw cache");
+        Eval("SDGO_BattleAI_GenericUpdate=motionProbe");
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+        native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{1400,0,100});
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        unit.bytes[0x30DC]=0;
+    }
     if(easy||medium) {
         native_world::Put(unit.bytes,0x31F4,77);unit.Think();
-        Check(Eval("assert(calls==2 and SDGO_BattleAI_Universal.states[20]==nil and SDGO_BattleAI.states[20]==nil)"),
-              "Easy/Medium keep original decisions without generic or legacy tactics");
-        Check(native_world::lastWait==77 && native_world::jumps==0 && native_world::moves==0,
-              "Easy/Medium leave native cadence and locomotion unchanged");
+        if(easy) {
+            Check(Eval("assert(calls==2 and SDGO_BattleAI_Universal.states[20]==nil and SDGO_BattleAI.states[20]==nil)"),
+                  "Easy keeps original decisions without generic or legacy tactics");
+            Check(native_world::lastWait==77 && native_world::jumps==0 && native_world::moves==0,
+                  "Easy leaves native cadence and locomotion unchanged");
+        } else {
+            Check(Eval("assert(calls==1 and SDGO_BattleAI_Universal.states[20].target==2 and SDGO_BattleAI.states[20]==nil)"),
+                  "Medium uses continuous generic decisions and never reruns stock idle");
+            Check(native_world::lastWait==0 && unit.bytes[0xDCD]!=0 && native_world::jumps==0,
+                  "Medium clears native NPC idle wait and fires on consecutive ready frames without Hard air tactics");
+        }
         native_world::Ray3 profileRay;
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
         if(easy) {
@@ -139,7 +164,7 @@ int wmain(int argc,wchar_t** argv) {
                   "Easy leaves original aiming ray and NPC error untouched");
         } else {
             Check(profileRay.direction.x>0.9f && *reinterpret_cast<float*>(unit.bytes+0x3204)==0,
-                  "Medium corrects native shot aim while retaining original AI");
+                  "Medium corrects native shot aim with continuous decisions");
             using InitializeFn=void(__cdecl*)(uint8_t*,int,uint32_t);
             auto initializeUnit=reinterpret_cast<InitializeFn>(GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),"SdgoBattleAiInitializeUnit"));
             Check(initializeUnit!=nullptr,"optional match_ai native loadout endpoint is exported by its stable name");
@@ -189,19 +214,23 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,0x24C+3*0xC8,int16_t(1));native_world::Put(fsm,0x258+3*0xC8,special);
             using RequestFn=void(__thiscall*)(uint8_t*);
             RequestFn volatile nativeRequest=reinterpret_cast<RequestFn>(native_world::Address(&native_world::Callbacks::AttackAdmission));
+            auto requestSpecial=[&] {
+                native_world::Put(fsm,0x240,int32_t(3));native_world::Put(fsm,0x248,special);
+                nativeRequest(fsm);
+            };
             int beforeRequests=native_world::attackAdmissions;
             nativeRequest(fsm);unit.Think();
             Check(native_world::attackAdmissions==beforeRequests+1&&*reinterpret_cast<int*>(fsm+0x240)==1,
                   "shared attack admission forwards ordinary shots even without SP and Medium does not select special");
             ++beforeRequests;
-            native_world::Put(fsm,0x248,special);nativeRequest(fsm);
+            native_world::Put(fsm,0x248,special);requestSpecial();
             Check(native_world::attackAdmissions==beforeRequests,"final attack admission rejects the special branch without player SP");
             native_world::Put(fsm,0x248,native_world::weapons[1].data());
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
             Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
                   "Medium requests special slot through the native weapon-change API at full SP");
             unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
-            nativeRequest(fsm);Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
+            requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
             native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));uint8_t accepted[0x18]={};
             native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
             using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
@@ -215,23 +244,25 @@ int wmain(int argc,wchar_t** argv) {
             NoticeFn volatile meleeNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::MeleeNotice));
             int terminalResult=meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(terminalResult==0x51B1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"actual melee completion606 applies authoritative remaining SP through native command18");
+            Check(*reinterpret_cast<int*>(fsm+0x240)==1,
+                  "authoritative completion immediately restores the ordinary weapon without waiting for a missed busy-state sample");
             native_world::Put(terminal,0xE,int32_t(20000));meleeNotice(native_world::document.data(),terminal);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"duplicate terminal notification cannot refund a finished special");
-            unit.bytes[0x31C4]=1;nativeRequest(fsm);unit.bytes[0x31C4]=0;
+            unit.bytes[0x31C4]=1;requestSpecial();unit.bytes[0x31C4]=0;
             Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects explicit unit restriction");
-            native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(1));nativeRequest(fsm);
+            native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(1));requestSpecial();
             Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects controller override");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(0));
-            native_world::Put(unit.bytes,0xBC8,int32_t(0));nativeRequest(fsm);
+            native_world::Put(unit.bytes,0xBC8,int32_t(0));requestSpecial();
             Check(native_world::attackAdmissions==beforeRequests+1,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
-            native_world::Put(unit.bytes,0xBC8,int32_t(30000));nativeRequest(fsm);notify(native_world::document.data(),accepted);unit.Think();
+            native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();notify(native_world::document.data(),accepted);unit.Think();
             NoticeFn volatile rangedNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::RangedNotice));
             native_world::Put(terminal,0xA,int32_t(0));
             int offThreadResult=0;
             std::thread noticeWorker([&]{offThreadResult=rangedNotice(native_world::document.data(),terminal);});noticeWorker.join();
             Check(offThreadResult==0x51B2&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==20000,"off-thread ranged completion forwards original and queues SP without touching game-thread actor state");
             unit.Think();Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"game thread drains ranged completion789 authoritative SP before the next decision");
-            native_world::Put(unit.bytes,0xBC8,int32_t(30000));nativeRequest(fsm);notify(native_world::document.data(),accepted);unit.Think();
+            native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();notify(native_world::document.data(),accepted);unit.Think();
             NoticeFn volatile spState=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpStateNotice));
             uint8_t state[0xF0]={};native_world::Put(state,0,uint16_t(0x779));native_world::Put(state,6,uint32_t(0x80000014));
             state[0xA]=0xFF;native_world::Put(state,0xB,int32_t(0));native_world::Put(state,0xF,uint32_t(104));
@@ -272,6 +303,7 @@ int wmain(int argc,wchar_t** argv) {
             int skillResult=skillNotice(native_world::document.data(),skillPacket);unit.Think();
             Check(skillResult==0x51D1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==9000,
                   "native skill-state SP snapshots share the same sequence and cannot be rolled back by an older queued clear");
+            native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();unit.Think();
             native_world::deferSwitch=true;
             Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
             Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
@@ -284,8 +316,9 @@ int wmain(int argc,wchar_t** argv) {
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
             Check(profileRay.direction.x==0 && *reinterpret_cast<float*>(unit.bytes+0x3204)==0.5f,
                   "Medium to Easy reload restores original aim behavior");
+            native_world::Put(unit.bytes,0xBC8,int32_t(0));
             Config("[settings]\n");native_world::SetRoomTitle(L"!ai3 hard");Sleep(2100);unit.Think();
-            Check(Eval("assert(SDGO_BattleAI_Universal.states[20] and SDGO_BattleAI_Universal.states[20].target==2)"),
+            Check(Eval("assert(SDGO_BattleAI_Universal.difficulty==2 and SDGO_BattleAI_Universal.states[20].target==2)"),
                   "heap room title selects Hard through the real app/service/mode/room pointer chain");
             Config("[settings]\nDifficulty=Hard\n");native_world::SetRoomTitle(L"!ai easy");Sleep(2100);unit.Think();
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
@@ -293,15 +326,15 @@ int wmain(int argc,wchar_t** argv) {
                   "room difficulty overrides local config and hands Easy back to original aim");
             Config("[settings]\n");native_world::SetRoomTitle(L"!ai3",true);Sleep(2100);unit.Think();
             reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&profileRay);
-            Check(profileRay.direction.x>0.9f&&Eval("assert(SDGO_BattleAI_Universal.states[20]==nil)"),
+            Check(profileRay.direction.x>0.9f&&Eval("assert(SDGO_BattleAI_Universal.difficulty==1 and SDGO_BattleAI_Universal.states[20])"),
                   "unmarked inline room title returns to Medium with no manual client settings");
             native_world::SetRoomTitle(L"!ai hard");native_world::Put(native_world::room.data(),0x10,uint32_t(21));Sleep(2100);unit.Think();
-            Check(Eval("assert(SDGO_BattleAI_Universal.states[20]==nil)"),"malformed room title fails closed to the default profile");
+            Check(Eval("assert(SDGO_BattleAI_Universal.difficulty==1 and SDGO_BattleAI_Universal.states[20])"),"malformed room title fails closed to the default profile");
         }
     } else if(generic) {
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2 and calls==1)"),"generic dispatch chooses real observed lower HP and initializes stock once");
         unit.Think();
-        Check(unit.bytes[0xDCD]==0,"native attack-intent hook enforces real-time interval between pulses");
+        Check(unit.bytes[0xDCD]!=0,"native attack-intent hook has no additional interval between ready pulses");
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[2].data())->Shot(111,2,3);
         Sleep(130);unit.Think();
         Check(native_world::jumps==1 && native_world::moves>0,"brief ranged shot event enables native air strafe without gauge refill");
@@ -475,8 +508,16 @@ int wmain(int argc,wchar_t** argv) {
             Check(sideMode==2?sideFacing.x<-0.98f:sideFacing.x>0.98f,
                   sideMode==2?"class-3 shield presents its numeric side with forward -X to attacker +Z":"class-4 shield uses the opposite native yaw sign with forward +X");
         }
-        native_world::Put(unit.bytes,0x2B70,0.0f);
         native_world::Put(movement,4,movement+0x20);
+        native_world::Put(unit.bytes,0x2B70,500.0f);
+        native_world::definitions[0][0x14E]=native_world::definitions[0][0x14F]=4;
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe(); n:SetMoveTargetPos_Dir(2,400,2,false); n:SetMoveType(1); return 123 end");
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,-1});
+        unit.Think();
+        Check(reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C)->z>0.99f&&unit.bytes[0x30DC]!=0,
+              "Hard legal retreat faces the attacker instead of turning its intact rear shield and back into the movement");
+        native_world::Put(unit.bytes,0x2B70,0.0f);
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         Config("[settings]\nGenericMode=1\nEnabled=0\n");Sleep(2100);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);

@@ -26,6 +26,14 @@ int main() {
     auto reposition=DefensivePosition({},{0,0,1},crossfire,2);
     check(reposition.relocate&&reposition.facing.rearRisk<sides.rearRisk-0.08,
           "crossfire proposes a finite short relocation that reduces worst rear exposure");
+    DefenceThreat uneven[]={{{0,0,1000},1},{{0,0,-1000},1000000}};
+    auto protectedSides=DefensiveFacing({},{0,0,1},uneven,2);
+    check(protectedSides.valid&&protectedSides.rearExposure==0&&std::abs(protectedSides.direction.x)>0.99,
+          "moving defence never trades a weaker attacker's back exposure for threat weight");
+    DefenceThreat narrow[]={{{0,0,1000},1},{{1,0,-1000},1}};
+    auto tight=DefensiveFacing({},{0,0,-1},narrow,2);
+    check(tight.valid&&tight.rearExposure==0,
+          "exact threat boundaries find a safe facing even inside a sub-grid front hemisphere");
     check(std::abs(TurnStepDegrees({0,0,1},{0,0,-1},900,16))<=14.41&&
           std::abs(TurnStepDegrees({0,0,1},{0,0,-1},900,5000))<=15,
           "fast defensive turn remains visibly incremental even after a long stalled frame");

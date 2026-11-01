@@ -17,7 +17,7 @@ foreach($case in 'enabled','disabled','bad-signature','missing-script','generic'
     $policy="[settings]`r`n"
     if($case -eq 'generic') { $policy="[settings]`r`nDifficulty=Hard`r`nSwingCancelChance=100`r`nReactionMs=0`r`nTargetHoldMs=0`r`nBurstMs=0`r`n" }
     if($case -eq 'easy') { $policy="[settings]`r`nDifficulty=Easy`r`n" }
-    if($case -eq 'medium') { $policy="[settings]`r`nDifficulty=Medium`r`n" }
+    if($case -eq 'medium') { $policy="[settings]`r`nDifficulty=Medium`r`nGenericMode=0`r`nReactionMs=3000`r`nDecisionMs=1000`r`nAttackIntervalMs=10000`r`nBurstMs=1`r`nBurstPauseMs=5000`r`nTargetHoldMs=5000`r`nWeaponHoldMs=5000`r`n" }
     [IO.File]::WriteAllText((Join-Path $mod 'config.ini'),$policy)
     $cfg="[core]`r`nlog_level=1`r`n[mods]`r`n"
     if($case -eq 'disabled') { $cfg+="battle_ai=0`r`n" }

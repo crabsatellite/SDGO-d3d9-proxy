@@ -83,6 +83,8 @@
 Battle 和所有客户端配齐[战斗 AI](docs/battle-ai.md)后，在同一参数段加入 `easy`、`medium`
 或 `hard` 即可；默认 Medium。`lv4` 选择 NPC 池，Medium 的实际机体等级为 Lv12，Hard 为 EX13。
 难度 Mod 与配套的 `pvp_ai`／`match_ai` 应一起更新，朋友正常启动游戏即可。
+Medium／Hard 每个原生决策帧持续行动，移除人为反应／爆发等待，移动时保持对敌朝向；
+原生动作、武器冷却和换武器限制继续执行。
 服主需要启用客户端 `room_titles`、Agent 的 `room_titles_agent`、Battle 的 `room_titles_server`，
 并更新使用中的 `coop_ai` / `pvp_ai` / `room_random`；玩家使用分发好的客户端正常启动。
 这三个房名 Mod 默认关闭；AI 和随机机体功能仍需各自安装、启用和配置。

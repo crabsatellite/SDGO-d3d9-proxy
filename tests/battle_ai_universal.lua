@@ -13,11 +13,13 @@ function SDGO_BattleAI_Cadence(ms) calls.cadence=ms end
 function SDGO_BattleAI_MeleeGate(value) calls.meleeGate=value end
 function SDGO_BattleAI_Chance(percent) calls.rolls=(calls.rolls or 0)+1;return calls.roll or 0 end
 function SDGO_BattleAI_Cover(id,x,y,z) calls.coverQueries=(calls.coverQueries or 0)+1;calls.coverX=x;return calls.coverCandidate end
-function SDGO_BattleAI_CancelRoute() calls.cancelled=(calls.cancelled or 0)+1 end
+function SDGO_BattleAI_CancelRoute() calls.cancelled=(calls.cancelled or 0)+1;observation.routeActive=0 end
 function SDGO_BattleAI_Route(id,force,x,y,z)
   calls.routes=calls.routes+1; calls.routeId=id;calls.force=force
     calls.routeX=x
-  return calls.routeResult or 1
+  local result=calls.routeResult or 1
+  observation.routeActive=result
+  return result
 end
 function SDGO_BattleAI_Log(text) calls.error=text end
 local npc={}
@@ -26,7 +28,7 @@ function npc:SetAttackTarget(id) calls.target=id end
 function npc:SetAttackOnOff(on) calls.fire=on end
 function npc:MoveStop() calls.stop=(calls.stop or 0)+1 end
 function npc:SetMoveTargetPosRandom() calls.patrol=(calls.patrol or 0)+1 end
-function npc:ChangeWeapon(slot) calls.switch=slot end
+function npc:ChangeWeapon(slot) calls.switch=slot;calls.switches=(calls.switches or 0)+1 end
 function npc:SetMoveTargetPos_Dir(dir,distance,facing,jump)
   assert(dir==facing and jump==false and distance>0)
   calls.moves=calls.moves+1;calls.direction=dir
@@ -66,9 +68,9 @@ Reset();observation.targets[2].attackable=0;Tick(0)
 Check(calls.target==1,'invulnerable low-HP opponent is excluded')
 Reset();observation.targets[2].hp=2000;Tick(0)
 observation.targets[2].hp=1;Tick(100)
-Check(calls.target==1,'short target hold avoids cancelling a shot immediately')
+Check(calls.target==2,'new lower-HP target replaces the old target without a hold timer')
 Tick(700)
-Check(calls.target==2,'lowest HP wins once hold expires')
+Check(calls.target==2,'lowest HP remains selected while it stays the best candidate')
 observation.targets[2].hp=0;Tick(800)
 Check(calls.target==1,'death invalidates held target immediately')
 Reset();observation.weapons[2].range=4000;observation.targets[1].distance=500
@@ -78,11 +80,11 @@ Check(calls.target==1,'extreme distance gap does not pull an ongoing close engag
 Reset();observation.targets={Target(1,1000,100)};Tick(0)
 Check(calls.switch==0 and calls.fire==false,'close opponent selects data-driven melee and waits for native switch')
 observation.selectedSlot=0;Tick(100);Tick(300)
-Check(calls.fire==true,'acknowledged melee weapon attacks after reaction window')
+Check(calls.fire==true,'acknowledged melee weapon attacks without an added reaction window')
 Reset();observation.selectedSlot=0;Tick(0);Tick(300)
 Check(calls.switch==1 and calls.fire==false,'switch request is not treated as immediate native acknowledgement')
 observation.selectedSlot=1;Tick(400);Tick(600)
-Check(calls.fire==true and calls.cadence==120,'confirmed ranged weapon requests configured attack intent cadence')
+Check(calls.fire==true and calls.cadence==0,'confirmed ranged weapon has no extra attack-intent interval')
 Reset();observation.weapons[2].ammoReady=0
 observation.weapons[3]=Weapon(2,'missile',2000,1000,600);Tick(0)
 Check(calls.switch==2,'empty rifle switches to another usable weapon instead of firing empty slot')
@@ -98,9 +100,9 @@ Check(calls.jumps==0 and calls.mode==UNIT_MOVE_EVENT_MOVE,'low boost uses walkin
 Reset({ReactionMs=0});observation.weapons[2].movingShot=0;observation.targets[2].rangedFiring=1;Tick(0)
 Check(calls.jumps==0 and calls.moves==0 and calls.fire==true,'stationary-only weapon keeps native firing movement restriction')
 Reset({ReactionMs=0,BurstMs=300,BurstPauseMs=200});Tick(0);Tick(300)
-Check(calls.fire==false,'configured burst duration creates an intent pause')
+Check(calls.fire==true,'legacy burst configuration cannot create an intent pause')
 Tick(500)
-Check(calls.fire==true,'attack intent resumes after configured pause')
+Check(calls.fire==true,'attack intent stays continuous across the old burst-pause boundary')
 Reset();observation.targets={Target(1,1000,3000)};Tick(0);Tick(100);Tick(800)
 Check(calls.routes==2 and calls.fire==false,'out-of-range pursuit uses bounded navigation requests')
 Reset();calls.routeResult=0;observation.targets={Target(1,1000,3000)};Tick(0);Tick(100)
@@ -200,8 +202,8 @@ Check(calls.routeX==70 and calls.fire==false,'stationary shot waits for native m
 observation.moveCancelOpen=1;Tick(300)
 Check(calls.routeX==0 and SDGO_BattleAI_Universal.states[20].cover.stage=='tuck','actual primary shot and legal cancel window retract to the covered anchor')
 calls.routeResult=0;SDGO_BattleAI_Universal.states[20].cover.routeAt=400;Tick(400)
-Check(SDGO_BattleAI_Universal.states[20].cover.routeAt==600,'failed cover retraction retains a bounded retry instead of silently abandoning its route')
-calls.routeResult=1;Tick(600)
+Check(SDGO_BattleAI_Universal.states[20].cover.routeAt==400,'failed cover retraction adds no artificial retry wait')
+calls.routeResult=1;Tick(401)
 Check(SDGO_BattleAI_Universal.states[20].cover.routeAt==nil,'cover retries a transiently unavailable return route')
 Reset({ReactionMs=0});t=observation.targets[2];t.pos={x=1000,y=100,z=0};calls.roll=0;Tick(0)
 Tick(100)
@@ -259,4 +261,61 @@ Check(calls.switch==3 and SDGO_BattleAI_Universal.profiles[20].special.target==2
 Reset({Difficulty=0});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.switch==nil and calls.fire==nil,'Easy never adds special attack requests')
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty,GenericMode=0,DecisionMs=1000,ReactionMs=3000,
+    TargetHoldMs=5000,WeaponHoldMs=5000,AttackIntervalMs=10000,BurstMs=1,BurstPauseMs=5000})
+  Tick(0)
+  Check(calls.fire==true and calls.cadence==0,'Medium/Hard first legal frame attacks despite legacy idle configuration: '..difficulty)
+  Tick(1);Tick(2);Tick(3)
+  Check(calls.fire==true and calls.native==1,'Medium/Hard does not reenter stock idle or burst pauses: '..difficulty)
+  observation.targets[1].hp=1;Tick(4)
+  Check(calls.target==1 and calls.fire==true,'Medium/Hard switches target and fires in the same decision: '..difficulty)
+  observation.weapons[2].ready=0;observation.weapons[3]=Weapon(2,'projectile',2000,1,2000);Tick(5)
+  Check(calls.switch==2 and not calls.fire,'a natively ready weapon beats a stronger cooling-down weapon immediately: '..difficulty)
+  local before=calls.switches;Tick(6)
+  Check(calls.switches==before+1,'uncommitted native weapon requests have no extra retry wait: '..difficulty)
+  observation.selectedSlot=2;Tick(7)
+  Check(calls.fire==true,'the first confirmed weapon frame fires without a reaction timer: '..difficulty)
+  observation.hurt=1;Tick(8);Check(not calls.fire,'native hurt still blocks attacks: '..difficulty)
+  observation.hurt=0;Tick(9)
+  Check(calls.fire==true,'native hurt recovery resumes attack on its first legal frame: '..difficulty)
+  SDGO_BattleAI_Universal.states[20].recoverUntil=10000;Tick(10)
+  Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recoverUntil==nil,'a ready attack immediately preempts timed stuck recovery: '..difficulty)
+  observation.weapons[3].ready=0;Tick(11)
+  Check(not calls.fire and calls.moves>0,'native weapon cooldown uses movement without inventing an attack: '..difficulty)
+  Reset({Difficulty=difficulty});observation.targets={};Tick(0);local patrols=calls.patrol
+  observation.goal=observation.pos;Tick(1)
+  Check(calls.patrol==patrols+1,'arriving at a patrol goal selects the next goal without a patrol pause: '..difficulty)
+  Reset({Difficulty=difficulty});observation.defenceMoving=1;Tick(0)
+  Check(calls.fire==true and not calls.stop and not calls.cancelled,
+        'ordinary firing never cancels the native front/rear escape route: '..difficulty)
+end
+Reset({Difficulty=1});calls.roll=1;observation.targets[2].rangedFiring=1
+observation.targets[2].hurt=1;observation.targets[2].pos={x=1000,y=100,z=0}
+calls.coverCandidate={valid=1,hide={x=0,y=0,z=0},peek={x=70,y=0,z=0}}
+Tick(0)
+Check(calls.fire==true and calls.jumps==0 and not calls.coverQueries and not calls.rolls,
+      'continuous Medium does not inherit Hard cover, air strafe or probability tactics')
+Reset();observation.targets[2].meleeApproaching=1;observation.weapons[2].movingShot=0;Tick(0)
+observation.shots=1;observation.rangedBusy=1;observation.moveCancelOpen=1;Tick(1)
+observation.rangedBusy=0;Tick(2)
+Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].orbUntil==nil,
+      'stationary orbwalk fires on native readiness without waiting out its movement duration')
+Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+SDGO_BattleAI_ProfileUpdate(npc);observation.selectedSlot=3;observation.specialSelected=1
+now=1;SDGO_BattleAI_ProfileUpdate(npc);now=2;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.fire==true,'a natively admitted special has no artificial 500ms request pause')
+observation.specialBusy=1;now=3;SDGO_BattleAI_ProfileUpdate(npc)
+observation.specialBusy=0;now=4;SDGO_BattleAI_ProfileUpdate(npc)
+observation.selectedSlot=1;observation.specialSelected=0;now=5;SDGO_BattleAI_ProfileUpdate(npc)
+now=6;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==3,'native completion and restored SP can immediately choose the next special without a four-second lock')
+Reset();calls.routeResult=0;observation.targets={Target(2,100,3000)};Tick(0)
+observation.targets[1].distance=800;Tick(1)
+Check(calls.target==2 and calls.fire==true,'a now-fireable enemy immediately escapes an old failed-route exclusion')
+Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+SDGO_BattleAI_ProfileUpdate(npc);observation.selectedSlot=3;observation.specialSelected=1
+now=1;SDGO_BattleAI_ProfileUpdate(npc);observation.spReady=0;observation.specialFinished=1
+now=2;SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==1,'authoritative special completion restores the gun even when the brief busy state was between decision frames')
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

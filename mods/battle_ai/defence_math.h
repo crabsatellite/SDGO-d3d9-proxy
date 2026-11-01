@@ -23,29 +23,41 @@ inline float TurnStepDegrees(Vec3 forward,Vec3 desired,double rate,double elapse
     return static_cast<float>((std::max)(-limit,(std::min)(limit,delta)));
 }
 struct DefenceThreat {Vec3 point;float weight=1;};
-struct DefenceFacing {Vec3 direction;double rearRisk=0;bool valid=false;};
+struct DefenceFacing {Vec3 direction;double rearRisk=0;bool valid=false;double rearExposure=0;};
 // Minimize the worst weighted rear exposure rather than averaging opposing
 // enemies to a zero vector. With enemies on both sides, side-on is preferable
 // to presenting the entire rear to either one; relocation can improve further.
 inline DefenceFacing DefensiveFacing(Vec3 position,Vec3 current,const DefenceThreat* threats,std::size_t count) {
     DefenceFacing best;best.direction=Horizontal(current);
     if(!threats||!Finite(position)||count==0||count>128) return best;
-    double bestScore=1e30;
+    double bestScore=1e30,bestRear=1e30;
     auto consider=[&](double angle) {
-        Vec3 direction=Heading(angle);double worst=0,total=0;std::size_t usable=0;
+        Vec3 direction=Heading(angle);double worst=0,total=0,rear=0;std::size_t usable=0;
         for(std::size_t i=0;i<count;++i) {
             if(!Finite(threats[i].point)||!std::isfinite(threats[i].weight)||threats[i].weight<=0) continue;
             Vec3 enemy=Horizontal(threats[i].point-position);if(Length(enemy)<0.5) continue;
-            double risk=(1-Dot(direction,enemy))*threats[i].weight;
+            double facing=Dot(direction,enemy);
+            if(facing<-0.00001) rear=(std::max)(rear,-facing);
+            double risk=(1-facing)*threats[i].weight;
             worst=(std::max)(worst,risk);total+=risk;++usable;
         }
         if(!usable) return;
         double turn=std::abs(WrapAngle(angle-Bearing(current)));
+        // Avoid the rear hemisphere first, even for a weaker attacker. If the
+        // enemies surround us, minimize the unavoidable exposure before weights.
         double score=worst+total/(usable*100.0)+turn*0.0001;
-        if(score<bestScore) {bestScore=score;best={direction,worst,true};}
+        if(rear<bestRear-0.000001||(std::abs(rear-bestRear)<=0.000001&&score<bestScore)) {
+            bestRear=rear;bestScore=score;best={direction,worst,true,rear};
+        }
     };
     consider(Bearing(current));
     for(int i=0;i<144;++i) consider(i*(2*kPi/144));
+    for(std::size_t i=0;i<count;++i) {
+        if(!Finite(threats[i].point)) continue;
+        auto enemy=Horizontal(threats[i].point-position);
+        if(Length(enemy)<0.5) continue;
+        consider(Bearing(enemy)-kPi/2);consider(Bearing(enemy)+kPi/2);
+    }
     return best;
 }
 struct DefenceMove {Vec3 destination;DefenceFacing facing;bool relocate=false;};
@@ -55,7 +67,9 @@ inline DefenceMove DefensivePosition(Vec3 position,Vec3 forward,const DefenceThr
     for(int i=0;i<12;++i) {
         Vec3 candidate=position+Heading(i*2*kPi/12)*step;
         auto facing=DefensiveFacing(candidate,forward,threats,count);
-        if(!facing.valid||facing.rearRisk>best.facing.rearRisk-0.08) continue;
+        bool rearBetter=facing.rearExposure<best.facing.rearExposure-0.01;
+        bool sameRear=facing.rearExposure<=best.facing.rearExposure+0.00001;
+        if(!facing.valid||(!rearBetter&&(!sameRear||facing.rearRisk>best.facing.rearRisk-0.08))) continue;
         bool tooClose=false;
         for(std::size_t k=0;k<count;++k) {
             if(!Finite(threats[k].point)) continue;

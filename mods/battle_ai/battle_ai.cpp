@@ -123,7 +123,7 @@ struct Actor {
     uint64_t generation=0;
     ULONGLONG seen=0,aimAt=0,nextPulse=0;
     uint32_t aimTarget=0;
-    int intervalMs=120;
+    int intervalMs=0;
     bool ownsIntent=false,ownsAim=false,controlled=false;
     int savedWait=0;
     float savedYawError=0,savedPitchError=0;
@@ -144,6 +144,7 @@ struct Actor {
     ULONGLONG expectedSpecialAt=0;
     bool specialAcknowledged=false;
     ULONGLONG specialAcknowledgedAt=0;
+    uint64_t specialFinished=0;
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
@@ -375,7 +376,7 @@ struct Observation {
     size_t count=0;
 };
 void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
-    if(actor.defence.at&&now-actor.defence.at<80&&(!o.meleePressure||actor.defence.shielding)) return;
+    const auto previousMovement=actor.defence.movement;
     bool continuing=actor.defence.threatened&&now-actor.defence.at<250;
     actor.defence={};
     if(!g_runtime.enabled||g_runtime.difficulty<1) return;
@@ -401,8 +402,22 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     auto received=g_incoming.find(g_current);
     if(received!=g_incoming.end()) for(const auto& incoming:received->second)
         if(now-incoming.time<=1000) add(incoming.attacker,incoming.point,incoming.melee?1.8f:1.2f,incoming.melee,incoming.hitType,incoming.hitKnown);
-    if(!plan.threatened||!plan.count) return;
-    plan.movement=battle_ai::DefensivePosition(o.pos,forward,plan.threats,plan.count);
+    if(!plan.count) return;
+    // Keep the front even before a path/strafe writes a new desired yaw. Waiting
+    // for an enemy to become rearward lets locomotion expose the back first.
+    plan.threatened=true;
+    auto facing=battle_ai::DefensiveFacing(o.pos,forward,plan.threats,plan.count);
+    plan.movement={o.pos,facing,false};
+    if(facing.rearRisk>0.9||facing.rearExposure>0.00001) {
+        if(now>=actor.defenceRepathAt||(actor.defenceMoveOwned&&actor.path.empty()))
+            plan.movement=battle_ai::DefensivePosition(o.pos,forward,plan.threats,plan.count);
+        else if(actor.defenceMoveOwned&&!actor.path.empty()) {
+            plan.movement.destination=previousMovement.destination;plan.movement.relocate=true;
+        }
+    }
+    // The relocation's destination may have a different optimal angle. While
+    // travelling, protect the actor at its observed position on this frame.
+    plan.movement.facing=facing;
     if(g_runtime.difficulty<2) plan.shielding=false;
 }
 bool CaptureUnsafe(Observation& o) {
@@ -534,12 +549,15 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"id",o.id);Number(L,"generation",static_cast<double>(o.generation));
     Number(L,"hp",o.hp);Number(L,"unitId",o.caps.unitId);Number(L,"alternate",o.caps.alternate);Number(L,"selectedSlot",o.caps.selectedSlot);
     Number(L,"moving",o.moving);Number(L,"hurtRecently",o.hurtRecently);
+    Number(L,"routeActive",!ActorFor(g_current).path.empty());
+    Number(L,"defenceMoving",ActorFor(g_current).defenceMoveOwned&&!ActorFor(g_current).path.empty());
     Number(L,"hurt",o.hurt);
     Number(L,"boostFraction",o.caps.boostFraction);
     // Lua SetJumpEnable writes +3291. This is permission for native automatic
     // jump requests, not a promise that every form can fly; the motor decides.
     Number(L,"canJump",g_current[0x3291]!=0);
     Number(L,"meleeBusy",o.caps.meleeBusy);Number(L,"specialBusy",o.caps.specialBusy);
+    Number(L,"specialFinished",static_cast<double>(ActorFor(g_current).specialFinished));
     Number(L,"rangedBusy",o.rangedBusy);
     auto attackFsm=*reinterpret_cast<uint8_t**>(g_current+0x9CC);
     Number(L,"moveCancelOpen",attackFsm&&attackFsm[0xB38]==1);
@@ -661,7 +679,8 @@ int __cdecl Cadence(lua_State* L) {
         a.ownsAim=true;
     }
     double interval=g_lua.tonumber(L,1);
-    a.intervalMs=std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):120;
+    a.intervalMs=g_runtime.difficulty>=1?0:(std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):0);
+    if(!a.intervalMs) a.nextPulse=0;
     return 0;
 }
 int __cdecl MeleeGate(lua_State* L) {
@@ -837,7 +856,11 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
         if(battle_ai::native::detail::InState(movement,offset)) return;
     battle_ai::native::Capabilities caps={};
     if(!battle_ai::native::ReadCapabilities(unit,caps)||caps.specialBusy) return;
-    if(plan.movement.relocate&&!ControlBlocked(unit)&&now>=a.defenceRepathAt&&plan.routeTarget) {
+    if(a.defenceMoveOwned&&!plan.movement.relocate) {
+        if(!ControlBlocked(unit)) g_stop(unit);
+        a.path.clear();a.defenceMoveOwned=false;
+    }
+    if(plan.movement.relocate&&!ControlBlocked(unit)&&(now>=a.defenceRepathAt||(a.defenceMoveOwned&&a.path.empty()))&&plan.routeTarget) {
         a.defenceRepathAt=now+650;a.pathRanged=true;
         a.defenceMoveOwned=LoadRoute(plan.routeTarget,&plan.movement.destination);
     }
@@ -845,15 +868,17 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
     if(!node||!scene) return;
     Vec3 forward=*reinterpret_cast<Vec3*>(node+0x6C),cache=*reinterpret_cast<Vec3*>(unit+0x3090);
     if(!battle_ai::Finite(forward)||!battle_ai::Finite(cache)||battle_ai::Length(battle_ai::Horizontal(forward))<0.5||battle_ai::Length(battle_ai::Horizontal(cache))<0.5) return;
-    Vec3 desired=ShieldDirection(unit,plan,forward);
+    const bool locomoting=unit[0x30DC]!=0||!a.path.empty()||a.defenceMoveOwned;
+    // A grabbed, stationary Hard bot may present its intact rear shield. During
+    // legal movement use front defence, independently of the waypoint direction.
+    Vec3 desired=locomoting&&!ControlBlocked(unit)?plan.movement.facing.direction:ShieldDirection(unit,plan,forward);
     float step=battle_ai::TurnStepDegrees(forward,desired,900,a.turnedAt?static_cast<double>(now-a.turnedAt):16.0);
     a.turnedAt=now;
-    if(std::abs(step)<0.01f) return;
     Vec3 bounded=battle_ai::Heading(battle_ai::Bearing(forward)+step*battle_ai::kPi/180);
     // rotate_y changes the desired direction cache. Account for the native AI's
     // existing desired direction so the *consumed scene turn* stays bounded.
     float cacheDelta=static_cast<float>(battle_ai::WrapAngle(battle_ai::Bearing(bounded)-battle_ai::Bearing(cache))*180/battle_ai::kPi);
-    g_rotate(unit,cacheDelta,0);
+    if(std::abs(cacheDelta)>=0.01f) g_rotate(unit,cacheDelta,0);
 }
 void __fastcall FacingUpdate(uint8_t* unit,void*) {
     if(GetCurrentThreadId()==g_gameThread&&unit==g_current&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault&&Owned(unit)&&*reinterpret_cast<int*>(unit+0x38)>0) {
@@ -1010,7 +1035,9 @@ void ApplySpNotice(const SpNotice& notice) {
             ApplyNativeAbsoluteSp(unit,latest->second.value);return;
         }
         if(notice.stateOnly) {
-            if(notice.finish&&found!=g_actors.end()) found->second.specialAcknowledged=false;
+            if(notice.finish&&found!=g_actors.end()) {
+                found->second.specialAcknowledged=false;found->second.specialFinished=notice.sequence;
+            }
             if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
             g_spSnapshots[unit]={notice.sequence,notice.value};
             ApplyNativeAbsoluteSp(unit,notice.value);return;
@@ -1023,7 +1050,7 @@ void ApplySpNotice(const SpNotice& notice) {
             actor.expectedSpecialWeapon=0;actor.specialAcknowledged=true;actor.specialAcknowledgedAt=notice.time;
         } else {
             if(!actor.specialAcknowledged||notice.time<actor.specialAcknowledgedAt||notice.time-actor.specialAcknowledgedAt>60000) return;
-            actor.specialAcknowledged=false;
+            actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;
         }
         if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
         g_spSnapshots[unit]={notice.sequence,notice.value};
@@ -1120,7 +1147,7 @@ void ClearStartup(uint8_t* unit,Actor& a,bool face) {
     a.cueAngle=0;
 }
 bool QuickSwingSafe(uint8_t* fsm,uint8_t* owner) {
-    if(!WantsGeneric(owner)||ControlBlocked(owner)||fsm[0x9B1]||*reinterpret_cast<int*>(owner+0x38)<=0) return false;
+    if(g_runtime.difficulty<2||!WantsGeneric(owner)||ControlBlocked(owner)||fsm[0x9B1]||*reinterpret_cast<int*>(owner+0x38)<=0) return false;
     auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
     auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
     if(!target||*reinterpret_cast<int*>(target+0x38)<=0||!record||record[0x6A]!=1) return false;
@@ -1374,13 +1401,13 @@ int __cdecl Generation(lua_State* L) {
 }
 struct Option { const wchar_t* name; int def, low, high; };
 const Option kOptions[] = {
-    {L"Enabled",1,0,1}, {L"GenericMode",1,0,1}, {L"DecisionMs",100,50,1000}, {L"ReactionMs",180,0,3000},
+    {L"Enabled",1,0,1}, {L"GenericMode",1,0,1}, {L"DecisionMs",0,0,1000}, {L"ReactionMs",0,0,3000},
     {L"StuckMs",1400,300,10000}, {L"ProgressDistance",30,1,300}, {L"ArrivalDistance",100,10,500},
     {L"RecoveryDistance",350,50,1500}, {L"RecoveryMs",650,150,2000}, {L"RecoveryCooldownMs",1000,250,10000},
-    {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",900,300,10000}, {L"LogDecisions",0,0,1},
-    {L"TargetHoldMs",600,0,5000},{L"FarTargetSlack",900,0,10000},{L"FarTargetRatioPercent",200,100,1000},
-    {L"WeaponHoldMs",450,0,5000},{L"AttackIntervalMs",120,0,10000},
-    {L"BurstMs",900,0,10000},{L"BurstPauseMs",100,0,5000},
+    {L"RangedMinDistance",450,0,2000}, {L"TacticCooldownMs",0,0,10000}, {L"LogDecisions",0,0,1},
+    {L"TargetHoldMs",0,0,5000},{L"FarTargetSlack",900,0,10000},{L"FarTargetRatioPercent",200,100,1000},
+    {L"WeaponHoldMs",0,0,5000},{L"AttackIntervalMs",0,0,10000},
+    {L"BurstMs",0,0,10000},{L"BurstPauseMs",0,0,5000},
     {L"AirStrafe",1,0,1},{L"StrafeSwitchMs",450,150,3000},{L"StrafeDistance",400,50,1500},
     {L"JumpMs",600,50,1500},{L"JumpCooldownMs",1500,500,10000},{L"BoostReservePercent",20,0,90},
     {L"ThreatMemoryMs",1600,100,10000},{L"RepathMs",700,150,5000},
@@ -1430,7 +1457,10 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         }
         std::string key;
         for (const wchar_t* p = o.name; *p; ++p) key.push_back(static_cast<char>(*p));
-        if(key=="GenericMode") value=next.difficulty==2?1:0;
+        if(key=="GenericMode") value=next.difficulty>=1?1:0;
+        if(next.difficulty>=1&&(key=="DecisionMs"||key=="ReactionMs"||key=="TargetHoldMs"||key=="WeaponHoldMs"||
+           key=="AttackIntervalMs"||key=="BurstMs"||key=="BurstPauseMs"||key=="TacticCooldownMs")) value=0;
+        if(key=="SwingCancelChance"&&next.difficulty<2) value=0;
         if(key=="AimAssist"||key=="ProjectileLead") value=next.difficulty>=1?1:0;
         code += key + "=" + std::to_string(value) + ",\n";
         if(key=="Enabled") next.enabled=value!=0;
