@@ -8,18 +8,7 @@
   ],
   "provider": "shop",
   "description": "服主商城目录，由配套配置提供内容。",
-  "settings": [
-    {
-      "id": "hostini",
-      "key": "HostIni",
-      "label": "原生宿主 INI（留空使用宿主默认）",
-      "type": "string",
-      "default": "",
-      "file": "mod.ini",
-      "section": "settings",
-      "audience": "user",
-      "activation": "restart_required"
-    }
-  ],
-  "presentation": "configurable"
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "商城配置由 Manager 发布，WorldServer 启动不应用 SQL，也不读取服主凭据。原生购买、计费和交付仍由游戏处理。"
 }

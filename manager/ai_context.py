@@ -44,7 +44,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
                          'editable':['显示名称','原生或上传头像','全员免费/注册商品','掉落物品、概率、数量范围'],'revision_header':'X-Catalog-Revision','scope':'副官模块登记物品；上架和售价由商城模块管理'},
             'capsules':{'operations':['GET /api/bootstrap','GET /api/machine','GET /api/units','POST /api/machines/create','POST /api/machines/update','POST /api/machines/retire','POST /api/machines/restore','POST /api/compile','POST /api/apply','POST /api/export'],
                         'editable':['固定槽位和概率模板','自定义机体候选池','价格、币种和展示位置'],'revision_field':'expected_revision','scope':'按当前目录的机体等级和候选池规则校验，不猜测概率、不绕过限制'},
-            'rewards':{'operations':['GET /api/rewards','POST /api/rewards/multiplier','POST /api/rewards/policy','POST /api/rewards/preview','GET/POST /api/rewards/worker'],
+            'rewards':{'operations':['GET /api/rewards','POST /api/rewards/multiplier','POST /api/rewards/policy','POST /api/rewards/preview','GET/POST /api/services/rewards.wallet'],
                        'editable':['基础倍率','完整奖励规则','模拟结算条件','Manager 所有的钱包服务'],'revision_header':'X-Reward-Revision','scope':'不得通过浏览器构造发币作业；只处理原生结算持久队列'},
             'frp':{'operations':['GET/POST /api/profile','POST /api/export'],'editable':['逻辑登录端点','Sakura TCP/UDP 端点','连续 UDP 端口池'],'revision_field':'revision','scope':'只导出客户端连接配置，不导出 Sakura 凭据'},
             'ai_catalog':{'operations':['POST /api/check','POST /api/generate','POST /api/install_client','POST /api/install_server','POST /api/export'],'editable':['配套客户端/服务器来源','机体分级规则','上一版编号分配记录'],'scope':'更新必须保留编号分配记录；生成与安装后仍需人工游戏验收'}}

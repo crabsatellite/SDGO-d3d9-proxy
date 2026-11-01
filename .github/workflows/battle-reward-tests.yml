@@ -5,7 +5,6 @@ on:
     paths:
       - 'owner/rewards/**'
       - 'tools/assistant_modules/rewards/**'
-      - 'tools/reward_worker.py'
       - 'tools/install_battle_rewards.py'
       - 'tools/package_rewards.py'
       - 'mods/battle_rewards/**'
@@ -18,7 +17,6 @@ on:
     paths:
       - 'owner/rewards/**'
       - 'tools/assistant_modules/rewards/**'
-      - 'tools/reward_worker.py'
       - 'tools/install_battle_rewards.py'
       - 'tools/package_rewards.py'
       - 'mods/battle_rewards/**'

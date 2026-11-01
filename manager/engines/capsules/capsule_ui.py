@@ -5,7 +5,6 @@ cannot choose filesystem paths, run SQL, or reach a non-loopback interface.
 """
 from __future__ import annotations
 
-import argparse
 import copy
 import hashlib
 import hmac
@@ -17,9 +16,6 @@ import secrets
 import shutil
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
-import webbrowser
 
 from .capsule_catalog import (
     capsule_display,
@@ -646,10 +642,8 @@ class CatalogStore:
 
 
 class CapsuleApplication:
-    def __init__(self, store, ui_path):
+    def __init__(self, store):
         self.store = store
-        self.ui_path = Path(ui_path).resolve()
-        self.token = secrets.token_urlsafe(32)
 
     @staticmethod
     def _machine_summary(machine, position, native_position, kind):
@@ -775,19 +769,6 @@ class CapsuleApplication:
                 break
         return {"units": result, "query": query, "limit": limit}
 
-    def static(self, name):
-        allowed = {
-            "index.html": "text/html; charset=utf-8",
-            "app.js": "text/javascript; charset=utf-8",
-            "style.css": "text/css; charset=utf-8",
-        }
-        if name not in allowed:
-            raise MissingError("Static resource not found")
-        path = self.ui_path / name
-        data = path.read_bytes()
-        if name == "index.html":
-            data = data.replace(b"{{CSRF_TOKEN}}", self.token.encode("ascii"))
-        return data, allowed[name]
 
     def dispatch_post(self, path, payload):
         expected = payload.get("expected_revision")

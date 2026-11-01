@@ -14,7 +14,7 @@ OWNER_FILES = (
     "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "sql/battle_reward_wallet.sql",
     "examples/pvp-mvp.json", "examples/mission-clear.json",
 )
-TOOLS = ("reward_worker.py", "install_battle_rewards.py")
+TOOLS = ("install_battle_rewards.py",)
 
 
 def contents(repo, binaries, include_manager=True):
