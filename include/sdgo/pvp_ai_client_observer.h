@@ -114,3 +114,16 @@ static_assert(offsetof(SdgoPvpAiClientSnapshotV1, create_reply_sequence) == 1268
 
 typedef int(__cdecl* SdgoPvpAiClientGetSnapshotV1Fn)(
     SdgoPvpAiClientSnapshotV1* snapshot);
+
+// Counters survive normal scene teardown. A separate ABI preserves the
+// published 1280-byte room snapshot for existing consumers.
+#define SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT "SdgoPvpAiClientGetLuaStatusV1"
+struct SdgoPvpAiClientLuaStatusV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t battle_start_sequence;
+    uint32_t error_count;
+    uint32_t observer_available;
+};
+static_assert(sizeof(SdgoPvpAiClientLuaStatusV1) == 20, "unexpected Lua status ABI");
+typedef int(__cdecl* SdgoPvpAiClientGetLuaStatusV1Fn)(SdgoPvpAiClientLuaStatusV1* status);

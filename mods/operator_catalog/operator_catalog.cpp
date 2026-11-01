@@ -22,7 +22,7 @@ struct Pair { uint32_t id; Box* box; };
 struct InsertResult { void* node; uint8_t inserted; uint8_t padding[3]; };
 using MakeFn = void*(__thiscall*)(void*, const Pair*);
 using InsertFn = void(__thiscall*)(void*, InsertResult*, void*, char);
-struct Entry { uint32_t id, category, source, avatar; std::wstring name, sprite; bool fixedName = false; };
+struct Entry { uint32_t id, category, source, avatar; std::wstring name, sprite; bool fixedName = false, missionParts = false; };
 using ConvertFn = int(WINAPI*)(UINT,DWORD,LPCCH,int,LPWSTR,int);
 ConvertFn g_convert = nullptr;
 uintptr_t g_nameDecoder = 0;
@@ -145,6 +145,7 @@ void Apply()
         auto row = source.at(e.source);
         auto category = categoryTemplate;
         if (!PatchOperator(row.data(), row.size(), e.id, e.name, source.at(e.avatar).data(), e.sprite)) continue;
+        if (e.missionParts) row[kMissionPartsOffset]=1;
         std::array<uint8_t, kCategorySize> registered = {};
         const bool exists = ReadRecord(e.category, 0x22, registered.data(), registered.size());
         uint32_t ref = 0;
@@ -191,6 +192,7 @@ bool ReadConfig(const wchar_t* dir)
         e.source = GetPrivateProfileIntW(section, L"Template", 0, file.c_str());
         e.avatar = GetPrivateProfileIntW(section, L"AvatarProfile", 0, file.c_str());
         const bool defaultId=e.id==60003 || e.id==60013 || e.id==60018 || e.id==60025 || e.id==60041;
+        e.missionParts=GetPrivateProfileIntW(section,L"MissionParts",defaultId?1:0,file.c_str())!=0;
         // Older Manager exports omit this optional field. Their default entries
         // still resolve the server's fixed-name tokens after a client DLL update.
         e.fixedName = GetPrivateProfileIntW(section,L"FixedName",defaultId?1:0,file.c_str())!=0;

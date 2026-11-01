@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from owner.collection_capsule.deployment import connection, import_history, register_unit_family, export_configuration, registration_baseline
+from owner.collection_capsule.deployment import connection, register_unit_family, export_configuration, upgrade_catalog
 from owner.collection_capsule.metadata import imported_roots, registered_imports
 from owner.collection_capsule.pool import build_pool, load_units
 from owner.collection_capsule.sql import installation, disable, pool_hash
@@ -263,7 +263,6 @@ def install_server(package, server_ini, *, check_only=False):
         actual = db.cursor().execute("SELECT DB_NAME()").fetchone()[0]
         if check_only:
             return {"checked": True, "database": actual, "machine_id": model["machine_id"], "machine_kind": "activity", "applied": False}
-        legacy_max = registration_baseline(server_ini)
         with tempfile.TemporaryDirectory(prefix="sdgo-collection-server-") as temporary:
             payload = Path(temporary) / "server"
             shutil.copytree(package / "server", payload)
@@ -276,9 +275,8 @@ def install_server(package, server_ini, *, check_only=False):
                 # after the complete file update and state readback have succeeded.
                 cursor.execute("SET XACT_ABORT ON;BEGIN TRANSACTION;")
                 cursor.execute(sql)
-                cursor.execute("UPDATE sdgo_collection_capsule.State SET LegacyAccountMax=?,RegistrationBaseline=1 WHERE Singleton=1 AND RegistrationBaseline=0", legacy_max)
                 row = cursor.execute("SELECT s.MachineID,s.PriceGP,s.Enabled,s.PoolHash,s.SchemaVersion,p.Type,p.Price,p.Disable FROM sdgo_collection_capsule.State s JOIN dbo.tbl_ItemMachinePrice p ON p.MachineID=s.MachineID WHERE s.Singleton=1").fetchone()
-                if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"]), 2, 0, 100000, 0):
+                if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"]), 3, 0, 100000, 0):
                     raise RuntimeError("Installed collection state readback differs")
                 result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                     str(ROOT / "tools/install_server.ps1"), "-ServerRoot", str(target), "-Role", "World",
@@ -296,6 +294,7 @@ def install_server(package, server_ini, *, check_only=False):
             finally:
                 cursor.close()
     return {"applied": True, "machine_id": model["machine_id"], "machine_kind": "activity", "price_gp": 100000,
+            "catalog_schema_version": 3, "database_setup_automatic": True, "players_require_sql": False,
             "restart_world_required": True, "backup": str(files.backup)}
 
 
@@ -321,9 +320,8 @@ def main():
     p = commands.add_parser("disable")
     p.add_argument("--server-ini", type=Path, required=True)
     p.add_argument("--machine-id", type=int, default=990001)
-    p = commands.add_parser("import-history")
+    p = commands.add_parser("upgrade-catalog")
     p.add_argument("--server-ini", type=Path, required=True)
-    p.add_argument("--history", type=Path, required=True)
     p = commands.add_parser("export")
     p.add_argument("--server-ini", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
@@ -354,10 +352,10 @@ def main():
     elif args.command == "disable":
         with contextlib.closing(connection(args.server_ini)) as db:
             db.cursor().execute(disable(args.machine_id))
-        print(json.dumps({"disabled": True, "history_preserved": True, "restart_world_required": True}))
-    elif args.command == "import-history":
+        print(json.dumps({"disabled": True, "catalog_unlocks_preserved": True, "restart_world_required": True}))
+    elif args.command == "upgrade-catalog":
         with contextlib.closing(connection(args.server_ini)) as db:
-            print(json.dumps(import_history(db, read_json(args.history))))
+            print(json.dumps(upgrade_catalog(db)))
     elif args.command == "export":
         with contextlib.closing(connection(args.server_ini)) as db:
             print(json.dumps(export_configuration(db, args.out)))

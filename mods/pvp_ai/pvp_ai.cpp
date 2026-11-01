@@ -873,39 +873,35 @@ namespace
         return false;
     }
 
-    void ObserverEmit(
-        uint32_t type, uint8_t* room, uint32_t status = 0, bool requireRequest = true)
+    bool ObserverCopyEvent(
+        uint32_t type, uint8_t* room, uint32_t status, bool requireRequest,
+        SdgoPvpAiObserverEventV1* event)
     {
-        SdgoPvpAiObserverCallbackV1 callback = ObserverCallback();
-        if (!callback || !room || (requireRequest && !ObserverRequested(room)))
-            return;
+        if (!event || !ObserverCallback() || !room ||
+            (requireRequest && !ObserverRequested(room)))
+            return false;
 
-        SdgoPvpAiObserverEventV1 event = {};
-        event.size = sizeof(event);
-        event.version = SDGO_PVP_AI_OBSERVER_VERSION;
-        event.type = type;
-        event.status = status;
-        event.sequence = static_cast<uint32_t>(InterlockedIncrement(&g_observerSequence));
-        LARGE_INTEGER counter = {};
-        QueryPerformanceCounter(&counter);
-        event.qpc = static_cast<uint64_t>(counter.QuadPart);
-        event.thread_id = GetCurrentThreadId();
-        event.room_cookie = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
-        event.host_pilot_id = *reinterpret_cast<uint32_t*>(room + kRoomHost);
-        event.score_team_1 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam1);
-        event.score_team_2 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam2);
-        event.room_type = room[kRoomType];
-        event.mode = room[kRoomMode];
+        *event = {};
+        event->size = sizeof(*event);
+        event->version = SDGO_PVP_AI_OBSERVER_VERSION;
+        event->type = type;
+        event->status = status;
+        event->room_cookie = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
+        event->host_pilot_id = *reinterpret_cast<uint32_t*>(room + kRoomHost);
+        event->score_team_1 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam1);
+        event->score_team_2 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam2);
+        event->room_type = room[kRoomType];
+        event->mode = room[kRoomMode];
 
         const RoomView view = ViewRoom(room);
-        event.humans_team_1 = static_cast<uint8_t>((std::min)(view.humans[1], 255));
-        event.humans_team_2 = static_cast<uint8_t>((std::min)(view.humans[2], 255));
-        event.ai_team_1 = static_cast<uint8_t>((std::min)(view.ai[1], 255));
-        event.ai_team_2 = static_cast<uint8_t>((std::min)(view.ai[2], 255));
-        memcpy(event.title, view.title, sizeof(event.title));
+        event->humans_team_1 = static_cast<uint8_t>((std::min)(view.humans[1], 255));
+        event->humans_team_2 = static_cast<uint8_t>((std::min)(view.humans[2], 255));
+        event->ai_team_1 = static_cast<uint8_t>((std::min)(view.ai[1], 255));
+        event->ai_team_2 = static_cast<uint8_t>((std::min)(view.ai[2], 255));
+        memcpy(event->title, view.title, sizeof(event->title));
 
         for (int slot = 0; slot < kSlots; ++slot) {
-            SdgoPvpAiObserverSlotV1& output = event.slots[slot];
+            SdgoPvpAiObserverSlotV1& output = event->slots[slot];
             output.slot = static_cast<uint8_t>(slot);
             output.pilot_id = SlotPilotId(room, slot);
             if (!output.pilot_id)
@@ -914,12 +910,27 @@ namespace
             output.team = SlotTeam(room, slot);
             output.colour = room[kSlotInfo + slot * kSlotInfoStride + kSlotInfoColour];
             output.is_ai = (output.pilot_id & kAiPilotBit) ? 1 : 0;
-            ++event.active_slots;
+            ++event->active_slots;
         }
+        return true;
+    }
+
+    void ObserverPublishEvent(SdgoPvpAiObserverEventV1* event)
+    {
+        SdgoPvpAiObserverCallbackV1 callback = ObserverCallback();
+        if (!callback || !event)
+            return;
+
+        event->sequence =
+            static_cast<uint32_t>(InterlockedIncrement(&g_observerSequence));
+        LARGE_INTEGER counter = {};
+        QueryPerformanceCounter(&counter);
+        event->qpc = static_cast<uint64_t>(counter.QuadPart);
+        event->thread_id = GetCurrentThreadId();
 
         __try {
             callback(
-                &event,
+                event,
                 InterlockedCompareExchangePointer(&g_observerUser, nullptr, nullptr));
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             InterlockedCompareExchangePointer(
@@ -927,6 +938,14 @@ namespace
             if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "disabled PvP observer after its callback raised an exception");
         }
+    }
+
+    void ObserverEmit(
+        uint32_t type, uint8_t* room, uint32_t status = 0, bool requireRequest = true)
+    {
+        SdgoPvpAiObserverEventV1 event = {};
+        if (ObserverCopyEvent(type, room, status, requireRequest, &event))
+            ObserverPublishEvent(&event);
     }
 
     void ObserverForgetRoom(uint8_t* room)
@@ -964,6 +983,29 @@ namespace
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "ignored exception while copying a PvP observer snapshot");
+        }
+    }
+
+    bool GuardedObserverCopyEvent(
+        uint32_t type, uint8_t* room, uint32_t status, bool requireRequest,
+        SdgoPvpAiObserverEventV1* event)
+    {
+        __try {
+            return ObserverCopyEvent(type, room, status, requireRequest, event);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "ignored exception while copying a PvP observer snapshot");
+            return false;
+        }
+    }
+
+    void GuardedObserverPublishEvent(SdgoPvpAiObserverEventV1* event)
+    {
+        __try {
+            ObserverPublishEvent(event);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "ignored exception while publishing a PvP observer snapshot");
         }
     }
 
@@ -1662,9 +1704,15 @@ namespace
     void __fastcall BattleEnd(uint8_t* room, void* /*edx*/, uint16_t a, uint16_t b, int now)
     {
         const bool observed = ObserverRoomActive(room);
+        SdgoPvpAiObserverEventV1 endEvent = {};
+        // The native end releases battle state and may replace the room identity
+        // fields. Preserve the real matched battle now, but publish completion only
+        // after the original end routine has returned.
+        const bool copied = observed && GuardedObserverCopyEvent(
+            SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false, &endEvent);
         g_battleEnd(room, a, b, now);
-        if (observed)
-            GuardedObserverEmit(SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false);
+        if (copied)
+            GuardedObserverPublishEvent(&endEvent);
         if (room && !GuardedRemove(room))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
         if (room)

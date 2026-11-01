@@ -25,6 +25,7 @@
 #include "native_combat_hook.h"
 #include "native_sites.h"
 #include "runtime_state.h"
+#include "result_presentation.h"
 #include "site_bridge.h"
 #include "wallet_jobs.h"
 
@@ -236,14 +237,7 @@ bool Freeze(Session& session, BYTE* room, uint32_t duration) {
 }
 
 bool WriteG(BYTE* frame, unsigned site, uint16_t amount) {
-    if (site >= kSettlementSites.size() || !frame) return false;
-    __try {
-        *reinterpret_cast<volatile uint16_t*>(frame + kSettlementSites[site].g_amount) = amount;
-        // The complete policy result is the normal G amount. Clearing only G's
-        // legacy event bucket avoids showing the discarded old-table bonus.
-        *reinterpret_cast<volatile uint16_t*>(frame + kSettlementSites[site].g_event) = 0;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return WriteNativeGResult(frame, site, amount);
 }
 
 void SettleImpl(unsigned site, BYTE* frame) {

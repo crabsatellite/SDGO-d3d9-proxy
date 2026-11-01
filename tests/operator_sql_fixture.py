@@ -42,7 +42,8 @@ def main():
         source_db=n.execute('SELECT DB_NAME()').fetchone()[0]
         assert source_db!=db
         names=['sp_OperatorDrop','sp_GetUserOperatorPage','sp_GetPilotOperator','sp_CreateUserOperator',
-               'sp_CheckUserOperatorTimeLimit','sp_GeOperatorProbability','sp_CreateUserMixTreeItem','sp_SetUserOperatorName','sp_GetUserOperator']
+               'sp_CheckUserOperatorTimeLimit','sp_GeOperatorProbability','sp_CreateUserMixTreeItem','sp_SetUserOperatorName','sp_GetUserOperator',
+               'sp_SetUserUnitCustomSkill']
         definitions={name:server.definition(n,name) for name in names}
         if n.execute('SELECT OBJECT_ID(?)','dbo.sdgo_OperatorProcedureBackup').fetchone()[0] is not None:
             for name in server.WRAPPED:
@@ -59,7 +60,7 @@ def main():
     cn=server.connect(fixture_ini);cur=cn.cursor()
     assert cur.execute('SELECT DB_NAME()').fetchone()[0]==db
     schema="""
-    CREATE TABLE dbo.tbl_Users(AccountNumber INT PRIMARY KEY,GoUserOperatorNum BIGINT DEFAULT 0);
+    CREATE TABLE dbo.tbl_Users(AccountNumber INT PRIMARY KEY,GoUserOperatorNum BIGINT DEFAULT 0,UserLevelNumber TINYINT DEFAULT 18);
     CREATE TABLE dbo.tbl_OperatorData(OperatorID INT PRIMARY KEY,OperatorName VARCHAR(64),TeamWin INT,TeamLose INT,
       BattleResult INT,ChangeSp INT,ServiceType INT,AddOn1 INT,AddOn2 INT,AddOn3 INT,AddOn4 INT,DropType TINYINT,GParts INT);
     CREATE TABLE dbo.tbl_ItemCategory(CatalogueID INT PRIMARY KEY,Name VARCHAR(100),RefIndex INT,TimeLimit TINYINT,Option1 INT,Option2 INT);
@@ -83,6 +84,10 @@ def main():
     CREATE TABLE dbo.tbl_UserMixTreeItemsSlotNumberList(SlotNumber INT PRIMARY KEY);
     CREATE TABLE dbo.tbl_UserMixTreeItems(UserMixTreeItemNumber BIGINT IDENTITY PRIMARY KEY,AccountNumber INT,
         SlotNumber INT,MixTreeItemID INT,CategoryNumber INT,RemainCount INT,BuyType INT,ShopItemtblidx INT);
+    CREATE TABLE dbo.tbl_UserUnits(UserUnitNumber BIGINT PRIMARY KEY,AccountNumber INT,UnitNumber INT,
+        UnitLevelNumber TINYINT,TimeLimit TINYINT,Normal_MaxLv TINYINT,
+        UnitSkill_1 SMALLINT,UnitSkill_2 SMALLINT,UnitSkill_3 SMALLINT,UnitSkill_4 SMALLINT);
+    CREATE TABLE dbo.tbl_UnitCustomSkillRev(UnitSkillID SMALLINT PRIMARY KEY,Type_2 INT,UseUnitLv TINYINT,UseUserLv TINYINT);
     INSERT dbo.FixtureRoll VALUES(0,0);
     """
     cur.execute(schema)
@@ -118,7 +123,7 @@ def main():
         assert 'GDStoreBilling' not in text
         cur.execute(text)
     for account in [7770001,7770002,7770003]:
-        cur.execute('INSERT dbo.tbl_Users VALUES(?,0)',account)
+        cur.execute('INSERT dbo.tbl_Users(AccountNumber,GoUserOperatorNum) VALUES(?,0)',account)
         cur.execute('INSERT dbo.tbls_AccountPocket VALUES(?,100,200)',account)
     cur.execute("INSERT dbo.tbl_UserOperators(AccountNumber,SlotNumber,OperatorNumber,CategoryNumber,OperatorNickname,OPType,RunOut,DateEnd,IsSetName) VALUES(7770001,1,60003,1210002,'keep-personal',1,1,'20000101',1)")
     cur.execute('UPDATE dbo.tbl_Users SET GoUserOperatorNum=(SELECT UserOperatorNumber FROM dbo.tbl_UserOperators WHERE AccountNumber=7770001) WHERE AccountNumber=7770001')
@@ -174,9 +179,22 @@ def main():
     assert cur.execute('SELECT InstalledHash FROM dbo.sdgo_OperatorProcedureBackup WHERE ProcedureName=?','sp_GetPilotOperator').fetchone()[0]==source_hash
     default_results={}
     if default_catalog:
+        gparts_before={r[0]:r[1] for r in cur.execute('SELECT OperatorID,GParts FROM dbo.tbl_OperatorData')}
         cur.execute("INSERT dbo.tbl_UserOperators(AccountNumber,SlotNumber,OperatorNumber,CategoryNumber,OperatorNickname,OPType,IsSetName) VALUES(7770001,2,?,?,'my-custom',0,1)",new_id,model.native_category(new_id))
         cur.execute("INSERT dbo.tbl_UserOperators(AccountNumber,SlotNumber,OperatorNumber,CategoryNumber,OperatorNickname,OPType,RunOut,DateEnd,IsSetName) VALUES(7770003,2,60013,1210012,'Mizuki(EXP)',1,1,'20000101',1)")
         applied=server.apply_catalog(default_catalog,fixture_ini)
+        assert {r[0]:r[1] for r in cur.execute('SELECT OperatorID,GParts FROM dbo.tbl_OperatorData')
+                if r[0] in presets.NAMES}=={identity:1 for identity in presets.NAMES}
+        assert all(r[1]==gparts_before[r[0]] for r in cur.execute('SELECT OperatorID,GParts FROM dbo.tbl_OperatorData')
+                   if r[0] not in presets.NAMES)
+        paused=model.update_operator(default_catalog,60003,{'enabled':False})
+        server.apply_catalog(paused,fixture_ini)
+        assert cur.execute('SELECT GParts FROM dbo.tbl_OperatorData WHERE OperatorID=60003').fetchone()[0]==gparts_before[60003]
+        reapplied=server.apply_catalog(default_catalog,fixture_ini)
+        assert reapplied['default_mission_parts_enabled']==1
+        assert cur.execute('SELECT GParts FROM dbo.tbl_OperatorData WHERE OperatorID=60003').fetchone()[0]==1
+        assert {r[0]:r[1] for r in cur.execute('SELECT OperatorID,OriginalGParts FROM dbo.sdgo_OperatorMissionPartsBackup')}=={
+            identity:gparts_before[identity] for identity in presets.NAMES}
         assert applied['legacy_script_aliases_cleared']==1
         assert applied['existing_default_entitlements_upgraded']==1
         assert tuple(cur.execute('SELECT OPType,RunOut,DateEnd FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=60013').fetchone())==(0,0,None)
@@ -211,7 +229,7 @@ def main():
         # Legacy Manager builds call the original creation procedure and do not
         # set a name afterward. The table guard finalizes only the fixed defaults
         # and does not disturb the native identity/output arguments.
-        cur.execute('INSERT dbo.tbl_Users VALUES(7770004,0)')
+        cur.execute('INSERT dbo.tbl_Users(AccountNumber,GoUserOperatorNum) VALUES(7770004,0)')
         def native_create(identity,category):
             return last_row(cur.execute("DECLARE @S INT,@U BIGINT,@Serial BIGINT,@R INT;EXEC @R=dbo.sp_CreateUserOperator 7770004,'',0,?,NULL,0,?,0,6,@S OUTPUT,@U OUTPUT,@Serial OUTPUT;SELECT @R,@S,@U",category,identity))
         created=native_create(60018,next(o['category_id'] for o in default_catalog['operators'] if o['id']==60018))
@@ -220,6 +238,20 @@ def main():
         custom_created=native_create(new_id,model.native_category(new_id))
         assert custom_created[0]==0
         assert tuple(cur.execute('SELECT OperatorNickname,IsSetName FROM dbo.tbl_UserOperators WHERE UserOperatorNumber=?',custom_created[2]).fetchone())==('',0)
+        # Exercise the actual native Type_2=5 task-parts equipment gate for each
+        # default, plus the original rejection on an unrelated stock operator.
+        cur.execute('INSERT dbo.tbl_UserUnits VALUES(7779001,7770003,10001,18,0,4,0,0,0,0)')
+        cur.execute('INSERT dbo.tbl_UnitCustomSkillRev VALUES(32001,5,1,1),(32002,1,1,1)')
+        def equip_parts(skill):
+            cur.execute('UPDATE dbo.tbl_UserUnits SET UnitSkill_1=0,UnitSkill_2=0,UnitSkill_3=0,UnitSkill_4=0 WHERE UserUnitNumber=7779001')
+            return last_row(cur.execute('DECLARE @UL TINYINT,@L TINYINT,@Unit INT,@Max TINYINT,@R INT;EXEC dbo.sp_SetUserUnitCustomSkill 7770003,7779001,?,0,0,0,@UL OUTPUT,@L OUTPUT,@Unit OUTPUT,@Max OUTPUT,@R OUTPUT;SELECT @R',skill))[0]
+        for identity in presets.NAMES:
+            cur.execute('UPDATE dbo.tbl_Users SET GoUserOperatorNum=(SELECT UserOperatorNumber FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=?) WHERE AccountNumber=7770003',identity)
+            assert equip_parts(32001)==0
+            assert cur.execute('SELECT UnitSkill_1 FROM dbo.tbl_UserUnits WHERE UserUnitNumber=7779001').fetchone()[0]==32001
+        cur.execute("INSERT dbo.tbl_UserOperators(AccountNumber,SlotNumber,OperatorNumber,CategoryNumber) VALUES(7770003,6,60001,1210001)")
+        cur.execute('UPDATE dbo.tbl_Users SET GoUserOperatorNum=(SELECT UserOperatorNumber FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=60001) WHERE AccountNumber=7770003')
+        assert equip_parts(32001)==2009 and equip_parts(32002)==0
         cur.execute("ALTER PROCEDURE dbo.sdgo_OperatorUniform @Bound INT,@Value INT OUTPUT AS BEGIN SET NOCOUNT ON;SELECT @Value=CASE WHEN @Bound=10000 THEN Roll ELSE Quantity END FROM dbo.FixtureRoll;SET @Value=@Value % @Bound;END")
         # Exercise the first and last member of every typed pool in SQL.
         for op in default_catalog['operators']:
@@ -244,6 +276,8 @@ def main():
         assert cur.execute('SELECT COUNT(*) FROM dbo.sdgo_OperatorLegacyEntitlementBackup').fetchone()[0]==1
         assert 'CRYPT_GEN_RANDOM' in server.definition(cur,'sdgo_OperatorUniform')
         default_results={'default_five_permanent_grants':True,'fixed_defaults_skip_native_naming':True,'other_operators_can_name_normally':True,
+                         'all_five_allow_mission_parts':True,'mission_parts_disable_restores_original':True,
+                         'native_task_parts_equipment_all_five':True,'other_parts_rules_preserved':True,
                          'legacy_creator_fixed_names_and_identity':True,
                          'existing_entitlements_migrated_in_place':True,
                          'typed_pool_sql_sampling':True,'native_blueprint_inventory_proc':len(blueprints)}

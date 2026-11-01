@@ -73,6 +73,11 @@ CREATE TABLE dbo.sdgo_OperatorItemRegistry (
     OperatorID INT NOT NULL,
     OwnedCategory BIT NOT NULL
 );
+IF OBJECT_ID(N'dbo.sdgo_OperatorMissionPartsBackup',N'U') IS NULL
+CREATE TABLE dbo.sdgo_OperatorMissionPartsBackup (
+    OperatorID INT NOT NULL PRIMARY KEY,
+    OriginalGParts INT NOT NULL
+);
 IF OBJECT_ID(N'dbo.sdgo_OperatorGrantIssues', N'U') IS NULL
 CREATE TABLE dbo.sdgo_OperatorGrantIssues (
     AccountNumber INT NOT NULL,

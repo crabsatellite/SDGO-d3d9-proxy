@@ -151,6 +151,11 @@ namespace
         const Page secondBefore = page;
         CHECK(Fix(page) == FixResult::UnexpectedCurrency);
         CHECK(page == secondBefore);
+        SetRecord(page, 3, 9301, 0, 99);
+        Record(page, 3)[capsule_currency_fix::kCurrencyTypeOffset + 1] = 1;
+        const Page malformed = page;
+        CHECK(Fix(page) == FixResult::UnexpectedCurrency);
+        CHECK(page == malformed);
         return true;
     }
 
