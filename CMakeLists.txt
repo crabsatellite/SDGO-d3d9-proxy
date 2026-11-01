@@ -230,6 +230,7 @@ if(SDGO_BUILD_MANAGER)
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.html" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.css"
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/shop/*.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/mods/*/manager.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.sql" "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.py"
@@ -291,14 +292,11 @@ sdgo_strict(daily_rewards_runtime_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
-find_program(SDGO_SHOP_POWERSHELL NAMES powershell pwsh)
-if(SDGO_SHOP_POWERSHELL)
-    add_custom_target(shop_owner_ui ALL
-        COMMAND "${SDGO_SHOP_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_shop_ui.ps1"
-            -OutDirectory "${CMAKE_BINARY_DIR}/shop-ui" -Tests
-        COMMENT "Building native Windows owner shop manager")
-endif()
 if(BUILD_TESTING)
+    if(SDGO_BUILD_MANAGER)
+        add_test(NAME shop_owner_domain_service COMMAND "${CMAKE_BINARY_DIR}/manager-services/ShopUiTests.exe")
+        set_tests_properties(shop_owner_domain_service PROPERTIES TIMEOUT 60)
+    endif()
     if(SDGO_BUILD_MANAGER)
         add_test(NAME mod_manager_frozen COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/mod_manager_frozen_test.py" --exe "${SDGO_MANAGER_EXE}")
@@ -323,10 +321,6 @@ if(BUILD_TESTING)
     add_executable(hangar_ui_preview tests/hangar_ui_preview.cpp)
     target_link_libraries(hangar_ui_preview PRIVATE sdgo_api user32 gdi32)
     sdgo_strict(hangar_ui_preview)
-    if(SDGO_SHOP_POWERSHELL)
-        add_test(NAME shop_owner_ui_service COMMAND "${CMAKE_BINARY_DIR}/shop-ui/ShopUiTests.exe")
-        set_tests_properties(shop_owner_ui_service PROPERTIES TIMEOUT 30)
-    endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
     sdgo_strict(shop_labels_test)
@@ -531,7 +525,8 @@ if(BUILD_TESTING)
         add_test(NAME package_catalog_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+        # Eight editions plus packaged PowerShell installer/update readbacks.
+        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
         foreach(check loader findwindow_fix)
             add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
                 -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"

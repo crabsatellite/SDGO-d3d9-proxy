@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "daily_rewards",
+  "title": "每日双倍奖励",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "provider": "rewards",
+  "description": "每日双倍奖励，由配套配置提供内容。",
+  "settings": [
+    {
+      "id": "starttime",
+      "key": "StartTime",
+      "label": "双倍开始时间",
+      "type": "string",
+      "default": "18:00",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "pattern": "(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+    },
+    {
+      "id": "endtime",
+      "key": "EndTime",
+      "label": "双倍结束时间",
+      "type": "string",
+      "default": "22:00",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "pattern": "(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+    },
+    {
+      "id": "trace",
+      "key": "Trace",
+      "label": "诊断日志",
+      "type": "boolean",
+      "default": false,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

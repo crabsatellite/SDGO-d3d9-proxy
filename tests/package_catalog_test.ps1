@@ -62,7 +62,7 @@ try {
     Check-Package $operatorZip ($baseMods + @('operator_catalog'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
     try {
-        foreach ($required in @('tools/Start-Assistant.ps1','tools/Initialize-OperatorDefaults.py','tools/assistant_modules/operators/presets.py','tools/assistant_modules/operators/ui.html','assistant_module/operator_catalog/server/free.sql','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+        foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
             if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
         }
         foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
@@ -102,7 +102,7 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
-        foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
+        foreach ($required in @('SDGO Mod Manager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
         }
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
@@ -112,9 +112,7 @@ try {
             throw 'Full package lost the complete reward owner toolkit'
         }
         if ($fullArchive.GetEntry('rewards/tools/reward_assistant.py') -or $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1') -or $fullArchive.GetEntry('rewards/tools/assistant_modules/rewards/ui.html')) { throw 'Retired reward UI leaked into the unified package' }
-        if (-not $fullArchive.GetEntry('tools/Start-Assistant.ps1') -or -not $fullArchive.GetEntry('assistant_module/operator_catalog/server/schema.sql')) {
-            throw 'Full package lost the operator owner assistant or SQL adapter'
-        }
+        if ($fullArchive.GetEntry('tools/Start-Assistant.ps1') -or $fullArchive.GetEntry('shop/SdgoShopManager.exe')) { throw 'Retired per-feature entry entered the package' }
     } finally { $fullArchive.Dispose() }
 
     $baseFolder = Join-Path $work 'base-unpacked'; $customFolder = Join-Path $work 'custom-unpacked'

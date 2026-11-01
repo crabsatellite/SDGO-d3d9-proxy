@@ -152,6 +152,12 @@ class Operators(Provider):
             if method == 'POST' and path == '/api/operators/avatar':
                 return engine.upload(base64.b64decode(body['png'], validate=True), expected)
             if method == 'POST' and path == '/api/operators/apply': return {'applied': engine.apply(expected)}
+            if method == 'POST' and path == '/api/operators/update-client':
+                from .packages import import_client
+                client=Path(self.config['client']).resolve()
+                self.workspace.add_host(client)
+                host=next(h for h in self.workspace.settings['hosts'] if Path(h['path']).resolve()==client and h['role']=='client')
+                return import_client(self.workspace,host['id'],base64.b64encode(engine.package()).decode('ascii'))
             if re.fullmatch('/api/operators/[0-9]+', path) and method in ('PUT', 'DELETE'):
                 value = body if method == 'PUT' else {'enabled': False}
                 return engine.commit(model.update_operator(catalog, int(path.rsplit('/', 1)[1]), value))

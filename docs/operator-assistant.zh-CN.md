@@ -34,7 +34,7 @@
 
 ## 启动
 
-完整框架包中的 `tools/Start-Assistant.ps1` 是服主入口。选择游戏客户端与 `StoreServer.ini`，
+打开完整框架包中的 `SDGO Mod Manager.exe`，进入「副官与掉落」。选择游戏客户端与 `StoreServer.ini`，
 助手只读导入副官和物品定义后打开管理页面。INI 的连接凭据留在宿主本地，不进入玩家更新包。
 宿主助手需要 Python、Pillow 和 pyodbc；**玩家客户端不需要 Python，也不需要每次开助手启动游戏。**
 
@@ -42,7 +42,6 @@
 
 ```powershell
 python -B tools/operator_snapshot.py --server-ini "D:\Server\StoreServer.ini" --output "D:\OperatorConfig\source"
-python -B tools/mod_assistant.py --workspace "D:\OperatorConfig\work" --client "D:\Game" --snapshot "D:\OperatorConfig\source" --server-ini "D:\Server\StoreServer.ini"
 ```
 
 省略 `--server-ini` 就是离线编辑模式，页面不能执行服务端写入。开发构建位于非默认目录时，

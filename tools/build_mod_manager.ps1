@@ -8,9 +8,15 @@ $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if(-not (Test-Path -LiteralPath $compiler)){$compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'}
 $library=Join-Path $services 'SdgoShopServices.dll'
 $source=Join-Path $repo 'manager\engines\shop'
+$domain=Join-Path $repo 'owner\shop'
+$oldCompilerLib=$env:LIB
+if($env:LIB){$env:LIB=(($env:LIB -split ';') | Where-Object {$_ -and (Test-Path -LiteralPath $_ -PathType Container)}) -join ';'}
 & $compiler /nologo /target:library ("/out:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll `
-    (Join-Path $source 'Models.cs') (Join-Path $source 'Repository.cs') (Join-Path $source 'Service.cs') (Join-Path $source 'ManagerApi.cs')
+    (Join-Path $domain 'Models.cs') (Join-Path $domain 'Repository.cs') (Join-Path $domain 'Service.cs') (Join-Path $source 'ManagerApi.cs')
 if($LASTEXITCODE -ne 0){throw 'Manager business assembly build failed'}
+& $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopUiTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopUiTests.cs')
+if($LASTEXITCODE -ne 0){throw 'Manager domain test build failed'}
+$env:LIB=$oldCompilerLib
 $oldLibrary=$env:SDGO_MANAGER_SERVICES
 $oldCache=$env:PYINSTALLER_CONFIG_DIR
 try {

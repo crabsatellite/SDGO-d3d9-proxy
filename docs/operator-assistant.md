@@ -4,7 +4,7 @@ The host UI configures operator names, native/uploaded portraits, weighted item
 drops and either permanent free access for every player or item registration.
 Store listing, pricing and sales remain the storefront module's responsibility.
 
-Run `tools/Start-Assistant.ps1` from a full framework package, select the game
+Open `SDGO Mod Manager.exe` and choose Operators, select the game
 client and the host's existing `StoreServer.ini`, then use the browser UI. The
 host needs Python, Pillow and pyodbc. Players receive only the client Mod/data
 update and use their normal launcher; they need neither Python nor SQL access.

@@ -126,6 +126,15 @@ class Workspace:
         for field in ('drop_pools','default_pack_version'):
             if field in catalog:public_definitions[field]=copy.deepcopy(catalog[field])
         files[prefix+'definitions.json']=(json.dumps(public_definitions,ensure_ascii=False,indent=2)+'\n').encode()
+        import configparser
+        metadata=configparser.ConfigParser(interpolation=None)
+        metadata.read_string(files[prefix+"mod.ini"].decode("utf-8-sig"))
+        for name in metadata["mod"].get("files","").split(","):
+            name=name.strip()
+            if name and prefix+name not in files:
+                resource=server.MODULE_DIR/name
+                if not resource.resolve().is_relative_to(server.MODULE_DIR.resolve()):raise ValueError("模块资源路径越界")
+                files[prefix+name]=resource.read_bytes()
         fragment = server.MODULE_DIR / "symbols.fragment.ini"
         if not fragment.exists():
             raise ValueError("客户端模块缺少符号签名片段")

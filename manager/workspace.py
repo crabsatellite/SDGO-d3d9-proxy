@@ -13,8 +13,8 @@ class Workspace:
     def __init__(self, root, contracts):
         self.root = Path(root).resolve()
         self.path = self.root / 'manager.json'
-        self.contracts = registry.load(contracts)
-        self.contracts.update(registry.load(Path(__file__).parent/'addons'))
+        self.contracts = registry.load(Path(__file__).parent/'addons')
+        self.contracts.update(registry.load(contracts))
         self.mode = 'standard'
         self.providers = {}
         self.settings = storage.read_json(self.path, {'schema_version': 1, 'hosts': [], 'modules': {}})

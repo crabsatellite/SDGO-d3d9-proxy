@@ -2,8 +2,8 @@
 import argparse
 import json
 from pathlib import Path
-from assistant_modules.operators import presets
-from assistant_modules.operators.workspace import Workspace
+from manager.engines.operators import presets
+from manager.engines.operators.workspace import Workspace
 
 
 def main():
