@@ -1,7 +1,7 @@
 """Offline capsule authoring and acquisition analysis; never connects to SQL.
 
-The JSON produced here is a proposed deployment format. Runtime consumers and
-the native client/server adapter are separate from this configuration tool.
+The semantic JSON is consumed by the paired compiler and server adapter.
+This configuration module itself never connects to a live game or database.
 """
 from __future__ import annotations
 
@@ -9,11 +9,14 @@ import collections
 import copy
 import functools
 import hashlib
+import itertools
 import json
 import math
 from pathlib import Path
 import struct
 import zlib
+
+from .capsule_portraits import validate_overrides
 
 
 def read_json(path):
@@ -351,6 +354,7 @@ def validate(catalog):
     units = {u["id"]: u for u in catalog["units"]}
     if len(units) != len(catalog["units"]):
         raise ValueError("Duplicate unit ID")
+    validate_overrides(catalog)
     policy = catalog.get("custom_candidate_policy")
     if policy is not None:
         if (not isinstance(policy, dict) or policy.get("version") != 1
@@ -512,6 +516,339 @@ def acquisition(snapshot, catalog, additional=()):
                 "No account state, event rewards or admin grants are assumed."]}
 
 
+def _largest_remainder_quotas(counts, total):
+    if total < 0 or not counts or sum(counts.values()) <= 0:
+        raise ValueError("Invalid native capsule price distribution")
+    denominator = sum(counts.values())
+    raw = {key: total * value / denominator for key, value in counts.items()}
+    quotas = {key: math.floor(value) for key, value in raw.items()}
+    remainder = total - sum(quotas.values())
+    order = sorted(counts, key=lambda key: (-(raw[key] - quotas[key]), key))
+    for key in order[:remainder]:
+        quotas[key] += 1
+    return quotas
+
+
+def _rarity_weight_audit(machine, units):
+    comparisons = []
+    ranks = {units[slot["unit_id"]]["rank"] for slot in machine["slots"]}
+    for rank in sorted(ranks):
+        rare = [slot["weight"] for slot in machine["slots"]
+                if units[slot["unit_id"]]["rank"] == rank
+                and units[slot["unit_id"]]["subgrade"] == 4]
+        ordinary = [slot["weight"] for slot in machine["slots"]
+                    if units[slot["unit_id"]]["rank"] == rank
+                    and units[slot["unit_id"]]["subgrade"] == 2]
+        if rare and ordinary:
+            comparisons.append({
+                "base_rank": {1: "C", 2: "B", 3: "A", 4: "S"}[rank],
+                "rare_weights": sorted(rare),
+                "ordinary_weights": sorted(ordinary),
+                "passes": max(rare) < min(ordinary),
+            })
+    return {
+        "passes": all(row["passes"] for row in comparisons),
+        "comparisons": comparisons,
+    }
+
+
+def _root_allocation_vectors(capacity, grades, maximum=5):
+    vectors = []
+    for vector in itertools.product(
+            *(range(capacity.get(grade, 0) + 1) for grade in grades)):
+        if 1 <= sum(vector) <= maximum:
+            vectors.append(vector)
+    return vectors
+
+
+def _strict_fixed_plan(baseline, units, required, candidate_ids):
+    """Plan a bounded native-ratio initializer without a solver dependency."""
+    required_by_grade = collections.Counter(
+        units[uid]["grade"] for uid in required)
+    grades = tuple(sorted(required_by_grade))
+    candidate_counts = collections.Counter(
+        units[uid]["grade"] for uid in candidate_ids)
+    original_prices = collections.Counter(
+        machine["price"] for machine in baseline)
+    prices = tuple(sorted(original_prices))
+
+    templates = []
+    original_rarity_exceptions = []
+    for machine in baseline:
+        audit = _rarity_weight_audit(machine, units)
+        if not audit["passes"]:
+            original_rarity_exceptions.append({
+                "template_id": machine["id"],
+                "price": machine["price"],
+                **audit,
+            })
+            continue
+        slot_counts = collections.Counter(
+            units[slot["unit_id"]]["grade"] for slot in machine["slots"])
+        new_capacity = {
+            grade: min(count, candidate_counts.get(grade, 0))
+            for grade, count in slot_counts.items()
+        }
+        if sum(new_capacity.values()) < 5:
+            continue
+        root_capacity = {
+            grade: min(slot_counts.get(grade, 0),
+                       candidate_counts.get(grade, 0))
+            for grade in grades
+        }
+        templates.append({
+            "machine": machine,
+            "new_capacity": new_capacity,
+            "root_capacity": root_capacity,
+            "vectors": _root_allocation_vectors(root_capacity, grades),
+        })
+    by_price = {
+        price: [index for index, row in enumerate(templates)
+                if row["machine"]["price"] == price]
+        for price in prices
+    }
+    if any(not by_price[price] for price in prices):
+        missing = [price for price in prices if not by_price[price]]
+        raise ValueError(
+            "No strict automatic capsule template survives at native prices "
+            f"{missing}; every generated pool requires five non-native units")
+
+    def capacity_bounds(quotas, usage, repeat_limit):
+        bounds = {}
+        for grade in grades:
+            maximum = 0
+            for price_index, price in enumerate(prices):
+                copies = []
+                for template_index in by_price[price]:
+                    available = max(
+                        0, repeat_limit - usage[template_index])
+                    copies.extend(
+                        [templates[template_index]["root_capacity"][grade]]
+                        * available)
+                copies.sort(reverse=True)
+                maximum += sum(copies[:quotas[price_index]])
+            bounds[grade] = maximum
+        return bounds
+
+    def attempt(machine_count, repeat_limit):
+        quotas_by_price = _largest_remainder_quotas(
+            original_prices, machine_count)
+        quotas = tuple(quotas_by_price[price] for price in prices)
+        pending = tuple(required_by_grade[grade] for grade in grades)
+        usage = [0] * len(templates)
+        plan = []
+        feasibility_cache = {}
+
+        def feasible(remaining, remaining_quotas, current_usage):
+            key = (remaining, remaining_quotas, tuple(current_usage))
+            if key in feasibility_cache:
+                return feasibility_cache[key]
+            machines_left = sum(remaining_quotas)
+            roots_left = sum(remaining)
+            if roots_left < machines_left or roots_left > 5 * machines_left:
+                feasibility_cache[key] = False
+                return False
+            for price_index, current_price in enumerate(prices):
+                available = sum(
+                    max(0, repeat_limit - current_usage[index])
+                    for index in by_price[current_price])
+                if available < remaining_quotas[price_index]:
+                    feasibility_cache[key] = False
+                    return False
+            # Grade-subset capacity bounds keep scarce AR/BR templates
+            # available for the roots which have no other native pattern.
+            for mask in range(1, 1 << len(grades)):
+                demand = sum(
+                    remaining[index] for index in range(len(grades))
+                    if mask & (1 << index))
+                capacity = 0
+                for price_index, current_price in enumerate(prices):
+                    copies = []
+                    for template_index in by_price[current_price]:
+                        subset_capacity = min(5, sum(
+                            templates[template_index]["root_capacity"][grade]
+                            for index, grade in enumerate(grades)
+                            if mask & (1 << index)))
+                        copies.extend(
+                            [subset_capacity]
+                            * max(0, repeat_limit
+                                  - current_usage[template_index]))
+                    copies.sort(reverse=True)
+                    capacity += sum(
+                        copies[:remaining_quotas[price_index]])
+                if demand > capacity:
+                    feasibility_cache[key] = False
+                    return False
+            active_prices = [
+                index for index, quota in enumerate(remaining_quotas) if quota]
+            for mask in range(1, 1 << len(active_prices)):
+                required_machines = sum(
+                    remaining_quotas[price_index]
+                    for bit, price_index in enumerate(active_prices)
+                    if mask & (1 << bit))
+                supported_grades = set()
+                for bit, price_index in enumerate(active_prices):
+                    if not mask & (1 << bit):
+                        continue
+                    for template_index in by_price[prices[price_index]]:
+                        if current_usage[template_index] >= repeat_limit:
+                            continue
+                        supported_grades.update(
+                            index for index, grade in enumerate(grades)
+                            if templates[template_index][
+                                "root_capacity"][grade])
+                if required_machines > sum(
+                        remaining[index] for index in supported_grades):
+                    feasibility_cache[key] = False
+                    return False
+            feasibility_cache[key] = True
+            return True
+
+        if not feasible(pending, quotas, usage):
+            return None, {
+                "machine_count": machine_count,
+                "price_quotas": quotas_by_price,
+                "required_by_grade": dict(required_by_grade),
+                "maximum_root_capacity_by_grade":
+                    capacity_bounds(quotas, usage, repeat_limit),
+                "repeat_limit": repeat_limit,
+            }
+        while sum(quotas):
+            tier_options = []
+            for price_index, current_price in enumerate(prices):
+                if not quotas[price_index]:
+                    continue
+                options = []
+                for template_index in by_price[current_price]:
+                    if usage[template_index] >= repeat_limit:
+                        continue
+                    for vector in templates[template_index]["vectors"]:
+                        if any(vector[index] > pending[index]
+                               for index in range(len(grades))):
+                            continue
+                        next_pending = tuple(
+                            pending[index] - vector[index]
+                            for index in range(len(grades)))
+                        next_quotas = list(quotas)
+                        next_quotas[price_index] -= 1
+                        next_usage = list(usage)
+                        next_usage[template_index] += 1
+                        if feasible(
+                                next_pending, tuple(next_quotas), next_usage):
+                            options.append((
+                                template_index, vector, next_pending,
+                                tuple(next_quotas), next_usage))
+                tier_options.append((len(options), price_index, options))
+            _, _, options = min(
+                tier_options, key=lambda row: (row[0], row[1]))
+            if not options:
+                return None, {
+                    "machine_count": machine_count,
+                    "price_quotas": quotas_by_price,
+                    "required_by_grade": dict(required_by_grade),
+                    "maximum_root_capacity_by_grade":
+                        capacity_bounds(quotas, usage, repeat_limit),
+                    "repeat_limit": repeat_limit,
+                }
+
+            def option_score(option):
+                template_index, vector, _, _, _ = option
+                grade_spread = sum(bool(value) for value in vector)
+                urgency = sum(
+                    value * pending[index]
+                    for index, value in enumerate(vector))
+                return (
+                    usage[template_index],
+                    -grade_spread,
+                    -sum(vector),
+                    -urgency,
+                    templates[template_index]["machine"]["id"],
+                )
+
+            template_index, vector, pending, quotas, usage = min(
+                options, key=option_score)
+            plan.append({
+                "template_index": template_index,
+                "template_id":
+                    templates[template_index]["machine"]["id"],
+                "template_price":
+                    templates[template_index]["machine"]["price"],
+                "root_counts": {
+                    grade: vector[index]
+                    for index, grade in enumerate(grades) if vector[index]
+                },
+            })
+        return plan, {
+            "machine_count": machine_count,
+            "price_quotas": quotas_by_price,
+            "repeat_limit": repeat_limit,
+        }
+
+    if not required:
+        return [], {
+            "mode": "native_ratio_non_native_majority_v1",
+            "machine_count": 0,
+            "price_quotas": {},
+            "original_price_counts": dict(original_prices),
+            "original_rarity_exceptions": original_rarity_exceptions,
+        }, templates
+    minimum = math.ceil(len(required) / 5)
+    previous_machine_failure = None
+    for machine_count in range(minimum, len(required) + 1):
+        structural_quotas = _largest_remainder_quotas(
+            original_prices, machine_count)
+        structural_tuple = tuple(
+            structural_quotas[price] for price in prices)
+        structural_bounds = capacity_bounds(
+            structural_tuple, [0] * len(templates), machine_count)
+        if any(required_by_grade[grade] > structural_bounds[grade]
+               for grade in grades):
+            previous_machine_failure = {
+                "machine_count": machine_count,
+                "price_quotas": structural_quotas,
+                "required_by_grade": dict(required_by_grade),
+                "maximum_root_capacity_by_grade": structural_bounds,
+                "reason": "native_price_quota_grade_capacity",
+            }
+            continue
+        lower_repeat_failure = None
+        for repeat_limit in range(1, machine_count + 1):
+            plan, evidence = attempt(machine_count, repeat_limit)
+            if plan is not None:
+                receipt = {
+                    "mode": "native_ratio_non_native_majority_v1",
+                    "machine_count": machine_count,
+                    "price_quotas": evidence["price_quotas"],
+                    "repeat_limit": repeat_limit,
+                    "required_root_count": len(required),
+                    "required_by_grade": dict(required_by_grade),
+                    "non_native_candidate_count": len(candidate_ids),
+                    "non_native_candidates_by_grade":
+                        dict(candidate_counts),
+                    "original_price_counts": dict(original_prices),
+                    "original_price_ratios": {
+                        current_price:
+                            count / sum(original_prices.values())
+                        for current_price, count
+                        in sorted(original_prices.items())
+                    },
+                    "previous_machine_count_failure":
+                        previous_machine_failure,
+                    "lower_repeat_limit_failure":
+                        lower_repeat_failure,
+                    "original_rarity_exceptions":
+                        original_rarity_exceptions,
+                }
+                return plan, receipt, templates
+            lower_repeat_failure = {
+                **evidence, "reason": "bounded_planner"}
+        previous_machine_failure = lower_repeat_failure
+    raise ValueError(
+        "Strict automatic capsule planning failed: native price quotas and "
+        "grade patterns cannot place every required root with five non-native "
+        "units per six-slot pool")
+
+
 def initialize(snapshot, catalog, price=None):
     if price is not None and (type(price) is not int or price < 0):
         raise ValueError("Initialization price override must be a nonnegative integer or null")
@@ -546,9 +883,12 @@ def initialize(snapshot, catalog, price=None):
     derived_machines = []
     fixed_machine_mix = []
     filler_usage = collections.Counter()
+    non_native_usage = collections.Counter()
     baseline_known = {uid for uid in initial["known"] if uid in units}
     configured_fixed_units = set()
     max_new_roots_per_machine = 4
+    fixed_plan_report = None
+    new_pool_rarity_audit = []
 
     def add_fixed_machines(derived=False):
         nonlocal next_id
@@ -667,7 +1007,260 @@ def initialize(snapshot, catalog, price=None):
             occupied.add(next_id)
             next_id += 100
 
-    add_fixed_machines()
+    def add_strict_fixed_machines(plan, templates, candidate_ids,
+                                  original_fixed_units):
+        nonlocal next_id
+        required = {uid for uid in pending if uid in candidate_ids}
+        roots_by_grade = collections.defaultdict(list)
+        candidates_by_grade = collections.defaultdict(list)
+        native_by_grade = collections.defaultdict(list)
+        for uid in sorted(required):
+            roots_by_grade[units[uid]["grade"]].append(uid)
+        for uid in sorted(candidate_ids):
+            candidates_by_grade[units[uid]["grade"]].append(uid)
+        for uid in sorted(original_fixed_units):
+            native_by_grade[units[uid]["grade"]].append(uid)
+        unassigned = set(required)
+
+        for entry in plan:
+            template = templates[entry["template_index"]]["machine"]
+            root_counts = collections.Counter(entry["root_counts"])
+            slot_grades = [
+                units[slot["unit_id"]]["grade"] for slot in template["slots"]]
+
+            # Exactly one old-fixed slot keeps old overlap at 1/6 while the
+            # other five slots use units absent from all original 78 pools.
+            old_slot_choices = []
+            for old_index, old_grade in enumerate(slot_grades):
+                if root_counts[old_grade] > slot_grades.count(old_grade) - 1:
+                    continue
+                feasible = True
+                for current_grade in set(slot_grades):
+                    remaining = (slot_grades.count(current_grade)
+                                 - (current_grade == old_grade))
+                    if remaining > len(candidates_by_grade[current_grade]):
+                        feasible = False
+                        break
+                if feasible and native_by_grade[old_grade]:
+                    old_slot_choices.append(old_index)
+            if not old_slot_choices:
+                raise ValueError(
+                    f"Template {template['id']} cannot retain exactly one "
+                    "old-fixed slot and five distinct non-old units")
+            old_slot = min(
+                old_slot_choices,
+                key=lambda index: (
+                    0 if not candidates_by_grade[slot_grades[index]] else 1,
+                    0 if slot_grades[index] == "C" else 1,
+                    len(candidates_by_grade[slot_grades[index]]),
+                    index,
+                ))
+
+            root_slots = set()
+            for current_grade, count in sorted(root_counts.items()):
+                choices = [
+                    index for index, slot_grade in enumerate(slot_grades)
+                    if index != old_slot and slot_grade == current_grade
+                ]
+                root_slots.update(choices[:count])
+
+            slots = []
+            used = set()
+            covered = []
+            baseline_fillers = []
+            non_native_fillers = []
+            for slot_index, ref in enumerate(template["slots"], 1):
+                index = slot_index - 1
+                ref_unit = units[ref["unit_id"]]
+                current_grade = ref_unit["grade"]
+                if index == old_slot:
+                    choices = [
+                        uid for uid in native_by_grade[current_grade]
+                        if uid not in used
+                    ]
+                    choices.sort(key=lambda uid: (filler_usage[uid], uid))
+                    if not choices:
+                        raise ValueError(
+                            f"No rotating old-fixed filler for template "
+                            f"{template['id']} grade {current_grade}")
+                    uid = choices[0]
+                    role = "filler_native_overlap"
+                    baseline_fillers.append(uid)
+                elif index in root_slots:
+                    if not roots_by_grade[current_grade]:
+                        raise ValueError(
+                            f"Planner over-allocated required grade "
+                            f"{current_grade} in template {template['id']}")
+                    uid = roots_by_grade[current_grade].pop(0)
+                    unassigned.remove(uid)
+                    role = "new_root"
+                    covered.append(uid)
+                else:
+                    choices = [
+                        uid for uid in candidates_by_grade[current_grade]
+                        if uid not in used and uid not in unassigned
+                    ]
+                    choices.sort(
+                        key=lambda uid: (non_native_usage[uid], uid))
+                    if not choices:
+                        raise ValueError(
+                            f"Template {template['id']} grade {current_grade} "
+                            "cannot fill five distinct non-old slots without "
+                            "consuming a root reserved for a later pool")
+                    uid = choices[0]
+                    role = "filler_non_native"
+                    non_native_fillers.append(uid)
+                used.add(uid)
+                slot = {
+                    "unit_id": uid,
+                    "weight": ref["weight"],
+                    "native_draw_group": ref["native_draw_group"],
+                    "sprites": units[uid].get("capsule_sprites", []),
+                    "template_unit_id": ref["unit_id"],
+                    "template_grade": ref_unit["grade"],
+                    "template_slot": slot_index,
+                    "template_sprites": ref.get("sprites", []),
+                    "initialization_role": role,
+                }
+                if role != "new_root":
+                    slot["filler_usage_before"] = (
+                        filler_usage[uid] if index == old_slot
+                        else non_native_usage[uid])
+                slots.append(slot)
+            if len(used) != 6 or len(covered) < 1:
+                raise ValueError(
+                    f"Strict generated pool from template {template['id']} "
+                    "must contain six distinct units and a required root")
+
+            while next_id in occupied or next_id + 1 in occupied:
+                next_id += 100
+            machine_price = template["price"] if price is None else price
+            pricing_source = "template" if price is None else "override"
+            initialization_mix = {
+                "new_root_limit": 5,
+                "new_root_unit_ids": list(covered),
+                "baseline_filler_unit_ids": list(baseline_fillers),
+                "initialized_filler_unit_ids":
+                    list(non_native_fillers),
+                "native_overlap_unit_ids": list(baseline_fillers),
+                "non_native_filler_unit_ids":
+                    list(non_native_fillers),
+                "non_native_slot_count": 5,
+                "native_overlap_slot_count": 1,
+            }
+            machine = {
+                "id": next_id,
+                "name": f"Acquisition {len(new_machines) + 1}",
+                "enabled": True,
+                "owner": "initialization",
+                "currency": "GP",
+                "price": machine_price,
+                "pricing_source": pricing_source,
+                "template_price": template["price"],
+                "draw_policy": "independent_weighted",
+                "template_id": template["id"],
+                "template_match": "exact_grade",
+                "initialization_mix": initialization_mix,
+                "slots": slots,
+            }
+            rarity = _rarity_weight_audit(machine, units)
+            if not rarity["passes"]:
+                raise ValueError(
+                    f"Generated pool {next_id} violates rare-weight ordering")
+            catalog["fixed_machines"].append(machine)
+            new_machines.append(next_id)
+            fixed_machine_mix.append({
+                "machine_id": next_id,
+                "template_id": template["id"],
+                "template_price": template["price"],
+                "price": machine_price,
+                "pricing_source": pricing_source,
+                **initialization_mix,
+            })
+            new_pool_rarity_audit.append({
+                "machine_id": next_id,
+                "template_id": template["id"],
+                **rarity,
+            })
+            for uid in baseline_fillers:
+                filler_usage[uid] += 1
+            for slot in slots:
+                if slot["initialization_role"] != "filler_native_overlap":
+                    non_native_usage[slot["unit_id"]] += 1
+            configured_fixed_units.update(covered)
+            pending.difference_update(covered)
+            occupied.add(next_id)
+            next_id += 100
+        if unassigned:
+            raise ValueError(
+                f"Strict fixed plan left required roots unassigned: "
+                f"{sorted(unassigned)}")
+
+    strict_mix = (
+        "custom_candidate_policy" in catalog
+        and any("has_inventory_category" in unit for unit in units.values()))
+    if strict_mix:
+        original_fixed_units = {
+            slot["unit_id"] for machine in baseline
+            for slot in machine["slots"]
+        }
+        source_forms = set(initial["forms"])
+        inventory_candidates = {
+            unit["id"] for unit in units.values()
+            if unit["eligible"]
+            and unit["rank"] <= 3
+            and unit.get("has_inventory_category", False)
+            and unit["id"] not in original_fixed_units
+            and unit["id"] not in source_forms
+            and not unit.get("review_placeholder")
+            and unit["subgrade"] != 3
+        }
+        # Required acquisition roots remain valid fixed-capsule entries even
+        # when the stock database omitted their inventory-category flag.
+        # Dropping those rows would silently lose ten real roots in snapshot-v1.
+        fixed_required = {
+            uid for uid in pending
+            if units[uid]["eligible"]
+            and units[uid]["rank"] <= 3
+            and units[uid]["subgrade"] != 3
+            and uid not in original_fixed_units
+            and uid not in source_forms
+            and not units[uid].get("review_placeholder")
+        }
+        candidate_ids = inventory_candidates | fixed_required
+        if fixed_required:
+            plan, fixed_plan_report, templates = _strict_fixed_plan(
+                baseline, units, fixed_required, candidate_ids)
+            fixed_plan_report.update({
+                "inventory_non_native_candidate_count":
+                    len(inventory_candidates),
+                "required_root_inventory_flag_exceptions":
+                    sorted(fixed_required - inventory_candidates),
+            })
+            add_strict_fixed_machines(
+                plan, templates, candidate_ids, original_fixed_units)
+            template_counts = collections.Counter(
+                entry["template_id"] for entry in plan)
+            actual_template_prices = collections.Counter(
+                entry["template_price"] for entry in plan)
+            overlap_slots = sum(
+                row["native_overlap_slot_count"]
+                for row in fixed_machine_mix)
+            total_slots = 6 * len(plan)
+            fixed_plan_report.update({
+                "actual_template_price_counts":
+                    dict(actual_template_prices),
+                "template_counts": dict(template_counts),
+                "distinct_template_count": len(template_counts),
+                "maximum_template_reuse":
+                    max(template_counts.values(), default=0),
+                "native_overlap_slot_count": overlap_slots,
+                "total_generated_slot_count": total_slots,
+                "native_overlap_rate":
+                    overlap_slots / total_slots if total_slots else 0.0,
+            })
+    else:
+        add_fixed_machines()
     # AS/BS/CS have no stock exact-grade patterns. Treat them as their base
     # A/B/C slot only for rank <= 3, preserving the native slot's weight, draw
     # group, position and artwork role. Rank-4 S/SS never use this fallback.
@@ -823,6 +1416,11 @@ def initialize(snapshot, catalog, price=None):
               "fixed_filler_usage": [
                   {"unit_id": uid, "grade": units[uid]["grade"], "uses": count}
                   for uid, count in sorted(filler_usage.items())],
+              "fixed_non_native_usage": [
+                  {"unit_id": uid, "grade": units[uid]["grade"], "uses": count}
+                  for uid, count in sorted(non_native_usage.items())],
+              "fixed_initialization_plan": fixed_plan_report,
+              "new_fixed_rarity_audit": new_pool_rarity_audit,
               "custom_candidate_additions": custom_added,
               "custom_candidate_exclusions": custom_exclusions,
               "derived_fixed_art_blocked": [
@@ -887,6 +1485,9 @@ def export_bundle(catalog, output):
                "units": catalog["units"]}
     if "custom_candidate_policy" in catalog:
         payload["custom_candidate_policy"] = copy.deepcopy(catalog["custom_candidate_policy"])
+    if "portrait_overrides" in catalog:
+        payload["portrait_overrides"] = copy.deepcopy(
+            catalog["portrait_overrides"])
     # Identical semantic payloads prevent client/server configuration divergence.
     for role in ("client", "server"):
         write_json(out / f"{role}.json", {**payload, "role": role})

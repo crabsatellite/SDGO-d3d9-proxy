@@ -1,6 +1,6 @@
 # Capsule catalog editor (Beta)
 
-Owners manage fixed and custom capsule machines through a local browser UI.
+Owners manage fixed and custom capsule machines through the capsule panel in SDGO Mod Manager.
 Create, inspect, edit, retire, restore and reorder machines; choose native six-slot
 templates; set prices and weights; add or remove custom candidates; preview unit
 portraits; export and compile configuration; apply matching client and server data.
@@ -9,13 +9,13 @@ Players keep the game's native capsule screens and normal launcher.
 `capsule_catalog` ships disabled until the owner supplies a complete generated
 runtime. No game assets, player data, database credentials or machine-specific
 paths are checked into this repository. Owners provide their own supported client
-and server configuration. The owner tools require Python 3.10+, Pillow and, for
-SQL operations, pyodbc plus an installed SQL Server ODBC driver. Player installation
-uses PowerShell and does not require Python.
+and server configuration. The packaged Manager includes its owner-tool dependencies. Source development uses
+Python 3.10+, Pillow and pyodbc; SQL operations require an installed SQL Server ODBC
+driver. Player installation does not require Python.
 
 See the [owner walkthrough](capsule-authoring.zh-CN.md) for commands, source
-inspection, initialization and the portable editor package. The editor binds to
-`127.0.0.1`; it is an owner tool rather than an account-facing remote website.
+inspection and initialization. All configuration uses the existing Manager session,
+provider API and workspace; there is no separate capsule server or launcher.
 
 The configuration is shared by two consumers:
 
@@ -36,8 +36,9 @@ For an A/B/C portrait, upload a finished PNG, drag the fixed-aspect crop frame,
 resize its corners or use the zoom slider, and preview the native card. Save
 either pose separately or share one image across both. Reset restores a pose's
 original artwork. PNG bytes, hashes and crop coordinates travel inside the
-catalog, so they do not reference a path on the owner's computer. AI restoration
-is a separate offline task and is not part of the editor or player runtime.
+catalog, so they do not reference a path on the owner's computer. The default
+catalog has no uploaded overrides and uses original local client artwork. No
+restored game artwork, game archives or AI models are published by this feature.
 
 Give players the complete generated `player` directory, including its manifest
 and `Install-Client.cmd`. Check first, then install:

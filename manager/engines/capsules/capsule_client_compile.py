@@ -14,7 +14,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 5
+COMPILER_VERSION = 7
 
 
 def encode_gdt(size, records, extra=11):
@@ -117,7 +117,8 @@ def compile_catalog(catalog, client, lookup, output):
         # Keep the game's authored head crop, rank banner and rare silhouette.
         # Re-rendering its SPR into a new PNG loses native frame properties;
         # full-body unit previews are a different resource type altogether.
-        if units[uid].get("capsule_sprites"):
+        has_override = getattr(assets, "has_portrait_override", lambda *_: False)
+        if units[uid].get("capsule_sprites") and not has_override(uid):
             paths = list(assets.card_sprite_paths(uid))
             native_card_references.extend(
                 {"unit_id": uid, "variant": variant, "sprite": path}
@@ -126,6 +127,11 @@ def compile_catalog(catalog, client, lookup, output):
         else:
             paths = []
             for variant in range(2):
+                if units[uid].get("capsule_sprites") and not has_override(uid, variant):
+                    path = assets.card_sprite_paths(uid)[variant]
+                    paths.append(path)
+                    native_card_references.append({"unit_id": uid, "variant": variant, "sprite": path})
+                    continue
                 while next_sprite in occupied_sprite_ids or next_sprite in occupied_texture_ids:
                     next_sprite += 1
                 if next_sprite > 65535:
@@ -148,10 +154,16 @@ def compile_catalog(catalog, client, lookup, output):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(resources[relative])
                     files[target.relative_to(out).as_posix()] = hashlib.sha256(resources[relative]).hexdigest()
+                provenance = {}
+                if has_override(uid, variant):
+                    from .capsule_portraits import get_override
+                    uploaded = get_override(catalog, uid, variant)
+                    provenance = {"uploaded_png_sha256": uploaded["sha256"], "crop": uploaded["crop"]}
                 generated_cards.append({"unit_id": uid, "variant": variant,
                     "sprite": sprite_path, "png_sha256": hashlib.sha256(stream.getvalue()).hexdigest(),
                     "texture_size": list(texture.size), "uv": list(uv),
-                    "source": "native_frame_and_cropped_unit_sprite"})
+                    "source": "native_frame_and_uploaded_png" if provenance else "native_frame_and_cropped_unit_sprite",
+                    **provenance})
                 paths.append(sprite_path.replace("/", "\\"))
         cards[uid] = paths
         return paths
@@ -284,7 +296,7 @@ def compile_catalog(catalog, client, lookup, output):
         "source_gdt_extras": original_extras,
         "source_index_sha256": reader.index_hash})
     return {"catalog_revision": revision, "counts": counts, "generated_cards": len(generated_cards),
-            "native_card_units": len(native_card_references) // 2,
+            "native_card_units": len({row["unit_id"] for row in native_card_references}),
             "output": str(out)}
 
 
@@ -294,5 +306,3 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     args = p.parse_args()
     print(json.dumps(compile_catalog(read_json(args.catalog), args.client, args.lookup, args.output)))
-
-

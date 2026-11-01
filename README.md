@@ -63,14 +63,14 @@ and random-unit gameplay belong in this category.
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
-The [capsule editor](docs/capsule-catalog.md) is part of master. Owners configure their own
+The [capsule panel in Mod Manager](docs/capsule-catalog.md) is part of master. Owners configure their own
 paths and database connection locally, then distribute a generated player package.
 Players install it once and use the normal game launcher. Other Mods can reuse the
 [catalog, compiler and deployment interfaces](docs/capsule-integration.md) rather than
 writing separate client tables or overlapping native file hooks.
 Upload a finished PNG and drag or resize its crop frame to preview the native
-card. Image restoration is performed separately; the editor and player runtime
-have no AI model or GPU dependency.
+card. The distributed Mod uses the owner’s existing client artwork; this project
+does not bundle restored game artwork, original game archives or AI models.
 
 On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)
 beside the native lock/delete buttons. Reward selection, paged previews, both confirmations

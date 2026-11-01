@@ -479,11 +479,11 @@ def _merge_mod_ini(package_raw, existing_raw):
         return package_raw
     old = _ini_values(existing_raw, "existing capsule mod.ini")
     merged = package_raw
-    enabled = old.get("mod", {}).get("enabled")
-    if enabled is not None:
-        merged = _set_ini_value(
-            merged, "mod", "enabled", enabled, "package capsule mod.ini"
-        )
+    # Applying a complete capsule runtime explicitly activates this feature.
+    # A generic framework installation may have left its data-less stub off.
+    merged = _set_ini_value(
+        merged, "mod", "enabled", "1", "package capsule mod.ini"
+    )
     for key, value in old.get("settings", {}).items():
         merged = _set_ini_value(
             merged, "settings", key, value, "package capsule mod.ini"
@@ -844,6 +844,9 @@ def _build_package(
             "player/client/sdgo/mods/capsule_catalog/mod.ini"
         ),
     }
+    contract = "sdgo/mods/capsule_catalog/manager.json"
+    if _safe_join(framework_stage, contract).is_file():
+        stage_files[contract] = "player/client/" + contract
     installer = Path(__file__).with_name("install_capsule_client.ps1")
     installer = _assert_existing_components_no_reparse(installer)
     if not installer.is_file():
@@ -1263,6 +1266,9 @@ class _ClientTransaction:
             ini_raw = target_ini.read_bytes()
         else:
             ini_raw = package_ini
+        ini_raw = _set_ini_value(
+            ini_raw, "mods", "capsule_catalog", "1", "existing sdgo.ini"
+        )
         if self.foreign_loader:
             values = _ini_values(ini_raw, "existing sdgo.ini")
             configured = values.get("loader", {}).get("chain_d3d9", "")

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import capsule_catalog
 import capsule_portraits
 import capsule_ui
+from tests import capsule_http_fixture
 from tests.test_capsule_ui import fixture_catalog
 
 

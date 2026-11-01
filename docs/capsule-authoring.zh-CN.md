@@ -3,7 +3,7 @@
 显示修订见 [显示修订记录](capsule-display-fix.zh-CN.md)。列表价格、框线和图片窗口修复已在主客户端
 人工确认。机台数量与具体内容由服主配置决定，以当前导出清单和安装读回为准。
 
-master 提供服主使用的本地编辑器、客户端 `capsule_catalog` Mod，以及服务端 SQL 运行时适配器。
+master 通过 SDGO Mod Manager 提供服主使用的扭蛋编辑面板、客户端 `capsule_catalog` Mod，以及服务端 SQL 运行时适配器。
 编辑器支持固定机与自定义机的新增、查询、修改、下架、恢复、排序、模板选择、机体图片、价格与权重。
 “导出配置”生成语义 JSON；“编译客户端”生成游戏资源；配置好本机目标后，“导入到游戏”才实际安装客户端
 文件并在指定服务端数据库中安装配置。每一步均显示实际结果，单独导出 JSON 不等于完成安装。
@@ -127,11 +127,10 @@ SQL 安装失败时回滚 SQL 事务并恢复客户端文件。修改或下架�
 原始游戏文件不需要重新打包。服务端生成 `install.sql`、`verify.sql`、`rollback.sql`，
 只写配置表和专用运行时表；不调用会清空共享工作表的旧建池过程，也不访问玩家表。
 
-服主启动示例（路径由服主填写；`--server-ini` 中的凭据只在本机读取）：
-
-```powershell
-python tools/capsule_ui.py serve --catalog "D:\CapsuleConfig\initial\catalog.json" --patterns "D:\CapsuleConfig\initial\patterns.json" --assets "D:\CapsuleConfig\assets" --bundle-output "D:\CapsuleConfig\bundle" --client "D:\Game" --lookup "D:\CapsuleConfig\unit_portrait_lookup.json" --install-client "D:\Game" --server-ini "D:\Server\StoreServer.ini" --framework-stage "D:\CapsuleEditor\framework-client" --open
-```
+在 SDGO Mod Manager 中打开“扭蛋机”，选择本机 catalog、patterns、客户端、图片索引和输出目录。
+需要安装时再配置目标客户端、服务端 INI 和当前框架目录。连接凭据只由本机服务器 INI 读取。
+旧 `start_capsule_editor.py`、`capsule_ui.py serve` 和独立编辑器包入口已经停用；源码调试统一运行
+`python tools/mod_manager.py`，普通用户运行 `SDGO Mod Manager.exe`。
 
 不提供安装目标时仍可编辑、导出和编译，界面不会假报“已导入”。目标客户端运行时拒绝覆盖；
 安装完成后提示服主重启自己的原生服务，以刷新价格和候选池缓存。工具不会重启其他开发线。
@@ -200,4 +199,5 @@ UI 显示选中机台的原生页码和位置。下架保留 ID 与历史，从�
 
 配置内嵌 PNG、SHA-256 和原图像素坐标，不依赖图片的本机路径；全部 PNG 总计最多 32 MiB。
 可导入、导出、重新编辑及逐姿态恢复原图。当前覆盖仅支持已核实框样式的 A/B/C 系列，S/SR/SS 保留现有资源。
-AI 画质恢复由我们或服主独立处理，不属于工具流程；玩家只收到编译好的游戏资源。
+默认配置不再包含高清图片覆盖。原版卡片直接引用原 SPR；无原卡的新增机体用本地原版选择图裁切、套框。
+仓库和通用 Mod 包不附带原始游戏资源或高清衍生图片；服主用自己的客户端生成配套玩家配置。

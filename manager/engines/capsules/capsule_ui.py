@@ -5,9 +5,11 @@ cannot choose filesystem paths, run SQL, or reach a non-loopback interface.
 """
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import hmac
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +18,7 @@ import secrets
 import shutil
 import tempfile
 import threading
+from urllib.parse import parse_qs, urlsplit
 
 from .capsule_catalog import (
     capsule_display,
@@ -29,9 +32,10 @@ from .capsule_catalog import (
     validate,
     write_json,
 )
+from .capsule_portraits import get_override, make_override
 
 
-MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MACHINE_KINDS = ("fixed_machines", "custom_machines")
 ASSET_RE = re.compile(r"^/(?:api/)?assets/unit/([1-9][0-9]*)\.png$")
 
@@ -50,6 +54,19 @@ class MissingError(RequestError):
 
 def _json_bytes(value):
     return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+
+
+def _image_data_url(image):
+    stream = io.BytesIO()
+    image.convert("RGBA").save(stream, "PNG", compress_level=9)
+    return "data:image/png;base64," + base64.b64encode(
+        stream.getvalue()).decode("ascii")
+
+
+def _render_card(catalog, client, lookup, unit_id, variant):
+    from .capsule_assets import Assets
+
+    return Assets(client, lookup, catalog).card(unit_id, variant)
 
 
 def _load_catalog_bytes(raw):
@@ -316,6 +333,137 @@ class CatalogStore:
         if not path.is_file():
             raise MissingError("Unit preview is unavailable")
         return path
+
+    @staticmethod
+    def _portrait_target(catalog, unit_id, variant):
+        if type(unit_id) is not int or unit_id <= 0:
+            raise RequestError("Portrait unit_id must be a positive integer")
+        if type(variant) is not int or variant not in (0, 1):
+            raise RequestError("Portrait variant must be 0 or 1")
+        unit = next(
+            (row for row in catalog["units"] if row["id"] == unit_id), None)
+        if unit is None:
+            raise MissingError("Portrait unit was not found")
+        if (unit.get("rank", 99) > 3
+                or not str(unit.get("grade", "")).startswith(("A", "B", "C"))):
+            raise RequestError(
+                "No verified native capsule-card frame exists for this grade")
+        return unit
+
+    def _portrait_state(self, catalog, unit_id, variant, *, render_card):
+        self._portrait_target(catalog, unit_id, variant)
+        entry = get_override(catalog, unit_id, variant)
+        card_data_url = None
+        if render_card and self.can_compile:
+            card_data_url = _image_data_url(_render_card(
+                catalog, self.client_path, self.lookup_path, unit_id, variant))
+        return {
+            "catalog_revision": digest(catalog),
+            "unit_id": unit_id,
+            "variant": variant,
+            "overridden": entry is not None,
+            "image_data_url": (
+                "data:image/png;base64," + entry["png_base64"]
+                if entry is not None else None
+            ),
+            "crop": copy.deepcopy(entry["crop"]) if entry is not None else None,
+            "sha256": entry["sha256"] if entry is not None else None,
+            "card_data_url": card_data_url,
+        }
+
+    def portrait_get(self, unit_id, variant):
+        with self.lock:
+            catalog, _ = self.read()
+            return self._portrait_state(
+                catalog, unit_id, variant, render_card=True)
+
+    def portrait_preview(
+            self, unit_id, variant, png_base64, crop, expected_revision):
+        if not self.can_compile:
+            raise RequestError(
+                "Portrait preview requires --client and --lookup at server startup")
+        with self.lock:
+            catalog, _ = self.read()
+            self._expect(catalog, expected_revision)
+            self._portrait_target(catalog, unit_id, variant)
+            entry = make_override(png_base64, crop)
+            temporary = copy.deepcopy(catalog)
+            temporary.setdefault("portrait_overrides", {}).setdefault(
+                str(unit_id), {})[str(variant)] = entry
+            validate(temporary)
+            return {
+                "catalog_revision": digest(catalog),
+                "unit_id": unit_id,
+                "variant": variant,
+                "overridden": True,
+                "image_data_url":
+                    "data:image/png;base64," + entry["png_base64"],
+                "crop": copy.deepcopy(entry["crop"]),
+                "sha256": entry["sha256"],
+                "card_data_url": _image_data_url(_render_card(
+                    temporary, self.client_path, self.lookup_path,
+                    unit_id, variant)),
+            }
+
+    def portrait_save(
+            self, unit_id, variant, png_base64, crop, expected_revision,
+            apply_to_both=False):
+        if type(apply_to_both) is not bool:
+            raise RequestError("apply_to_both must be a boolean")
+        with self.lock:
+            catalog, raw = self.read()
+            self._expect(catalog, expected_revision)
+            self._portrait_target(catalog, unit_id, variant)
+            entry = make_override(png_base64, crop)
+            result = copy.deepcopy(catalog)
+            variants = result.setdefault("portrait_overrides", {}).setdefault(
+                str(unit_id), {})
+            variants[str(variant)] = entry
+            saved_variants = [variant]
+            if apply_to_both:
+                variants[str(1 - variant)] = copy.deepcopy(entry)
+                saved_variants = [0, 1]
+            backup = self._save(result, raw)
+            response = self._result(result, backup=backup)
+            response.update({
+                "unit_id": unit_id,
+                "variant": variant,
+                "saved_variants": saved_variants,
+                "overridden": True,
+                "image_data_url":
+                    "data:image/png;base64," + entry["png_base64"],
+                "crop": copy.deepcopy(entry["crop"]),
+                "sha256": entry["sha256"],
+                "card_data_url": None,
+            })
+            return response
+
+    def portrait_reset(self, unit_id, variant, expected_revision):
+        with self.lock:
+            catalog, raw = self.read()
+            self._expect(catalog, expected_revision)
+            self._portrait_target(catalog, unit_id, variant)
+            result = copy.deepcopy(catalog)
+            overrides = result.get("portrait_overrides", {})
+            variants = overrides.get(str(unit_id), {})
+            variants.pop(str(variant), None)
+            if not variants:
+                overrides.pop(str(unit_id), None)
+            if not overrides:
+                result.pop("portrait_overrides", None)
+            backup = self._save(result, raw)
+            response = self._result(result, backup=backup)
+            response.update({
+                "unit_id": unit_id,
+                "variant": variant,
+                "saved_variants": [],
+                "overridden": False,
+                "image_data_url": None,
+                "crop": None,
+                "sha256": None,
+                "card_data_url": None,
+            })
+            return response
 
     def _result(self, catalog, machine=None, backup=None):
         result = {
@@ -598,9 +746,9 @@ class CatalogStore:
                     "Configured snapshot differs from the catalog source."
                 )
 
-    def initialize(self, expected_revision, price):
-        if type(price) is not int or price < 0:
-            raise RequestError("Initialization price must be a nonnegative integer")
+    def initialize(self, expected_revision, price=None):
+        if price is not None and (type(price) is not int or price < 0):
+            raise RequestError("Initialization price must be blank or a nonnegative integer")
         with self.lock:
             catalog, raw = self.read()
             self._expect(catalog, expected_revision)
@@ -642,8 +790,10 @@ class CatalogStore:
 
 
 class CapsuleApplication:
-    def __init__(self, store):
+    def __init__(self, store, ui_path=None):
         self.store = store
+        self.ui_path = Path(ui_path).resolve() if ui_path else None
+        self.token = secrets.token_urlsafe(32)
 
     @staticmethod
     def _machine_summary(machine, position, native_position, kind):
@@ -769,6 +919,19 @@ class CapsuleApplication:
                 break
         return {"units": result, "query": query, "limit": limit}
 
+    def static(self, name):
+        allowed = {
+            "index.html": "text/html; charset=utf-8",
+            "app.js": "text/javascript; charset=utf-8",
+            "style.css": "text/css; charset=utf-8",
+        }
+        if name not in allowed:
+            raise MissingError("Static resource not found")
+        path = self.ui_path / name
+        data = path.read_bytes()
+        if name == "index.html":
+            data = data.replace(b"{{CSRF_TOKEN}}", self.token.encode("ascii"))
+        return data, allowed[name]
 
     def dispatch_post(self, path, payload):
         expected = payload.get("expected_revision")
@@ -825,7 +988,45 @@ class CapsuleApplication:
                 )
             return self.store.apply(expected, payload.get("selected"))
         if path == "/api/initialize":
-            return self.store.initialize(expected, payload.get("price", 1200))
+            return self.store.initialize(expected, payload.get("price"))
+        if path == "/api/portraits/preview":
+            unexpected = set(payload) - {
+                "unit_id", "variant", "png_base64", "crop",
+                "expected_revision",
+            }
+            if unexpected:
+                raise RequestError("Portrait preview contains unknown fields")
+            return self.store.portrait_preview(
+                payload.get("unit_id"),
+                payload.get("variant"),
+                payload.get("png_base64"),
+                payload.get("crop"),
+                expected,
+            )
+        if path == "/api/portraits/save":
+            unexpected = set(payload) - {
+                "unit_id", "variant", "png_base64", "crop",
+                "expected_revision", "apply_to_both",
+            }
+            if unexpected:
+                raise RequestError("Portrait save contains unknown fields")
+            return self.store.portrait_save(
+                payload.get("unit_id"),
+                payload.get("variant"),
+                payload.get("png_base64"),
+                payload.get("crop"),
+                expected,
+                payload.get("apply_to_both", False),
+            )
+        if path == "/api/portraits/reset":
+            unexpected = set(payload) - {
+                "unit_id", "variant", "expected_revision",
+            }
+            if unexpected:
+                raise RequestError("Portrait reset contains unknown fields")
+            return self.store.portrait_reset(
+                payload.get("unit_id"),
+                payload.get("variant"),
+                expected,
+            )
         raise MissingError("API endpoint not found")
-
-

@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import capsule_catalog as catalog_lib
 import capsule_ui
+from tests import capsule_http_fixture
 from capsule_client_compile import COMPILER_VERSION
 
 

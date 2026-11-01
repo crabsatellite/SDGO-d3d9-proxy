@@ -136,6 +136,10 @@ def make_stage(root):
     (stage / "sdgo/mods/capsule_catalog/capsule_catalog.dll").write_bytes(
         b"CAPSULE MOD DLL"
     )
+    (stage / "sdgo/mods/capsule_catalog/manager.json").write_text(
+        '{"schema_version":1,"id":"capsule_catalog","settings":[]}',
+        encoding="utf-8",
+    )
     (stage / "sdgo/mods/capsule_catalog/mod.ini").write_text(
         "[mod]\nid=capsule_catalog\nname=Capsule catalog runtime\n"
         "version=1.0.0\napi=1\ndll=capsule_catalog.dll\n"
@@ -459,6 +463,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((package / "player/symbol-fragment.ini").is_file())
         self.assertTrue((package / "player/package-manifest.json").is_file())
         self.assertTrue((package / "player/Install-Client.ps1").is_file())
+        self.assertTrue((package / "player/client/sdgo/mods/capsule_catalog/manager.json").is_file())
         self.assertTrue((package / "player/Install-Client.cmd").is_file())
         full_symbols = (
             package
