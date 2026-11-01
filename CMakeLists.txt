@@ -157,7 +157,18 @@ endforeach()
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
+find_program(SDGO_SHOP_POWERSHELL NAMES powershell pwsh)
+if(SDGO_SHOP_POWERSHELL)
+    add_custom_target(shop_owner_ui ALL
+        COMMAND "${SDGO_SHOP_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_shop_ui.ps1"
+            -OutDirectory "${CMAKE_BINARY_DIR}/shop-ui" -Tests
+        COMMENT "Building native Windows owner shop manager")
+endif()
 if(BUILD_TESTING)
+    if(SDGO_SHOP_POWERSHELL)
+        add_test(NAME shop_owner_ui_service COMMAND "${CMAKE_BINARY_DIR}/shop-ui/ShopUiTests.exe")
+        set_tests_properties(shop_owner_ui_service PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
     sdgo_strict(shop_labels_test)

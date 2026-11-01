@@ -1,97 +1,71 @@
-# 服主管理的原生商城 Mod 0.1.0
+# 服主管理的原生商城 Mod
 
-本模块让服主通过配置增加、查询、修改和下架**由本模块管理的单物品商品**。
-玩家继续使用原生商城、购买确认、扣费和发货路径。无需在玩家客户端运行 Python、SQL 工具或管理服务。
-源码独立于扭蛋机、AI 和其他功能；租赁/中文显示补丁单独分发。
+服主通过独立 Windows 窗口 `SdgoShopManager.exe` 增加、查询、编辑、上架、下架和删除自己管理的商品。
+界面沿用 GB / MB 发放工具的原生窗口风格。玩家继续使用游戏内原商城购买；玩家无需安装管理窗口。
+租赁/中文选项显示补丁独立分发。
 
-## 工作方式
+## 服主使用
 
-宿主是当前原生 WorldServer（timestamp `548A86E3`、SizeOfImage `0010C000`）。
-模块使用已有 `WorldServer.ini` 的 `DB Game` / `DB StoreBilling` 配置连接数据库，不把连接凭据写入导出配置。
-启动时把 catalog.ini 中的定义在事务中写入原生商城表。仅更新自己的产品和销售选项，不替换任何原生过程，
-不修改账号、余额、仓库或购买历史。
+1. 双击 `SdgoShopManager.exe`。首次打开选择包含 `WorldServer.ini` 的服务端目录，点击「连接 / 刷新」。
+   数据库连接沿用服主自己的宿主 INI，不要求在界面抄写密码；连接设置只保存在本机。
+2. 可选择已安装显示补丁的本机客户端。应用后，工具自动同步玩家显示配置；没有本机客户端时留空，
+   使用「导出玩家显示配置」交给玩家。
+3. 点击「新增商品」，在物品列表搜索、筛选并选择现有机体或物品。编号自动分配。
+4. 设置商品名称、价格、GB / MB、租期或数量和上架状态。永久机体固定为一件，租赁机体显示实际天数。
+5. 「保存到草稿」和「保存草稿」只保存本机定义。主列表能搜索并区分上架、下架、已删除，以及服务端是否已应用。
+6. 点击「应用到商城」，核对目标区服及商品变动后确认。成功后重新打开游戏商城查看。
+7. 编辑、上架/下架、删除也是先改草稿，再点「应用到商城」。删除保留编号、购买历史和玩家已买物品；
+   「恢复草稿」可将删除的定义恢复为下架状态再编辑。
 
-普通商城币种为 **GB=原生1/GP，MB=原生2/GC**。这与活动扭蛋机的另一套配置不是同一个问题。
-价格是正整数；原生购买窗口把零价选项视为不可用，配置工具因此拒绝零价而不是生成无法购买的商品。
-永久机体的 validity=1；租赁机体为实际天数；消耗品为原生选项所定义的数量。不可通过把租赁期限改成0
-来冒充永久，必须选择对应的原生永久类别。
+「导入商品配置 / 导出商品配置」处理可分发的商品 JSON，没有 IP、数据库密码或本机目录。
+导入同一 catalog 的配置时，遗漏的旧商品转为已删除并保留身份；不可通过导入改写已有商品的身份。
+可再用「导出玩家显示配置」分发上次成功应用生成的 UTF-16LE 标签。未应用草稿不会混入玩家标签。
 
-新增 SKU 以现有单物品商品为原生模板，使用独立产品 ID / SKU，保留稳定选项 ID。
-运行时校验模板类别、页签区间、现有 ID 碰撞及拥有关系。商品必须是原生类别表里的合法物品，机体还须可出击。
-不支持凭配置创造新的机体/资源、复杂多物品礼包，或覆盖其他模块/原版商品。
+本机已安装的入口是桌面「SDGO 商城管理」或 `SDGO-server/shop-catalog/SdgoShopManager.exe`。
+该目录已有本机配置时会直接读取；通用包默认在 `%LOCALAPPDATA%/SDGO/ShopCatalog` 保存管理数据。
+服主日常操作不需要 Python 或终端。开发者 JSON CLI 保留在 `host-tools`，供自动化和内部测试。
 
-## 生成配置
+## 安装与运行
 
-宿主配置工具使用 Python 3 和 `pyodbc`；原生运行时模块和玩家客户端不需要 Python。
-只读导出当前商品与物品类别（不读取玩家数据）：
-
-```powershell
-python host-tools/shop_catalog.py snapshot --server-ini "D:\Server\WorldServer.ini" --output snapshot.json
-python host-tools/shop_catalog.py init --id my-server-shop --file shop.json
-python host-tools/shop_catalog.py items --snapshot snapshot.json --search Zaku
-python host-tools/shop_catalog.py add --file shop.json --snapshot snapshot.json --key starter-zaku --category 1120022 --price 500 --currency GB
-python host-tools/shop_catalog.py compile --file shop.json --snapshot snapshot.json --output catalog.ini
-```
-
-`catalog.ini` 是 UTF-16LE，只有商品定义，没有 IP、SQL 密码、账号或本机绝对路径。
-
-```powershell
-python host-tools/shop_catalog.py list --file shop.json
-python host-tools/shop_catalog.py show --file shop.json --key starter-zaku
-python host-tools/shop_catalog.py update --file shop.json --key starter-zaku --patch changes.json
-python host-tools/shop_catalog.py delete --file shop.json --key starter-zaku
-```
-
-`changes.json` 如 `{"price":900,"currency":"MB"}`。`delete` 是下架，不复用编号、不清空历史；旧 JSON 自动备份。
-JSON API 的 `create/update/retire/validate/compile_catalog` 函数可直接供独立编辑器 UI 调用。
-产品身份不可原地修改；变换页签/身份时建立新条目。
-
-## 安装、应用与卸载
-
-通常先关闭目标 WorldServer；脚本不会停止任何进程。其他目录/分支的服务不动。
+宿主是原生 WorldServer，timestamp `548A86E3`、SizeOfImage `0010C000`。
+第一次安装服务器组件：关闭目标 WorldServer，在解压包里运行安装器并指定目标目录；这一步属于安装，
+以后的商品管理都在窗口内完成。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Server\WorldServer" -ConfigFile .\catalog.ini
 ```
 
-安装后正常启动 WorldServer 即会应用配置。更新配置沿用同一安装命令，已有共享框架和其他 Mods 保留。
-没有框架时自动补齐随包的 World loader/core；本模块不改 core ABI。
-未导入配置时模块默认关闭，避免仅复制文件就改变商城。
+初次 `catalog.ini` 可以是空商品表。没有导入配置时默认不启用模块。
+首次安装且希望 WorldServer 继续运行时可加 `-DeferActivation`：只添加尚不存在的 catalog 目录，
+不更新运行中的已有模块，不改名正在使用的第三方 wrapper。
+启动 DLL 在下次正常重启时加载，窗口可立即通过打包的原生应用引擎应用配置，无需现在停服。
 
-首次安装且希望当前 WorldServer 继续运行时，可额外传 `-DeferActivation`。
-它只允许添加尚不存在的 catalog 目录，不更新运行中已有模块，也不改名正在使用的第三方 wrapper。
-启动 DLL 在下次正常重启时加载；在此之前可使用下方原生工具应用商品配置，现有商城列表会继续走原生查询。
-安装记录会明确写出 `startup_activation=deferred`，不能把文件落盘当作 DLL 已加载。
+界面使用 Windows 自带 .NET Framework 4.x；运行时应用使用原生 32 位 C++，不启动管理服务或网页端口。
+选择本机客户端后新标签在下次启动客户端时读取；通常改价和上下架只需重开游戏商城。
+可选的玩家标签同时受选项编号、类别、价格、币种和期限约束，不会用旧标签覆盖不匹配商品。
 
-原生宿主管理工具也使用与 DLL 完全相同的应用代码，可在维护时显式应用：
+## 功能边界和一致性
 
-```powershell
-.\payload\shop_catalog\shop_catalog_apply.exe --host-ini "D:\Server\WorldServer\WorldServer.ini" --catalog .\catalog.ini --output "D:\Server\WorldServer\sdgo\mods\shop_catalog"
-```
+模块只管理自己拥有的原生商品行，事务应用，不替换原生 SQL 过程，不修改账号、余额、仓库和历史。
+新增 SKU 使用现有单物品模板并保留稳定 option ID；未知/占用编号拒绝覆盖，失败回滚。
+只支持原生已有类别，机体必须可出击；不包含复杂多物品礼包或凭配置创造新机体资源。
 
-应用成功会生成 `runtime-display.ini`。将它交给玩家，通过独立的 ShopLabels 补丁导入，
-可显示原生 CP874 销售选项无法携带的中文文字；数值租期/永久状态由显示补丁直接从原生字段生成。
-玩家需要与宿主一致的原生游戏资源，新增商品使用已有类别图像和机体定义。
+普通商城编码 **GB=原生1/GP，MB=原生2/GC**，与活动扭蛋问题分别处理。
+价格必须为正整数，因为原生购买窗口跳过零价选项。永久机体 validity=1；租赁为实际天数，其他物品遵循原生数量/有效期。
+自定义文字不能隐藏真实租赁/永久状态。显示补丁处理销售选项，不是全局商品标题或聊天编码修复。
 
-手动验收和增删改查示例见[测试步骤](shop-testing.zh-CN.md)。本机测试辅助脚本默认只列配置，
-只有显式执行 `TestOffers` / `ChangePrice` / `ClearOffers` 才应用相应商品改动。
+窗口连接时只读取物品元数据、商城模板和本 catalog 状态。另一个窗口不能同时写相同管理目录；
+外部工具修改了 JSON 后会拒绝覆盖。每次应用保留商品定义、生成标签和结果；失败信息区分未完整应用与应用后本地保存不完整。
+
+## 卸载与验证
+
+在窗口下架商品并应用，可仅停用销售而保留模块。彻底卸载须先关闭目标 WorldServer：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Server\WorldServer" -Uninstall
 ```
 
-卸载先通过原生工具下架本 catalog 的商品，再备份移出 Mod。数据库不可连接时保留 Mod 供恢复，
-不会假装商品已经下架。共享框架保留。
+卸载先下架本 catalog 的商品，再备份移出 Mod；数据库不可连接时保留模块供恢复。共享框架和其他模块保留。
 
-## 一致性与验证
-
-事务失败不提交；未知/被占用的 ID 不覆盖。重复应用保留原生选项 ID。
-配置中移除的自有商品会下架，原版条目逐行保持不变。
-数据库价格、币种、期限和导出的客户端显示条件来自同一应用结果，自定义标签不能掩盖实际租赁状态。
-
-本机验证包括实际 32 位运行时、全新隔离 SQL 库、原生列表/筛选/结算过程、合成余额的 GP/GC 扣款、
-Unicode 保存、重复应用、更新、碰撞回滚和原版条目保留。没有读写真人余额/仓库。
-另验证了实际 DLL 入口、打包后的原生工具、安装/卸载下架、旧页面购买可见性检查、相对路径，
-以及产品配置损坏且无 Game 数据库连接时仍可停用自有商品。离线全套回归和安装包测试见
-[验证记录](shop-validation.zh-CN.md)。
-真人登录、游戏内实际购买/发货与视觉验收仍由用户手动完成，未把这些静态/隔离测试当作真人验收。
+[界面测试步骤](shop-testing.zh-CN.md)说明新增、改价、币种、租期和删除的手动验收。
+[验证记录](shop-validation.zh-CN.md)区分窗口业务、隔离 SQL、文件安装和真人游戏验收。
