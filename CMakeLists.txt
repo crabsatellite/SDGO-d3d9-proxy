@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
 project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(SDGO_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(SDGO_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(SDGO_VERSION_PATCH ${PROJECT_VERSION_PATCH})
@@ -123,7 +124,7 @@ sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES 
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
 
-sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid)
+sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -135,6 +136,15 @@ add_custom_target(sdgo_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDGO_SYMBOL_FILES} "${SDGO_STAGE}/server/sdgo/symbols/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/config/sdgo.ini" "${SDGO_STAGE}/server/sdgo/"
     COMMENT "Staging symbol files and sdgo.ini"
+)
+
+# The same manifests drive package selection and runtime category/feature gates.
+add_custom_target(sdgo_catalog ALL
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_catalog.py"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}"
+        --output "${SDGO_STAGE}/client/sdgo/catalog.json"
+        --output "${SDGO_STAGE}/server/sdgo/catalog.json"
+    COMMENT "Validating and staging the categorized mod catalog"
 )
 
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
@@ -174,6 +184,12 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_library(catalog_gate_probe SHARED tests/catalog_gate_probe.cpp)
+    target_link_libraries(catalog_gate_probe PRIVATE sdgo_api)
+    sdgo_strict(catalog_gate_probe)
+    add_test(NAME mod_catalog_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_catalog.py" -v)
+    set_tests_properties(mod_catalog_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -184,6 +200,14 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(catalog_gates_offline PROPERTIES TIMEOUT 60)
+        add_test(NAME package_catalog_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_catalog_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         foreach(check loader findwindow_fix)
             add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
                 -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"
@@ -223,9 +247,13 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
-sdgo_strict(new_account_policy_test)
-add_test(NAME new_account_policy COMMAND new_account_policy_test)
-add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
-target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
-sdgo_strict(new_account_sql_test)
+if(BUILD_TESTING)
+    add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
+    sdgo_strict(new_account_policy_test)
+    add_test(NAME new_account_policy COMMAND new_account_policy_test)
+    set_tests_properties(new_account_policy PROPERTIES TIMEOUT 30)
+    # Opt-in SQL fixture: needs an isolated container and local credentials.
+    add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
+    target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(new_account_sql_test)
+endif()

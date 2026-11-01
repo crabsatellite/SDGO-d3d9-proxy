@@ -1,0 +1,71 @@
+# 新账号起始资料修复
+
+`new_account_profile` 是可选的服务端基础修复，**默认启用**。新玩家以
+**5,000 GP、0 现金点券、下士 1 阶**起步，之后按服务器原有规则养成。
+玩家客户端不需要安装。GP、点券、军衔和子等级均可由服主配置。
+
+## 安装与配置
+
+先停止要更新的 World 服务器，再从最新框架包运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot D:\SDGO\WorldServer -Role World
+```
+
+每套独立 World 实例都需要安装；不必在每个 Battle 频道、Agent、Store 或玩家客户端重复安装。
+这是 World 新玩家初始化路径上的修复，不操作其他服务的工作目录。
+
+把 `sdgo/mods/new_account_profile/config.example.ini` 复制为同目录的 `config.ini`：
+
+```ini
+[settings]
+InitialGP=5000
+InitialCash=0
+RankNumber=5
+RankStep=1
+```
+
+没有 `config.ini` 时读取 `mod.ini` 的 `[settings]`。修改后重启 World。
+`RankNumber` 为 0..20，`RankStep` 为 1..5。起始经验从服务器现有的
+`tbl_Levelname` 对应行读取，不另造升级曲线。本次核对的服端中，下士 1 阶是
+`5/1`、25,700 经验，高级频道最低军衔也是 5。
+
+Mod 只从宿主 INI 读取 `[DB StoreBilling] DBName`，使用服务程序已有的已认证
+OLE DB 连接与本地事务，不读取、复制或分发数据库密码。Common、Game、Billing
+数据库须与原服一样位于该 SQL 实例上，原数据库身份须能读写相关账户、钱包、角色表并读取军衔表。
+
+## 生效范围
+
+本次发现注册 SQL 直接发放 9,999,999 GP 与 9,999,999 点券；初次建档 SQL 又把
+军衔写死为 15/1。Mod **不永久改写存储过程**，而是在已校验的新注册/首次建档调用
+外围使用事务应用配置；成功提交后才向原程序发布一致的角色资料。
+
+- World 普通自动注册：事务提交前调整初始资金，保留原来首次登录需要重试的协议结果。
+- 首次建立游戏资料：设置军衔、对应起点经验及钱包，也覆盖其他入口注册、或过去已注册但尚未建档的账号。
+- 已有游戏角色：余额、经验、军衔及后续正常奖励均不重置。
+- 原服的新手机体、道具、技能、副官与其他字段保持原有流程。
+- 失败时回滚本次未完成的创建与赠送，不以成功结果交付半初始化资料。
+- 原生数据库会话不可用时返回数据库错误，不放行一次使用原巨额赠送规则的创建。
+  安装后应检查 `sdgo/logs/sdgo.log` 的启用记录；不支持的版本、关闭的分类/功能或
+  无效配置会让 Mod 保持未启用状态。
+
+## 停用与卸载
+
+在 `sdgo/sdgo.ini` 中设置并重启 World：
+
+```ini
+[mods]
+new_account_profile=0
+```
+
+也可以先停止 World，单独移走 `sdgo/mods/new_account_profile/` 后重启。
+后续新账号恢复原服建号规则；已经创建的角色保持现状，不补回巨额资金，也不倒退已获得的进度。
+保留公共 core、加载器与其他 Mod。不要用 `install_server.ps1 -Uninstall` 只卸此 Mod，
+该参数用于卸载整个框架。
+
+支持的原生版本是 `WorldServer-548A86E3-0010C000`，其他版本须校验后适配。
+不会改写原 EXE 文件，也不会扫描并修改全部老玩家。
+
+验证覆盖策略失败回滚、真实 core/Mod/OLE DB 与隔离 SQL 测试库、启用/停用的默认差异，
+以及五个原生符号的离线签名检查。真实登录、客户端显示和对局仍由用户手动验收；
+测试夹具通过不代表已执行真人游戏流程。更多实现与测试说明见 [English](new-account-profile.md)。

@@ -46,9 +46,10 @@ std::wstring Root(){wchar_t p[32768];GetModuleFileNameW(nullptr,p,32768);std::ws
 std::wstring Stem(){wchar_t p[32768];GetModuleFileNameW(nullptr,p,32768);std::wstring s=p;s=s.substr(s.find_last_of(L"\\/")+1);return s.substr(0,s.find_last_of(L'.'));}
 void Write(const std::wstring& path,const std::string& text){HANDLE f=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);DWORD n=0;Check(f!=INVALID_HANDLE_VALUE&&WriteFile(f,text.data(),static_cast<DWORD>(text.size()),&n,nullptr)&&n==text.size(),"write fixture metadata");if(f!=INVALID_HANDLE_VALUE)CloseHandle(f);}
 template<class F> uintptr_t Member(F f){uintptr_t value=0;static_assert(sizeof(f)==sizeof(value));memcpy(&value,&f,sizeof(value));return value;}
+std::string NarrowDatabase(const std::wstring& value){std::string result;for(wchar_t c:value)result+=static_cast<char>(c);return result;}
 void Symbols(const std::wstring& root){
  auto* base=reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));auto* nt=reinterpret_cast<IMAGE_NT_HEADERS*>(base+reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
- char key[128],header[256];auto stem=Stem();std::string name(stem.begin(),stem.end());
+ char key[128],header[256];auto stem=Stem();std::string name;for(wchar_t c:stem)name+=static_cast<char>(c);
  sprintf_s(key,"%s-%08X-%08X",name.c_str(),nt->FileHeader.TimeDateStamp,nt->OptionalHeader.SizeOfImage);
  sprintf_s(header,"[host]\ntimestamp=0x%08X\nsize_of_image=0x%08X\n",nt->FileHeader.TimeDateStamp,nt->OptionalHeader.SizeOfImage);std::string result=header;
  auto add=[&](const char* id,uintptr_t address,const char* kind,unsigned size){char line[256];sprintf_s(line,"\n[%s]\nkind=%s\nrva=0x%08X\nexpect=",id,kind,static_cast<unsigned>(address-reinterpret_cast<uintptr_t>(base)));result+=line;for(unsigned i=0;i<size;++i){sprintf_s(line,"%02X ",reinterpret_cast<BYTE*>(address)[i]);result+=line;}result+='\n';};
@@ -60,7 +61,7 @@ int Account(Session& s,const char* name){OleDatabase d(billing);int value=-1;Che
 int Run(bool enabled){
  wchar_t bill[64];if(!GetEnvironmentVariableW(L"SDGO_STARTER_BILLING_NAME",bill,64))return 2;billing=bill;
  Session common,game;Check(common.Open(L"SDGO_STARTER_COMMON"),"open isolated common provider");Check(game.Open(L"SDGO_STARTER_GAME"),"open isolated game provider");if(failed)return 2;
- const auto root=Root();Symbols(root);Write(root+L"\\"+Stem()+L".ini","[DB StoreBilling]\nDBName="+std::string(billing.begin(),billing.end())+"\n");
+ const auto root=Root();Symbols(root);Write(root+L"\\"+Stem()+L".ini","[DB StoreBilling]\nDBName="+NarrowDatabase(billing)+"\n");
  HMODULE core=LoadLibraryW((root+L"\\sdgo\\core.dll").c_str());auto init=core?reinterpret_cast<SdgoCoreInitFn>(GetProcAddress(core,"SdgoCoreInit")):nullptr;
  Check(init!=nullptr,"actual core export exists");if(!init)return 2;SdgoBoot boot={sizeof(boot),"starter_sql_test",GetModuleHandleW(nullptr)};Check(init(&boot)!=0,"load actual new-account Mod through core");
  Native native;LoginInput login={};strcpy_s(login.id,"starter-new");strcpy_s(login.password,"fixture-only");
@@ -70,6 +71,13 @@ int Run(bool enabled){
  Check(enabled?(out.experience==25700&&out.rank==5&&out.step==1):(out.experience==0&&out.rank==5&&out.step==0),"caller sees policy output only when Mod is enabled");
  OleDatabase live(billing);bool exists=false;Check(live.Open(&game.native)&&live.User(id,false,exists)&&exists,"profile persisted in real SQL");
  if(enabled){
+  NativeConnection unavailable;
+  LoginInput unavailableLogin={};strcpy_s(unavailableLogin.id,"no-session");
+  code=native.Login(&unavailable,&unavailableLogin,nullptr);
+  Check(code==1000&&unavailableLogin.result==4&&Account(common,unavailableLogin.id)==0,"unavailable session fails before native registration");
+  UserInput unavailableUser={};unavailableUser.account=id;UserOutput unavailableOutput={};unavailableOutput.experience=-99;
+  code=native.Profile(&unavailable,&unavailableUser,&unavailableOutput);
+  Check(code==1000&&unavailableUser.result==1&&unavailableOutput.experience==-99,"unavailable session fails without publishing a profile");
   LoginInput bad={};strcpy_s(bad.id,"fail-wallet");failWallet=true;code=native.Login(&common.native,&bad,nullptr);failWallet=false;
   Check(code==1000&&bad.result==4&&Account(common,bad.id)==0,"failed wallet policy rolls back the whole native account");
   LoginInput other={};strcpy_s(other.id,"fail-profile");native.Login(&common.native,&other,nullptr);int otherId=Account(common,other.id);

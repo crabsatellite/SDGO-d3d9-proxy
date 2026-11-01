@@ -1,6 +1,5 @@
 #define DBINITCONSTANTS
 #include <windows.h>
-#include <array>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -43,14 +42,16 @@ bool Number(const sdgo::ModSettings& config,const char* key,const char* fallback
 int __fastcall LoginHook(void* self,void*,void* connection,LoginInput* raw,void* output) {
     LoginInput input={};
     if(!Read(raw,input))return kDatabaseError;
-    if(!memchr(input.id,0,sizeof(input.id))||!input.id[0]){
-        SecureZeroMemory(input.password,sizeof(input.password));return originalLogin(self,connection,raw,output);
+    if(!memchr(input.id,0,sizeof(input.id))){
+        int failure=4;Write(&raw->result,failure);SecureZeroMemory(input.password,sizeof(input.password));return kDatabaseError;
     }
     int result=kDatabaseError;
     try {
         OleDatabase database(billing);
         if(!database.Open(connection)){
-            SecureZeroMemory(input.password,sizeof(input.password));return originalLogin(self,connection,raw,output);
+            int failure=4;Write(&raw->result,failure);
+            g_api->Log(g_mod,SDGO_LOG_ERROR,"cannot enforce new-account defaults: native database session unavailable");
+            SecureZeroMemory(input.password,sizeof(input.password));return kDatabaseError;
         }
         result=Login(database,settings,input,[&](LoginInput& in){return originalLogin(self,connection,&in,output);});
         Write(&raw->result,input.result);
@@ -65,7 +66,11 @@ int __fastcall UserHook(void* self,void*,void* connection,UserInput* raw,UserOut
     int result=kDatabaseError;
     try {
         OleDatabase database(billing);
-        if(!database.Open(connection))return originalUser(self,connection,raw,output);
+        if(!database.Open(connection)){
+            int failure=1;Write(&raw->result,failure);
+            g_api->Log(g_mod,SDGO_LOG_ERROR,"cannot enforce first-profile defaults: native database session unavailable");
+            return kDatabaseError;
+        }
         result=User(database,settings,input,row,[&](UserInput& in,UserOutput& out){return originalUser(self,connection,&in,&out);});
         Write(&raw->tutorial,input.tutorial);Write(&raw->result,input.result);
         if(result==0)Write(output,row);

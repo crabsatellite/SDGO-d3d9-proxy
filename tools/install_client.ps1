@@ -34,6 +34,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "install_common.ps1")
 $ProductName = "SDGO mod framework"
 $Loader = "d3d9.dll"
 $Chain = "d3d9_chain.dll"
@@ -163,6 +164,7 @@ if (-not $Source) {
     if (-not (Test-Path -LiteralPath $Source)) { $Source = Join-Path $PSScriptRoot "..\build\stage\Release\client" }
 }
 $Source = (Resolve-Path -LiteralPath $Source).Path
+$preservedConfigFiles = @(Get-ModConfigPaths $Source)
 if (-not (Test-Path -LiteralPath (Join-Path $Source $Loader))) { throw "$Source has no $Loader; pass -Source <package>\client" }
 
 $hostKey = Get-HostKey $exe
@@ -194,6 +196,10 @@ Get-ChildItem -LiteralPath $Source -Recurse -File | ForEach-Object {
     $destination = Join-Path $game $relative
     if ((Test-Path -LiteralPath $destination) -and -not $OverwriteConfig) {
         if ($relative -eq "sdgo\sdgo.ini") {
+            Write-Host "kept     $relative"
+            return
+        }
+        if ($preservedConfigFiles -contains $relative) {
             Write-Host "kept     $relative"
             return
         }

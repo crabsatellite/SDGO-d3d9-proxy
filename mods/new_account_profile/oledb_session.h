@@ -11,6 +11,9 @@ namespace sdgo::starter {
 template<class T> class Com {
     T* p_ = nullptr;
 public:
+    Com() = default;
+    Com(const Com&) = delete;
+    Com& operator=(const Com&) = delete;
     ~Com() { if (p_) p_->Release(); }
     T* get() const { return p_; }
     T** put() { if (p_) { p_->Release(); p_=nullptr; } return &p_; }
@@ -47,7 +50,9 @@ class OleDatabase final : public Database {
         DBPARAMS params={};
         char login[15]={};
         if(id) {
-            memcpy(login,id,sizeof(login));
+            const auto length=strnlen_s(id,sizeof(login));
+            if(length>=sizeof(login))return false;
+            memcpy(login,id,length);
             Com<ICommandWithParameters> info;
             if(FAILED(command->QueryInterface(__uuidof(ICommandWithParameters),reinterpret_cast<void**>(info.put()))) ||
                FAILED(command->QueryInterface(__uuidof(IAccessor),reinterpret_cast<void**>(parameters.put()))))return false;
@@ -60,7 +65,10 @@ class OleDatabase final : public Database {
             bind.iOrdinal=1;bind.dwPart=DBPART_VALUE;bind.dwMemOwner=DBMEMOWNER_CLIENTOWNED;
             bind.eParamIO=DBPARAMIO_INPUT;bind.cbMaxLen=15;bind.wType=DBTYPE_STR;
             DBBINDSTATUS status=DBBINDSTATUS_BADBINDINFO;
-            if(FAILED(parameters->CreateAccessor(DBACCESSOR_PARAMETERDATA,1,&bind,sizeof(login),&parameterHandle,&status)) || status!=DBBINDSTATUS_OK)return false;
+            if(FAILED(parameters->CreateAccessor(DBACCESSOR_PARAMETERDATA,1,&bind,sizeof(login),&parameterHandle,&status)) || status!=DBBINDSTATUS_OK){
+                if(parameterHandle!=DB_NULL_HACCESSOR)parameters->ReleaseAccessor(parameterHandle,nullptr);
+                return false;
+            }
             params.pData=login;params.cParamSets=1;params.hAccessor=parameterHandle;
         }
         Com<IRowset> rows;
@@ -76,7 +84,10 @@ class OleDatabase final : public Database {
         bind.dwPart=DBPART_VALUE|DBPART_STATUS|DBPART_LENGTH;bind.dwMemOwner=DBMEMOWNER_CLIENTOWNED;
         bind.eParamIO=DBPARAMIO_NOTPARAM;bind.cbMaxLen=sizeof(int);bind.wType=DBTYPE_I4;
         HACCESSOR handle=DB_NULL_HACCESSOR;DBBINDSTATUS status=DBBINDSTATUS_BADBINDINFO;
-        if(FAILED(accessor->CreateAccessor(DBACCESSOR_ROWDATA,1,&bind,sizeof(Cell),&handle,&status))||status!=DBBINDSTATUS_OK)return false;
+        if(FAILED(accessor->CreateAccessor(DBACCESSOR_ROWDATA,1,&bind,sizeof(Cell),&handle,&status))||status!=DBBINDSTATUS_OK){
+            if(handle!=DB_NULL_HACCESSOR)accessor->ReleaseAccessor(handle,nullptr);
+            return false;
+        }
         DBCOUNTITEM count=0;HROW* handles=nullptr;
         result=rows->GetNextRows(DB_NULL_HCHAPTER,0,1,&count,&handles);
         if(SUCCEEDED(result)&&count==1)result=rows->GetData(handles[0],handle,&cell);
