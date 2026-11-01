@@ -139,6 +139,8 @@ add_executable(battle_ai_capabilities_test tests/battle_ai_capabilities_test.cpp
 sdgo_strict(battle_ai_capabilities_test)
 add_executable(battle_ai_navigation_test tests/battle_ai_navigation_test.cpp)
 sdgo_strict(battle_ai_navigation_test)
+add_executable(battle_ai_special_budget_test tests/battle_ai_special_budget_test.cpp)
+sdgo_strict(battle_ai_special_budget_test)
 
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.
