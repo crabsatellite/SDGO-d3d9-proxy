@@ -53,13 +53,26 @@ function Check-Package([string]$zip, [string[]]$expected) {
     } finally { $archive.Dispose() }
 }
 try {
-    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile')
+    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix','new_account_profile','shop_labels')
     $baseZip = Invoke-Package 'Base' '' (Join-Path $work 'base')
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
+    $operatorZip = Invoke-Package 'Full' 'operator-assistant' (Join-Path $work 'operators')
+    Check-Package $operatorZip ($baseMods + @('operator_catalog'))
+    $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
+    try {
+        foreach ($required in @('tools/Start-Assistant.ps1','tools/Initialize-OperatorDefaults.py','tools/assistant_modules/operators/presets.py','tools/assistant_modules/operators/ui.html','assistant_module/operator_catalog/server/free.sql','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+            if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
+        }
+        foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
+            if ($operatorArchive.GetEntry($forbidden)) { throw "Operator feature package contains unrelated toolkit $forbidden" }
+        }
+    } finally { $operatorArchive.Dispose() }
     $titleZip = Invoke-Package 'Full' 'room-titles' (Join-Path $work 'titles')
     Check-Package $titleZip ($baseMods + @('room_titles','room_titles_agent','room_titles_server'))
+    $hangarZip = Invoke-Package 'Full' 'hangar-manager' (Join-Path $work 'hangar')
+    Check-Package $hangarZip ($baseMods + @('hangar_manager'))
     $rewardZip = Invoke-Package 'Full' 'battle-rewards' (Join-Path $work 'rewards')
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
@@ -70,14 +83,36 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','net_probe','net_route','agent_udp_pool'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
+    $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
+    Check-Package $dailyZip ($baseMods + @('daily_rewards'))
+    $dailyFolder = Join-Path $work 'daily-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($dailyZip, $dailyFolder)
+    $dailyServer = Join-Path $work 'daily-server'
+    New-FakeExe (Join-Path $dailyServer 'BattleServer.exe') 0x548A891D 0x0046C000
+    $dailyInstaller = Join-Path $dailyFolder 'install_server.ps1'
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Daily reward installer failed: $output" }
+    $dailyConfig = Join-Path $dailyServer 'sdgo\mods\daily_rewards\config.ini'
+    $ownerSchedule = "[settings]`r`nStartTime=20:30`r`nEndTime=01:15`r`nTrace=0"
+    [IO.File]::WriteAllText($dailyConfig, $ownerSchedule)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllText($dailyConfig) -cne $ownerSchedule) {
+        throw "Daily reward update lost the owner's time-window configuration: $output"
+    }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
+        foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
+        }
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
         if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1')) {
             throw 'Full package lost the complete reward owner toolkit'
+        }
+        if (-not $fullArchive.GetEntry('tools/Start-Assistant.ps1') -or -not $fullArchive.GetEntry('assistant_module/operator_catalog/server/schema.sql')) {
+            throw 'Full package lost the operator owner assistant or SQL adapter'
         }
     } finally { $fullArchive.Dispose() }
 
@@ -97,6 +132,22 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Packaged feature installer failed: $output" }
     if (-not (Test-Path -LiteralPath (Join-Path $game 'sdgo\mods\match_ai\match_ai.dll'))) { throw 'Feature client not installed' }
     if (-not ([IO.File]::ReadAllText($ini).Contains('gameplay=0')) -or -not (Test-Path -LiteralPath $other)) { throw 'Update lost user switches or unrelated mods' }
+    $hangarFolder = Join-Path $work 'hangar-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($hangarZip, $hangarFolder)
+    $hangarInstaller = Join-Path $hangarFolder 'install_client.ps1'
+    $oldAi = Read-Sha256 (Join-Path $game 'sdgo\mods\match_ai\match_ai.dll')
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $hangarInstaller -GameDir $game 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged hangar install failed: $output" }
+    $rules = Join-Path $game 'sdgo\mods\hangar_manager\units.tsv'
+    if (-not (Test-Path -LiteralPath $rules) -or
+        -not (Test-Path -LiteralPath (Join-Path $game 'sdgo\mods\hangar_manager\hangar_manager.dll'))) { throw 'Hangar package lacks DLL or rules' }
+    [IO.File]::AppendAllText($rules, "`n# custom owner preview rules`n")
+    $oldRules = Read-Sha256 $rules
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $hangarInstaller -GameDir $game 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged hangar update failed: $output" }
+    if ($oldRules -ne (Read-Sha256 $rules) -or
+        $oldAi -ne (Read-Sha256 (Join-Path $game 'sdgo\mods\match_ai\match_ai.dll')) -or
+        -not ([IO.File]::ReadAllText($ini).Contains('gameplay=0')) -or -not (Test-Path -LiteralPath $other)) { throw 'Hangar update lost custom rules, switches or unrelated mods' }
     $server = Join-Path $work 'server'
     New-FakeExe (Join-Path $server 'BattleServer.exe') 0x548A891D 0x0046C000
     $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $customFolder 'install_server.ps1') -ServerRoot $server 2>&1
@@ -134,6 +185,14 @@ try {
     foreach ($file in @('winmm.dll','sdgo\core.dll','sdgo\mods\new_account_profile\new_account_profile.dll','sdgo\mods\new_account_profile\config.example.ini','sdgo\symbols\WorldServer-548A86E3-0010C000.ini')) {
         if (-not (Test-Path -LiteralPath (Join-Path $world $file))) { throw "World install lost $file" }
     }
+    $fullFolder=Join-Path $work 'full-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($fullZip,$fullFolder)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $fullFolder 'install_server.ps1') -ServerRoot $world -Role World 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Full World installer failed: $output" }
+    foreach ($file in @('sdgo\mods\shop_catalog\shop_catalog.dll','sdgo\mods\shop_catalog\shop_catalog_apply.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $world $file))) { throw "Full World installation lost shop runtime component: $file" }
+    }
+    if ([IO.File]::ReadAllText((Join-Path $world 'sdgo\mods\shop_catalog\mod.ini')) -notmatch '(?m)^enabled=0\s*$') { throw 'An unconfigured shop catalog must remain disabled' }
     $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
     if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'

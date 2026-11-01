@@ -22,6 +22,7 @@ Each fix can be disabled separately.
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
+| Shop rental and Unicode labels | Explicit rental/permanent labels in hover, buy and gift options, with guarded Unicode captions; also distributed separately | `shop_labels` | clients | [Guide](docs/shop-labels.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
@@ -49,7 +50,30 @@ and random-unit gameplay belong in this category.
 | Collection capsule (Beta) | Spend 100,000 GP for a previously unacquired base-form unit | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
+| Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
+| Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
+| Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
+
+In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
+Identical untrained copies default to two kept. Exchange excludes trained units;
+locked, active, battleship-assigned, rental and unknown-state units are protected.
+Successful native operations
+update the visible hangar without relogging; an unconfirmed result stops the batch
+and requires relogging. Real-game acceptance remains manual. See the
+[hangar guide](docs/hangar-manager.md) for installation, preview rules and reward handling.
+
+Daily double rewards need only a BattleServer update; players keep their current clients.
+See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-acceptance).
+
+Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
+names, portraits and drop probabilities/amounts. Five permanent free support officers
+cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
+holdings migrate in place, preserving equipped references and personal nicknames.
+The owner applies server rules and distributes a matching client update; players
+keep their normal launcher. The module registers products for the storefront to
+price and list. In-game display, claiming and settlement still need manual acceptance.
+See the [configuration and migration guide](docs/operator-assistant.md).
 
 The AI catalog is a separate, default-off addon; Base/Full framework packages do
 not install it. The owner generates `catalog.bin` from their database catalog and
@@ -103,13 +127,31 @@ gameplay. The package's feature directory lists the tools actually included.
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
+| Shop catalog manager (Beta) | Windows owner UI for product CRUD, pricing, listing and portable configuration; uses native shop billing | `shop_catalog` | World server + owner window | [Guide](docs/shop-catalog.md) |
 <!-- /mod-category:network -->
+Double-click `SdgoShopManager.exe` to manage offers in a Windows owner window. Save edits as drafts,
+then use “Apply to shop”; players keep using the native shop. [Manual checks (中文)](docs/shop-testing.zh-CN.md).
+The label patch and catalog manager also have separate packages; exports contain no database credentials.
+
 
 ## Reward rules and verification
 
 [Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
-settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
-contains the approved values and offline calculator. Real account combat, HUD and
+settlement and the owner wallet worker. Owners change the GB/MB base multiplier
+at `/rewards`; players keep their normal client and launcher. Kills, effective
+damage, assists, mission minions and Boss contribution affect payouts, and PvP
+MVP earns additional MB. AI matches use the same PvP tier. Each extra qualifying
+human multiplies rewards by another `1.1`, together with double time: base ten,
+double time and four humans give `10 × 2 × 1.1³ = 26.62`.
+
+Use the full package's `rewards/` toolkit to install every participating
+BattleServer with one shared owner workspace, then run
+`tools/Start-Battle-Rewards.ps1` for the wallet worker and assistant. It can mount
+the installed operator assistant on the same port while preserving its modules;
+closing the browser does not stop the worker. Stop each target BattleServer for
+installation and restart it afterward; later multiplier changes are hot-loaded.
+See [installation, startup and recovery](docs/battle-rewards.md) and the
+[full reward rules](docs/battle-reward-design.md). Real account combat, HUD and
 reconnect acceptance remain manual; installation keeps existing unrelated state.
 
 ## Developer tools
