@@ -45,7 +45,7 @@ foreach ($tree in @('client','server')) {
 foreach ($mod in $catalog.mods) {
     $relative = "$($mod.target)\sdgo\mods\$($mod.id)"
     $destination = Join-Path $out $relative
-    foreach ($file in @("$($mod.id).dll",'mod.ini') + @($mod.files)) {
+    foreach ($file in @("$($mod.id).dll",'mod.ini') + @($mod.files) + @($mod.runtime_files)) {
         $target = Join-Path $destination $file
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath (Join-Path $stage "$relative\$file") -Destination $target
@@ -73,6 +73,15 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
 if ($catalog.features.PSObject.Properties.Name -contains 'battle-rewards') {
     & python (Join-Path $PSScriptRoot 'package_rewards.py') --out (Join-Path $out 'rewards') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'Battle reward owner toolkit packaging failed' }
+}
+if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
+    $shopDestination=Join-Path $out 'shop'
+    New-Item -ItemType Directory -Path $shopDestination -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $buildRoot 'shop-ui\SdgoShopManager.exe') -Destination $shopDestination
+    Copy-Item -LiteralPath (Join-Path $repo 'docs\shop-catalog.zh-CN.md') -Destination (Join-Path $shopDestination 'README.zh-CN.md')
+    foreach ($guide in @('shop-testing.zh-CN.md','shop-validation.zh-CN.md','shop-labels.zh-CN.md')) {
+        Copy-Item -LiteralPath (Join-Path $repo "docs\$guide") -Destination $shopDestination
+    }
 }
 Add-Type -AssemblyName System.IO.Compression
 if ($catalog.features.PSObject.Properties.Name -contains 'operator-assistant') {

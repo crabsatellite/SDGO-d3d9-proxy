@@ -22,6 +22,7 @@ Each fix can be disabled separately.
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
+| Shop rental and Unicode labels | Explicit rental/permanent labels in hover, buy and gift options, with guarded Unicode captions; also distributed separately | `shop_labels` | clients | [Guide](docs/shop-labels.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
@@ -49,8 +50,17 @@ and random-unit gameplay belong in this category.
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
+| Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 <!-- /mod-category:gameplay -->
+
+In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
+Identical untrained copies default to two kept. Exchange excludes trained units;
+locked, active, battleship-assigned, rental and unknown-state units are protected.
+Successful native operations
+update the visible hangar without relogging; an unconfirmed result stops the batch
+and requires relogging. Real-game acceptance remains manual. See the
+[hangar guide](docs/hangar-manager.md) for installation, preview rules and reward handling.
 
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
@@ -118,7 +128,12 @@ gameplay. The package's feature directory lists the tools actually included.
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
+| Shop catalog manager (Beta) | Windows owner UI for product CRUD, pricing, listing and portable configuration; uses native shop billing | `shop_catalog` | World server + owner window | [Guide](docs/shop-catalog.md) |
 <!-- /mod-category:network -->
+Double-click `SdgoShopManager.exe` to manage offers in a Windows owner window. Save edits as drafts,
+then use “Apply to shop”; players keep using the native shop. [Manual checks (中文)](docs/shop-testing.zh-CN.md).
+The label patch and catalog manager also have separate packages; exports contain no database credentials.
+
 
 ## Reward rules and verification
 

@@ -20,7 +20,7 @@ CATEGORIES = {
 CHANNELS = {"stable", "beta", "experimental"}
 ACTIVATIONS = {"automatic", "room-title", "manual"}
 ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
-CONFIG_EXTENSIONS = {".ini", ".json", ".toml", ".yaml", ".yml", ".cfg", ".txt"}
+CONFIG_EXTENSIONS = {".ini", ".json", ".toml", ".yaml", ".yml", ".cfg", ".txt", ".tsv"}
 
 
 def safe_file(name: str) -> str:
@@ -68,6 +68,10 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         if len(targets) != 1:
             raise ValueError(f"A bundled mod needs exactly one install target: {path}")
         files = [safe_file(name) for name in list_value(cfg.get("files", ""))]
+        runtime_files = [safe_file(name) for name in list_value(cfg.get("runtime_files", ""))]
+        if (len(set(runtime_files)) != len(runtime_files) or set(runtime_files) & set(files)
+                or any(Path(name).suffix.lower() != ".exe" for name in runtime_files)):
+            raise ValueError(f"Invalid generated runtime tools in {path}")
         configs = [safe_file(name) for name in list_value(cfg.get("config_files", ""))]
         if len(set(files)) != len(files) or any(Path(name).name.lower() in {"mod.ini", dll.lower()} for name in files):
             raise ValueError(f"Duplicate/reserved payload files in {path}")
@@ -91,7 +95,7 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
                      "toolkit": toolkit,
                      "hosts": list_value(cfg.get("hosts", "")), "version": cfg.get("version", "0"),
                      "target": next(iter(targets)), "enabled_by_default": bool(enabled),
-                     "files": files, "config_files": configs,
+                     "files": files, "runtime_files": runtime_files, "config_files": configs,
                      "guide": f"docs/{feature}.md"})
     if not mods:
         raise ValueError("No bundled mod manifests found")
@@ -156,11 +160,11 @@ def validate_stage(root: Path, stage: Path, catalog: dict) -> None:
                 raise ValueError(f"Missing staged framework file: {target}/{name}")
     for mod in catalog["mods"]:
         folder = stage / mod["target"] / "sdgo/mods" / mod["id"]
-        for name in (f"{mod['id']}.dll", "mod.ini", *mod["files"]):
+        for name in (f"{mod['id']}.dll", "mod.ini", *mod["files"], *mod["runtime_files"]):
             path = folder / name
             if not path.is_file():
                 raise ValueError(f"Missing staged mod payload: {mod['id']}/{name}")
-            if not name.endswith(".dll") and path.read_bytes() != (root / "mods" / mod["id"] / name).read_bytes():
+            if name not in mod["runtime_files"] and not name.endswith(".dll") and path.read_bytes() != (root / "mods" / mod["id"] / name).read_bytes():
                 raise ValueError(f"Stale staged mod data: {mod['id']}/{name}")
 
 

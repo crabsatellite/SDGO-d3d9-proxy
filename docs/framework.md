@@ -150,6 +150,7 @@ enabled=1                 ; 0 skips the mod (sdgo.ini [mods] my_mod=0 does the s
 hosts=GOnline-54BE1568-00C97000          ; comma list; the mod loads only into these
 requires=CMissionMode.Init,lua.pcall     ; symbols that must verify, or the mod is skipped
 files=rules.example.json              ; extra shipped data, also list in CMake FILES
+runtime_files=host_helper.exe         ; optional generated EXE, staged by its build target
 config_files=config.ini,roster.json    ; user-owned files to preserve during updates
 
 [settings]
@@ -169,6 +170,9 @@ extra directory layer. The public ABI and mod IDs remain unchanged.
 `files` lists additional payload files relative to the mod directory. `config_files`
 lists user configuration files owned by that mod; updaters preserve existing ones
 unless `-OverwriteConfig` is explicit. Shipped examples and code still update.
+`runtime_files` declares generated native helper EXEs that are required beside a
+mod, such as the shop catalog apply engine. The publisher validates their staged
+presence and copies only declared files; they are never treated as user config.
 Only relative config/data paths are allowed: no parent traversal, absolute paths,
 DLLs or replacement manifests. Mods read their own data via `ModDirectory`; this
 does not change the existing `[settings]` API or invent a new data format.
