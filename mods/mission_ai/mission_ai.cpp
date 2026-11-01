@@ -167,9 +167,9 @@ namespace
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
-        auto first = *reinterpret_cast<uint8_t**>(room + begin);
-        auto last = *reinterpret_cast<uint8_t**>(room + end);
-        if (!first || last <= first)
+        auto first = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(room + begin));
+        auto last = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(room + end));
+        if (!first || last <= first || (last - first) % kRecordSize != 0 || (last - first) / kRecordSize > 12)
             return 0;
         return static_cast<int>((last - first) / kRecordSize);
     }
@@ -192,7 +192,7 @@ namespace
         uint8_t* records = *reinterpret_cast<uint8_t**>(room + kRoomAiBegin);
         bool localAi = mode[kModeRoomMaster] != 0 && !g_game.isObserver(um);
         auto modeVirtual = (*reinterpret_cast<ModeVirtualFn* const*>(mode))[kModeIsNetworkSlot];
-        for (int k = 0; k < count; ++k) {
+        for (int k = 0; k < count && humans + k < 12; ++k) {
             uint8_t* record = records + k * kRecordSize;
             int team = record[kRecordTeam];
             uint32_t npcData = *reinterpret_cast<uint32_t*>(record + kRecordNpcData);

@@ -44,6 +44,14 @@ local function PositionOf(id)
   return object:GetNowPos()
 end
 
+-- GetTickCount wraps after 2^32 milliseconds. Lua numbers retain that range
+-- exactly, so compare elapsed time instead of absolute deadlines.
+local function Elapsed(now, before)
+  local elapsed = now - before
+  if elapsed < 0 then elapsed = elapsed + 4294967296 end
+  return elapsed
+end
+
 -- ---- enemies may target wingmen --------------------------------------------
 
 local function DivertToWingman(enemyId, wingmen)
@@ -72,7 +80,7 @@ end
 -- Only while a mission is ticking; object ids are reused after it ends.
 local function MissionLive()
   if not M.lastTick then return false end
-  return SDGO_Now() - M.lastTick < 2000
+  return Elapsed(SDGO_Now(), M.lastTick) < 2000
 end
 
 if not SDGO_Original_SearchLockPlayer then SDGO_Original_SearchLockPlayer = SearchLockPlayer end
@@ -88,8 +96,9 @@ end
 -- ---- status log --------------------------------------------------------------
 
 local function Report(now)
-  if CFG.LogCombat ~= 1 or now < (M.nextReport or 0) then return end
-  M.nextReport = now + 5000
+  if CFG.LogCombat ~= 1 then return end
+  if M.lastReport and Elapsed(now, M.lastReport) < 5000 then return end
+  M.lastReport = now
   local ids = Wingmen()
   for _, id in pairs(ids) do
     local unit = DocumentFind(id)
@@ -106,7 +115,7 @@ function SDGO_MissionAI_Tick(mode, now, session)
   M.lastTick = now
   if session ~= M.session then
     M.session = session
-    M.nextReport = 0
+    M.lastReport = nil
     local ids = Wingmen()
     local n = 0
     for _ in pairs(ids) do n = n + 1 end

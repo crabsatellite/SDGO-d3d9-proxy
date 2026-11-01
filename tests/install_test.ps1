@@ -12,9 +12,13 @@
     3. -OverwriteConfig installs mod.ini and sdgo.ini as they are in package 2.
   The battle server installer gets the same update check.
 #>
+param([string]$BuildDir = "build")
+
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$work = Join-Path $repo "build\install_test_run"
+$buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
+$work = [IO.Path]::GetFullPath((Join-Path $buildRoot "install_test_run"))
+if (-not $work.StartsWith($buildRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe test directory" }
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 
 Add-Type -Namespace SdgoInstallTest -Name Ini -MemberDefinition @'
@@ -52,12 +56,18 @@ function New-Package([string]$dir, [string]$loader, [string]$hostName, [string]$
     Set-Content -LiteralPath (Join-Path $dir "sdgo\symbols\$hostName-12345678-00001000.ini") -Value "" -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\demo.dll") -Value "demo" -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\mod.ini") -Value $modIni -Encoding Ascii
+    Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\config.ini") -Value '[owner] mode=package' -Encoding Ascii
+    Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\roster.json") -Value '{"pool":"package"}' -Encoding Ascii
+    Set-Content -LiteralPath (Join-Path $dir "sdgo\mods\demo\config.example.ini") -Value $modIni.Split("`n")[0] -Encoding Ascii
 }
 
 $modIni1 = @'
 ; demo 1.0.0
 [mod]
 id=demo
+category=fixes
+feature=demo
+config_files=config.ini,roster.json
 version=1.0.0
 enabled=0
 requires=old.symbol
@@ -72,6 +82,9 @@ $modIni2 = @'
 ; demo 2.0.0
 [mod]
 id=demo
+category=gameplay
+feature=demo
+config_files=config.ini,roster.json
 version=2.0.0
 enabled=0
 requires=old.symbol,new.symbol
@@ -102,6 +115,9 @@ function Edit-Settings([string]$modIniPath, [string]$sdgoIniPath) {
     $text = (Get-Content -LiteralPath $modIniPath -Raw).Replace("enabled=0", "enabled=1").Replace("Alpha=1", "Alpha=5")
     Set-Content -LiteralPath $modIniPath -Value ($text.TrimEnd() + "`r`nGamma=7") -Encoding Ascii
     Set-Content -LiteralPath $sdgoIniPath -Value "[core]`r`nlog_level=0" -Encoding Ascii
+    $folder = Split-Path -Parent $modIniPath
+    Set-Content -LiteralPath (Join-Path $folder 'config.ini') -Value '[owner] mode=custom' -Encoding Ascii
+    Set-Content -LiteralPath (Join-Path $folder 'roster.json') -Value '{"pool":"custom"}' -Encoding Ascii
 }
 
 function Check-Update([string]$side, [string]$modIniPath, [string]$sdgoIniPath) {
@@ -115,6 +131,11 @@ function Check-Update([string]$side, [string]$modIniPath, [string]$sdgoIniPath) 
     Check "$side list setting unchanged" (Read-Ini $modIniPath "settings" "Units") "1,2,3"
     Check "$side header comment from package 2" (Get-Content -LiteralPath $modIniPath -TotalCount 1) "; demo 2.0.0"
     Check "$side sdgo.ini kept" (Read-Ini $sdgoIniPath "core" "log_level") "0"
+    Check "$side category updates from manifest" (Read-Ini $modIniPath 'mod' 'category') 'gameplay'
+    $folder = Split-Path -Parent $modIniPath
+    Check "$side user config kept" (Get-Content -LiteralPath (Join-Path $folder 'config.ini') -TotalCount 1) '[owner] mode=custom'
+    Check "$side user roster kept" (Get-Content -LiteralPath (Join-Path $folder 'roster.json') -TotalCount 1) '{"pool":"custom"}'
+    Check "$side example updates" (Get-Content -LiteralPath (Join-Path $folder 'config.example.ini') -TotalCount 1) '; demo 2.0.0'
 }
 
 # ---- client
@@ -138,6 +159,20 @@ Write-Host "== client: -OverwriteConfig"
 Install "install_client.ps1" @("-GameDir", $game, "-Source", $client2, "-OverwriteConfig")
 Check "client mod.ini as in package 2" ((Get-Content -LiteralPath $gameModIni) -join "|") (($modIni2 -split "`r?`n") -join "|")
 Check "client sdgo.ini as in package 2" (Read-Ini $gameSdgoIni "core" "log_level") "1"
+Check 'client explicit config overwrite' (Get-Content -LiteralPath (Join-Path $game 'sdgo\mods\demo\config.ini') -TotalCount 1) '[owner] mode=package'
+
+# Unsafe metadata is rejected before any target payload is updated.
+$sourceIni = Join-Path $client2 'sdgo\mods\demo\mod.ini'
+$originalManifest = [IO.File]::ReadAllText($sourceIni)
+foreach ($bad in @('../outside.ini','C:\outside.ini','demo.dll','mod.ini')) {
+    [IO.File]::WriteAllText($sourceIni, $originalManifest.Replace('config_files=config.ini,roster.json', "config_files=$bad"))
+    $ErrorActionPreference = 'Continue'
+    $badOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\install_client.ps1') -GameDir $game -Source $client2 2>&1
+    $badExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    Check "unsafe config rejected: $bad" ([string]($badExit -ne 0)) 'True'
+}
+[IO.File]::WriteAllText($sourceIni, $originalManifest)
 
 # ---- battle server
 $server1 = Join-Path $work "package1\server"
@@ -154,6 +189,20 @@ Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Source", $server1)
 Edit-Settings $serverModIni $serverSdgoIni
 Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Source", $server2)
 Check-Update "server" $serverModIni $serverSdgoIni
+
+# World uses the same updater, including owner-config preservation.
+foreach ($version in 1,2) {
+    $packageRoot = Join-Path $work "package$version\world"
+    New-Package $packageRoot "winmm.dll" "WorldServer" $(if ($version -eq 1) { $modIni1 } else { $modIni2 })
+}
+$world = Join-Path $work "WorldServer"
+New-FakeExe (Join-Path $world "WorldServer.exe")
+$worldModIni = Join-Path $world "sdgo\mods\demo\mod.ini"
+$worldSdgoIni = Join-Path $world "sdgo\sdgo.ini"
+Install "install_server.ps1" @("-ServerRoot", $world, "-Role", "World", "-Source", (Join-Path $work "package1\world"))
+Edit-Settings $worldModIni $worldSdgoIni
+Install "install_server.ps1" @("-ServerRoot", $world, "-Role", "World", "-Source", (Join-Path $work "package2\world"))
+Check-Update "world" $worldModIni $worldSdgoIni
 
 Remove-Item $work -Recurse -Force
 if ($failures) { throw "$failures install check(s) failed" }

@@ -9,6 +9,7 @@
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
 #include "../battle_ai/native_loadout.h"
+#include "sdgo/room_titles_lookup.h"
 
 namespace {
 const SdgoApi* g_api=nullptr;
@@ -29,6 +30,13 @@ struct ClearContext {uint8_t* pilot=nullptr;uint32_t roomIndex=0,handle=0;uint16
 thread_local ClearContext g_clear;
 
 int RoomDifficulty(const uint8_t* room) {
+    if(g_api&&g_api->ModDirectory) {
+        const auto api=sdgo::FindRoomTitleApi(g_api->ModDirectory(g_mod));char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
+        const auto n=api?api->QueryForPilot(*reinterpret_cast<const uint32_t*>(room+0x4CE),full,sizeof(full)):0;
+        if(n&&n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[n]==0) {
+            int value=battle_ai::RoomDifficulty(std::string_view(full,n));return value<0?1:value;
+        }
+    }
     wchar_t title[21]={};auto length=room[0x79];
     if(length>20) return 1;
     for(unsigned i=0;i<length;++i) title[i]=room[0x7A+i];

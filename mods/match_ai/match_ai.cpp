@@ -50,6 +50,8 @@
 
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
+#include "sdgo/room_titles_current.h"
+#include "sdgo/ai_scoring.h"
 
 namespace
 {
@@ -252,6 +254,11 @@ namespace
     // parser battle_ai uses, so "!ai easy/medium/hard" has one meaning in both mods.
     int BattleDifficulty(const uint8_t* room)
     {
+        char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
+        const auto n=g_api&&g_api->ModDirectory?sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod),full,sizeof(full)):0;
+        if(n&&n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[n]==0) {
+            int value=battle_ai::RoomDifficulty(std::string_view(full,n));return value<0?1:value;
+        }
         wchar_t title[21] = {};
         size_t length = 0;
         __try {
@@ -350,7 +357,11 @@ namespace
                 *cost = deckPoints;
             if (*cost <= 0 && npc)
                 *cost = *reinterpret_cast<const int32_t*>(npc + kNpcPoints);
-            *score = *cost * 100 < 1001 ? *cost * 100 : 1000;
+            // The death handler divides by this value. Missing/invalid NPC
+            // points must not leave a zero divisor, or overflow the HUD score.
+            if (*cost <= 0)
+                *cost = 1;
+            *score = *cost <= 10 ? *cost * 100 : 1000;
         }
     }
 
@@ -463,9 +474,11 @@ namespace
 
     int DeckSize(uint8_t* unit)
     {
-        auto begin = *reinterpret_cast<uint8_t**>(unit + kUnitDeckBegin);
-        auto end = *reinterpret_cast<uint8_t**>(unit + kUnitDeckEnd);
-        return begin && end > begin ? static_cast<int>((end - begin) / kUnitDeckEntry) : 0;
+        auto begin = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(unit + kUnitDeckBegin));
+        auto end = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(unit + kUnitDeckEnd));
+        if (!begin || end <= begin || (end - begin) % kUnitDeckEntry != 0 || (end - begin) / kUnitDeckEntry > 4)
+            return 0;
+        return static_cast<int>((end - begin) / kUnitDeckEntry);
     }
 
     int StartDeckPoints(uint32_t pilotId)
@@ -480,24 +493,32 @@ namespace
         bot.deckNpc[0] = firstNpc;
         bot.deckNpcData[0] = *reinterpret_cast<const uint8_t**>(bot.unit + kUnitNpcData);
         const StartDeck* deck = FindStartDeck(bot.pilotId);
-        if (!deck) {
-            g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: no deck in the battle start packet; one unit",
+        if (!deck || deck->units < 1 || deck->units > 4 || deck->npc[0] != firstNpc) {
+            g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: no matching deck in the battle start packet; one unit",
                        static_cast<unsigned long>(bot.pilotId));
             return;
         }
         char text[128];
         int length = sprintf_s(text, "%lu", static_cast<unsigned long>(firstNpc));
-        for (int i = 1; i < 4; ++i) {
+        for (int i = 1; i < deck->units; ++i) {
             uint32_t npcId = deck->npc[i];
             if (npcId == 0)
-                continue;
+                break;
             const uint8_t* npc = FindNpcData(npcId);
             if (!npc) {
                 g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: deck unit %d, NPC %lu has no NPC data here",
                            static_cast<unsigned long>(bot.pilotId), i, static_cast<unsigned long>(npcId));
-                continue;
+                // Native deck entries are consecutive. Skipping this entry would
+                // assign a later NPC to the wrong server respawn index.
+                break;
             }
+            int before = DeckSize(bot.unit);
             g_addDeckUnit(bot.unit, *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId));
+            if (DeckSize(bot.unit) != before + 1) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: adding deck unit %d failed; remaining entries not added",
+                           static_cast<unsigned long>(bot.pilotId), i);
+                break;
+            }
             bot.deckNpc[bot.units] = npcId;
             bot.deckNpcData[bot.units] = npc;
             ++bot.units;
@@ -509,9 +530,9 @@ namespace
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
-        auto first = *reinterpret_cast<uint8_t**>(room + begin);
-        auto last = *reinterpret_cast<uint8_t**>(room + end);
-        if (!first || last <= first)
+        auto first = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(room + begin));
+        auto last = reinterpret_cast<uintptr_t>(*reinterpret_cast<uint8_t**>(room + end));
+        if (!first || last <= first || (last - first) % kRecordSize != 0 || (last - first) / kRecordSize > 12)
             return 0;
         return static_cast<int>((last - first) / kRecordSize);
     }
@@ -684,10 +705,54 @@ namespace
         g_game.calculateTeam(um);
     }
 
+    // ---- grid match: the gauge counts the AI players ---------------------------------------
+    //
+    // CGridMatchGameMode's Init (0x00ADB790) sets the team gauge (mode +0x30) from the number
+    // of human records, (n - 2) into a table: 2, 4 and 8 players 80, 6 players 60, 10 players
+    // 120, 12 players 160, odd counts nothing. With one human and AI players nothing was set,
+    // so the HUD's grid bar stayed empty while the server scored. With AI players the gauge
+    // is set the way the server sets each team's (pvp_ai GridGauge, from 0x004B6EB0): by the
+    // players per team, humans and AI, the larger team where they differ. The HUD has its
+    // own copy: the Init's last step, the mode's CreateInterface (vt slot 18, 0x00AD7650),
+    // creates it (mode +0x0C) and passes it the gauge through its vt slot 23 (0x004F7EC0),
+    // before the AI players spawn; it gets the new gauge the same way.
+    constexpr size_t kModeGridGauge = 0x30;
+    constexpr size_t kModeInterface = 0x0C;
+    constexpr int kInterfaceSetGaugeSlot = 23;
+    using SetGaugeFn = void(__thiscall*)(uint8_t* hud, int gauge);
+
+    void SetGridGauge(uint8_t* mode)
+    {
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        int team[3] = {};
+        for (size_t begin : {kRoomHumansBegin, kRoomAiBegin}) {
+            uint8_t* records = *reinterpret_cast<uint8_t**>(room + begin);
+            int count = RecordCount(room, begin, begin + 4);
+            for (int k = 0; k < count; ++k) {
+                int t = records[k * kRecordSize + kRecordTeam];
+                ++team[t == 1 || t == 2 ? t : 0];
+            }
+        }
+        int gauge = sdgo::ai::GridGaugeForTeams(team[1], team[2]);
+        auto& field = *reinterpret_cast<int32_t*>(mode + kModeGridGauge);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "grid match: gauge %ld -> %d (teams %d/%d with the AI players)",
+                   static_cast<long>(field), gauge, team[1], team[2]);
+        if (gauge <= 0)
+            return;
+        field = gauge;
+        uint8_t* hud = *reinterpret_cast<uint8_t**>(mode + kModeInterface);
+        if (hud) {
+            auto setGauge = reinterpret_cast<SetGaugeFn>((*reinterpret_cast<void***>(hud))[kInterfaceSetGaugeSlot]);
+            setGauge(hud, gauge);
+        }
+    }
+
     bool GuardedSpawn(uint8_t* mode, const char* className, DWORD* code)
     {
         __try {
             SpawnAiPlayers(mode, className);
+            if (mode == g_botMode && !g_botTable.empty() && ModeClassIndex(mode) == 2)
+                SetGridGauge(mode);
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             g_creatingAiUnit = false;
@@ -785,10 +850,13 @@ namespace
                 }
             }
         }
-        g_originalUdpSetup(waitRoom);
-        for (int slot = 0; slot < 12 && count; ++slot)
-            if (hidden[slot])
-                *reinterpret_cast<uint32_t*>(waitRoom + kWaitRoomSlots + slot * kWaitRoomSlotStride) = hidden[slot];
+        __try {
+            g_originalUdpSetup(waitRoom);
+        } __finally {
+            for (int slot = 0; slot < 12 && count; ++slot)
+                if (hidden[slot])
+                    *reinterpret_cast<uint32_t*>(waitRoom + kWaitRoomSlots + slot * kWaitRoomSlotStride) = hidden[slot];
+        }
         if (count)
             g_api->Log(g_mod, SDGO_LOG_INFO, "battle start: no UDP link asked for %d AI pilot(s)", count);
     }
@@ -1218,10 +1286,14 @@ namespace
 
     float AngleDelta(float to, float from)
     {
-        float d = to - from;
-        while (d > kPi)
+        if (!std::isfinite(to) || !std::isfinite(from))
+            return 0.0f;
+        // Subtract in double to avoid overflow. Repeated float subtraction can
+        // stop making progress entirely for large, but finite, input angles.
+        float d = static_cast<float>(std::fmod(static_cast<double>(to) - from, 2.0 * kPi));
+        if (d > kPi)
             d -= 2.0f * kPi;
-        while (d < -kPi)
+        if (d < -kPi)
             d += 2.0f * kPi;
         return d;
     }

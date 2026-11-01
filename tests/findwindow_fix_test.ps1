@@ -10,13 +10,15 @@
   must roll its hook back. Uses a private desktop; no input method is activated.
   Build first: cmake --build build --config Release
 #>
-param([string]$Config = "Release")
+param([string]$Config = "Release", [string]$BuildDir = "build")
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$binaries = Join-Path $repo "build\$Config"
+$buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
+$binaries = Join-Path $buildRoot $Config
 if (-not (Test-Path (Join-Path $binaries "findwindow_fix_test.exe"))) { throw "Build findwindow_fix_test first" }
-$work = Join-Path $repo "build\findwindow_test_run"
+$work = [IO.Path]::GetFullPath((Join-Path $buildRoot "findwindow_test_run"))
+if (-not $work.StartsWith($buildRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe test directory" }
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 
 foreach ($case in "enabled", "disabled") {
@@ -51,6 +53,7 @@ hosts=*
     $exitCode = $LASTEXITCODE
     $log = Get-Content (Join-Path $dir "sdgo\logs\sdgo.log") -Raw
     if ($exitCode -ne 0 -or $log.Contains("TEST FAILURE") -or
+        -not $log.Contains("room command API checks passed") -or
         -not $log.Contains("export API checks passed; deliberately decline for rollback")) {
         throw "case $case failed (exit $exitCode); see $dir"
     }

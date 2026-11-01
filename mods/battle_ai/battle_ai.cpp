@@ -21,6 +21,7 @@
 #include "defence_math.h"
 #include "native_defence.h"
 #include "native_loadout.h"
+#include "sdgo/room_titles_current.h"
 
 namespace {
 struct lua_State;
@@ -1389,6 +1390,9 @@ const Option kOptions[] = {
     {L"CoverTimeoutMs",2200,500,10000},{L"OrbwalkStep",120,50,500},{L"OrbwalkMs",180,80,600},{L"FlankMs",750,300,3000}
 };
 int CurrentRoomDifficulty() {
+    char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
+    const auto count=sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod),full,sizeof(full));
+    if(count&&count<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[count]==0) return battle_ai::RoomDifficulty(std::string_view(full,count));
     wchar_t title[21]={};size_t length=0;
     __try {
         auto app=g_app();if(!app) return -1;

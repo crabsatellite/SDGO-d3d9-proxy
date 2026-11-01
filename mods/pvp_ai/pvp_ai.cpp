@@ -28,6 +28,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -36,6 +37,10 @@
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
 #include "battle_items.h"
+#include "sdgo/room_titles_lookup.h"
+#include "sdgo/ai_scoring.h"
+#include "sdgo/ai_catalog_provider.h"
+#include "sdgo/room_commands.h"
 
 namespace
 {
@@ -115,10 +120,11 @@ namespace
     // title is in the lobby room coop_ai reads): written by the room-settings (0x004BEC60)
     // and title-change (0x004DCA40) handlers, sent to the clients by 0x004DD120.
     constexpr size_t kRoomTitleLength = 0x79;   // u8
-    constexpr size_t kRoomTitle = 0x7A;         // up to 20 bytes, CP949
+    constexpr size_t kRoomTitle = 0x7A;         // up to 20 bytes in the native encoding
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
+    const SdgoRoomTitleApi* g_titleApi = nullptr;
     SetupHumansFn g_setupHumans = nullptr;
     RoomTickFn g_roomTick = nullptr;
     BattleEndFn g_battleEnd = nullptr;
@@ -155,14 +161,19 @@ namespace
         std::vector<uint32_t> levels[6]; // [1..5]
     } g_settings;
 
-    unsigned g_random = 0;
+    std::atomic<unsigned> g_random{0};
 
     unsigned NextRandom()
     {
-        g_random ^= g_random << 13;
-        g_random ^= g_random >> 17;
-        g_random ^= g_random << 5;
-        return g_random;
+        unsigned previous = g_random.load(std::memory_order_relaxed);
+        for (;;) {
+            unsigned next = previous ? previous : 1u;
+            next ^= next << 13;
+            next ^= next >> 17;
+            next ^= next << 5;
+            if (g_random.compare_exchange_weak(previous, next, std::memory_order_relaxed))
+                return next;
+        }
     }
 
     std::vector<uint32_t> ParseIds(const char* text)
@@ -175,9 +186,16 @@ namespace
             if (*p < '0' || *p > '9')
                 break;
             uint32_t value = 0;
-            while (*p >= '0' && *p <= '9')
-                value = value * 10 + static_cast<uint32_t>(*p++ - '0');
-            ids.push_back(value);
+            bool overflow = false;
+            while (*p >= '0' && *p <= '9') {
+                uint32_t digit = static_cast<uint32_t>(*p++ - '0');
+                if (value > (UINT32_MAX - digit) / 10)
+                    overflow = true;
+                if (!overflow)
+                    value = value * 10 + digit;
+            }
+            if (!overflow)
+                ids.push_back(value);
         }
         return ids;
     }
@@ -236,55 +254,35 @@ namespace
         battle_ai::Difficulty difficulty = battle_ai::Difficulty::Medium;
     };
 
-    int ReadNumber(const char*& p)
-    {
-        int value = 0;
-        while (*p >= '0' && *p <= '9')
-            value = value * 10 + (*p++ - '0');
-        return value;
-    }
-
     // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
     // aN allies, lvN level. Case-insensitive.
     Plan ParseTitle(const char* title)
     {
         Plan plan;
         plan.level = g_settings.defaultLevel;
-        char lower[kRoomTitleMax + 1];
-        size_t n = 0;
-        for (; title[n] && n < kRoomTitleMax; ++n)
-            lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
-        lower[n] = '\0';
-        const char* command = strstr(lower, "!ai");
-        if (!command)
+        namespace commands=sdgo::room_commands;
+        SdgoRoomCommand command{};
+        if (!commands::Find(g_api,title,SDGO_ROOM_TITLE_MAX_UTF8_BYTES,"ai",
+                            SDGO_ROOM_COMMAND_ALLOW_COUNT,&command))
             return plan;
-        wchar_t wide[kRoomTitleMax + 1] = {};
-        for (size_t i = 0; i < n; ++i)
-            wide[i] = static_cast<unsigned char>(lower[i]);
-        int difficulty = battle_ai::RoomDifficulty(wide);
-        if (difficulty >= 0)
-            plan.difficulty = static_cast<battle_ai::Difficulty>(difficulty);
+        int difficulty = battle_ai::RoomDifficulty(std::string_view(title));
+        if (difficulty >= 0) plan.difficulty = static_cast<battle_ai::Difficulty>(difficulty);
         plan.enabled = true;
-        const char* p = command + 3;
-        int count = -1;
-        if (*p >= '0' && *p <= '9')
-            count = ReadNumber(p);
+        const int count=command.has_count ? static_cast<int>((std::min)(command.count,uint32_t{kSlotsPerTeam})) : -1;
         int enemies = -1;
         int allies = -1;
-        while (*p) {
-            while (*p == ' ')
-                ++p;
-            const char* token = p;
-            while (*p && *p != ' ')
-                ++p;
-            size_t length = static_cast<size_t>(p - token);
-            if (length == 3 && token[0] == 'l' && token[1] == 'v' && token[2] >= '1' && token[2] <= '5') {
+        uint32_t cursor=command.arguments_offset;
+        commands::Token argument;
+        while (commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
+            const char* token=title+argument.offset;
+            const uint32_t length=argument.length;
+            const char first=commands::Lower(token[0]);
+            if (length == 3 && first == 'l' && commands::Lower(token[1]) == 'v' && token[2] >= '1' && token[2] <= '5') {
                 plan.level = token[2] - '0';
-            } else if (length >= 2 && (token[0] == 'e' || token[0] == 'a') && token[1] >= '0' && token[1] <= '9') {
-                const char* digits = token + 1;
-                int value = ReadNumber(digits);
-                if (digits == p)
-                    (token[0] == 'e' ? enemies : allies) = value;
+            } else if (length >= 2 && (first == 'e' || first == 'a')) {
+                uint32_t value=0;
+                if(commands::Number(token+1,length-1,value))
+                    (first == 'e' ? enemies : allies)=static_cast<int>((std::min)(value,uint32_t{kSlotsPerTeam}));
             }
         }
         if (count < 0 && enemies < 0 && allies < 0) {
@@ -336,7 +334,7 @@ namespace
     {
         int humans[3] = {};
         int ai[3] = {};
-        char title[kRoomTitleMax + 1] = {};
+        char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         bool titled = false;
         uint8_t hostTeam = 0;
     };
@@ -350,8 +348,12 @@ namespace
         memcpy(view.title, room + kRoomTitle, length);
         view.title[length] = '\0';
         view.title[strnlen(view.title, length)] = '\0';
-        view.titled = view.title[0] != '\0';
         uint32_t host = *reinterpret_cast<uint32_t*>(room + kRoomHost);
+        char extended[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+        const uint32_t extendedLength = g_titleApi ? g_titleApi->QueryForPilot(host, extended, sizeof(extended)) : 0;
+        if (extendedLength && extendedLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES && extended[extendedLength] == '\0')
+            memcpy(view.title, extended, extendedLength + 1);
+        view.titled = view.title[0] != '\0';
         for (int slot = 0; slot < kSlots; ++slot) {
             uint32_t id = SlotPilotId(room, slot);
             if (id == 0)
@@ -385,7 +387,7 @@ namespace
                        copy[kRoomMode], copy[kRoomType],
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(copy + kRoomPlayers)), view.humans[1],
                        view.humans[2], Printable(view.title).c_str(), plan.enabled ? "requested" : "not requested");
-        return plan.enabled;
+        return plan.enabled && (plan.enemies != 0 || plan.allies != 0);
     }
 
     int GuardedDecide(uint8_t* frame, bool log)
@@ -812,7 +814,7 @@ namespace
     // bytes: NPC data id, HP, cost, points, grade for an AI unit) and the deck totals.
     // An AI pilot gets more units of its level pool (all different) the way its first one was
     // built (AI pilot build 0x00485720, then the AI pilot setup 0x004D7A10 on that unit), as
-    // many as fit in 10 points, the closest to 10 first.
+    // many as fit in 10 points, sampling all eligible candidates each battle.
     constexpr size_t kUnitPoints = 0x0A;       // u8, unit record: points (unit data +0xB)
     constexpr int kDeckPoints = 10;
 
@@ -869,13 +871,15 @@ namespace
         while (units < kDeckUnits && !candidates.empty()) {
             int left = kDeckPoints - points;
             int best = -1;
-            unsigned offset = candidates.empty() ? 0 : NextRandom() % candidates.size();
-            for (size_t k = 0; k < candidates.size(); ++k) {
-                size_t i = (k + offset) % candidates.size();
+            unsigned eligible = 0;
+            for (size_t i = 0; i < candidates.size(); ++i) {
                 int p = candidatePoints[i];
                 if (p > left)
                     continue;
-                if (best < 0 || p > candidatePoints[best])
+                // Reservoir sampling avoids preferring the same highest-cost
+                // units when a level grows to include many grade variants.
+                ++eligible;
+                if (NextRandom() % eligible == 0)
                     best = static_cast<int>(i);
             }
             if (best < 0)
@@ -884,7 +888,7 @@ namespace
             uint8_t* unit = pilot + kPilotUnits + units * kUnitStride;
             int p = BuildNpcUnit(room, npc, unit);
             pilot[kPilotForm] = static_cast<uint8_t>(units);
-            bool ok = p > 0 && g_setupAiPilot(g_waitRoomProc, info, pilot, room[kRoomType], room[kRoomMode]);
+            bool ok = p > 0 && p <= left && g_setupAiPilot(g_waitRoomProc, info, pilot, room[kRoomType], room[kRoomMode]);
             pilot[kPilotForm] = 0;
             candidates.erase(candidates.begin() + best);
             candidatePoints.erase(candidatePoints.begin() + best);
@@ -906,20 +910,30 @@ namespace
     int AddTeam(uint8_t* room, uint8_t team, int wanted, const std::vector<uint32_t>& pool,
                 const std::vector<uint8_t>& poolPoints)
     {
+        std::vector<uint32_t> deckCandidates;
+        const std::vector<uint32_t>* choices = &pool;
+        if (PlaysDeck(room[kRoomMode])) {
+            for (size_t i = 0; i < pool.size() && i < poolPoints.size(); ++i)
+                if (poolPoints[i] > 0 && poolPoints[i] <= kDeckPoints && !Contains(deckCandidates, pool[i]))
+                    deckCandidates.push_back(pool[i]);
+            choices = &deckCandidates;
+        }
+        if (choices->empty())
+            return 0;
         int added = 0;
         uint8_t colour = TeamColour(room, team);
         int first = team == 1 ? 0 : kSlotsPerTeam;
         for (int slot = first; slot < first + kSlotsPerTeam && added < wanted; ++slot) {
             if (SlotPilotId(room, slot) != 0)
                 continue;
-            uint32_t pick = pool[NextRandom() % pool.size()];
+            uint32_t pick = (*choices)[NextRandom() % choices->size()];
             for (int tries = 0; tries < 20; ++tries) {
                 bool used = false;
                 for (int other = 0; other < kSlots && !used; ++other)
                     used = (SlotPilotId(room, other) & kAiPilotBit) && PilotUnitId(room, other) == pick;
                 if (!used)
                     break;
-                pick = pool[NextRandom() % pool.size()];
+                pick = (*choices)[NextRandom() % choices->size()];
             }
             if (AddAiPilot(room, slot, pick, team, colour)) {
                 if (PlaysDeck(room[kRoomMode]))
@@ -949,17 +963,6 @@ namespace
     constexpr size_t kRoomTagUnits1 = 0x32116;   // u8
     constexpr size_t kRoomTagUnits2 = 0x32117;   // u8
 
-    int GridGauge(int perTeam)
-    {
-        switch (perTeam) {
-        case 1: case 2: case 4: return 0x50;
-        case 3: return 0x3C;
-        case 5: return 0x78;
-        case 6: return 0xA0;
-        default: return -1;
-        }
-    }
-
     void RecountBattle(uint8_t* room)
     {
         int count[3] = {};
@@ -981,10 +984,13 @@ namespace
             field(kRoomPower1) = size1 * 1000;
             field(kRoomPower2) = size2 * 1000;
         } else if (mode == 6) {
-            if (GridGauge(size1) > 0)
-                field(kRoomGauge1) = GridGauge(size1);
-            if (GridGauge(size2) > 0)
-                field(kRoomGauge2) = GridGauge(size2);
+            // The client and its HUD have one full-bar value. Different server
+            // totals (e.g. 80/60 in a 1v3 room) cannot match that display.
+            int gauge = sdgo::ai::GridGaugeForTeams(size1, size2);
+            if (gauge > 0) {
+                field(kRoomGauge1) = gauge;
+                field(kRoomGauge2) = gauge;
+            }
         } else if (mode == 7) {
             for (int slot = 0; slot < kSlots; ++slot) {
                 if (!(SlotPilotId(room, slot) & kAiPilotBit))
@@ -1035,10 +1041,16 @@ namespace
 
         std::vector<uint32_t> available = AiNpcIds();
         std::vector<uint32_t> pool;
-        for (uint32_t id : g_settings.levels[plan.level])
-            if (Contains(available, id))
-                pool.push_back(id);
+        const bool catalog = sdgo::AiCatalogPool(g_api, g_mod, plan.level, pool);
+        if (!catalog)
+            for (uint32_t id : g_settings.levels[plan.level])
+                if (Contains(available, id))
+                    pool.push_back(id);
         if (pool.empty()) {
+            if (catalog) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
+                return;
+            }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
             return;
@@ -1512,6 +1524,7 @@ SDGO_MOD_ENTRY
 {
     g_api = api;
     g_mod = mod;
+    g_titleApi = sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     bool bound = Bind(g_sizeChecked, "battle.start_size_checked") &&
                  Bind(g_teamChecksPassed, "battle.start_checks_passed") && Bind(g_aiNpcList, "battle.ai_npc_list") &&
                  Bind(g_waitRoomProc, "battle.waitroom_proc") && Bind(g_buildAiPilot, "battle.build_ai_pilot") &&

@@ -18,6 +18,12 @@
 房名优先于本机 `Difficulty` 设置；房名没有难度时，未自定义的客户端使用 Medium。
 切换房间后读取新难度。只由拥有 AI 控制权的客户端执行决策。
 
+原生短房名仍受 20 字节限制。使用[长房名扩展](room-titles.zh-CN.md)时，更新并启用客户端
+`room_titles`、Agent 的 `room_titles_agent` 与 Battle 的 `room_titles_server`，并使用同一版
+AI 组件，即可从已确认的完整房名读取难度，例如 `朋友高手练习局 !ai e2 a1 lv4 hard !rand`。
+`easy`／`medium`／`hard` 必须放在 `!ai` 后、下一个 `!指令` 前；`!ai !rand hard` 不会选择 Hard。
+没有房名扩展时自动回退原生标题，不依赖房主电脑的路径或配置。
+
 Easy 保留原生机体等级、决策、瞄准与资源规则。新等级、部件、道具和服务端 SP 规则作用于
 保留编号范围内的 PvP 机器人；原生任务、原生 AI 模式和 Boss 不接管这些玩家资源规则。
 机体等级/部件在生成、换机和复活时走原生初始化，不能通过同一 generation 的重复调用叠加部件。

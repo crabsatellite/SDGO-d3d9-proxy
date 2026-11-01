@@ -2,10 +2,20 @@
 #include <cmath>
 #include "../mods/battle_ai/combat_math.h"
 #include "../mods/battle_ai/defence_math.h"
+#include "../mods/battle_ai/difficulty.h"
 using namespace battle_ai;
 int main() {
     int failures=0;
     auto check=[&](bool ok,const char* name) { std::printf("%s %s\n",ok?"PASS":"FAIL",name); if(!ok) ++failures; };
+    check(RoomDifficulty(std::string_view("a full descriptive title !AI3 HARD !rand easy"))==2 &&
+          RoomDifficulty(std::wstring_view(L"a full descriptive title !AI3 HARD !rand easy"))==2,
+          "UTF-8 and wide title readers agree on difficulty beyond the native projection");
+    check(RoomDifficulty(std::string_view("!ai !rand hard"))==-1 &&
+          RoomDifficulty(std::wstring_view(L"!ai\tMEDIUM\n!rand hard"))==1,
+          "difficulty stops at a command boundary and accepts native whitespace");
+    check(RoomDifficulty(std::string_view("!aim hard room!ai3 hard !ai3x hard"))==-1 &&
+          RoomDifficulty(std::wstring_view(L"!ai easy !ai hard"))==0,
+          "invalid prefixes never enable difficulty and the first valid command wins");
     DefenceThreat rear[]={{{0,0,-1000},1}};
     auto front=DefensiveFacing({},{0,0,1},rear,1);
     check(front.valid&&front.direction.z<-0.99,"a rear threat selects a front-facing response");
