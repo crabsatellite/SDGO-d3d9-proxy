@@ -44,7 +44,7 @@ void PageUi::Detach() {
     // Native init may already have freed the previous dialog, including all its
     // children. Drop references without attempting to restore old visibility.
     service_=dialog_=serviceVtable_=dialogVtable_=styleSource_=nullptr;controls_.clear();hidden_.clear();rows_.clear();
-    page_=0;exchange_=busy_=confirm_=armed_=false;
+    page_=0;exchange_=busy_=confirm_=armed_=published_=false;
 }
 bool PageUi::Attach(void* service,const Bindings& bindings) {bindings_=bindings;return Attach(service);}
 bool PageUi::Add(const wchar_t* name,const wchar_t* label,Action action,int x,int y,int w,int h,bool body) {
@@ -53,6 +53,9 @@ bool PageUi::Add(const wchar_t* name,const wchar_t* label,Action action,int x,in
     bindings_.add(dialog_,&native,x,y,w,h,0);
     auto* child=bindings_.find(dialog_,&native,4);
     if(!Button(child,bindings_.buttonVtable) || Read<void*>(child,0x15C)!=dialog_)return false;
+    // Keep every child private until the whole page (including skins and text)
+    // is ready. Native allocation defaults to visible, even before skin loading.
+    Write<uint8_t>(child,0x162,0);Write<uint8_t>(child,0x167,0);
     controls_.push_back({child,action,w,body,{}});
     // Fresh CUIBase controls draw a random debug quad by default. This flag
     // is independent of the enabled/input flags and must be cleared for labels too.
@@ -72,7 +75,6 @@ bool PageUi::Add(const wchar_t* name,const wchar_t* label,Action action,int x,in
         for(size_t i=0;i<3;++i)if(!first[i] || !Read<void*>(first[i]))return false;
     }
     Text(controls_.back(),label,textColor_);
-    Write<uint8_t>(child,0x162,body?0:1);
     return true;
 }
 bool PageUi::Attach(void* service) {
@@ -125,7 +127,11 @@ bool PageUi::Attach(void* service) {
         for(auto& control:controls_)Write<uint8_t>(control.pointer,0x162,0);
         Detach();return false;
     }
-    status_=L"先选择奖励并预览；预览不会兑换机体。";Render();return true;
+    status_=L"先选择奖励并预览；预览不会兑换机体。";
+    Render(); // prepare every caption and state while all children stay hidden
+    published_=true;
+    for(const auto& control:controls_)if(!control.body)Write<uint8_t>(control.pointer,0x162,1);
+    return true;
 }
 void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
     if(control.textSet && control.text==value && control.color==color)return;
@@ -207,7 +213,7 @@ void PageUi::Render() {
             Write<uint16_t>(c.pointer,0x21C,0);Write<uint8_t>(c.pointer,0x164,0);
             Write<uint32_t>(c.pointer,0x18C,0);
         }
-        Write<uint8_t>(c.pointer,0x162,visible?1:0);
+        Write<uint8_t>(c.pointer,0x162,published_ && visible?1:0);
         Write<uint8_t>(c.pointer,0x167,enabled?1:0);
     }
 }

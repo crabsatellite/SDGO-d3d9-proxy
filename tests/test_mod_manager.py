@@ -210,17 +210,28 @@ class ManagerTests(unittest.TestCase):
 
     def test_hangar_overlay_imports_rules_registration_and_native_symbols(self):
         host=self.workspace.settings['hosts'][0]['id'];buffer=io.BytesIO()
+        manifest=storage.ini_values((ROOT/'mods/hangar_manager/mod.ini').read_bytes())
+        required=manifest['mod']['requires'].split(',')
+        symbols=storage.ini_values((ROOT/'symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        fragment=configparser.ConfigParser(interpolation=None)
+        for section in ['host']+required:fragment[section]=dict(symbols[section])
+        fragment_text=io.StringIO();fragment.write(fragment_text,space_around_delimiters=False)
         with zipfile.ZipFile(buffer,'w') as archive:
             for name in ('mod.ini','manager.json','units.tsv'):
                 archive.writestr('client/sdgo/mods/hangar_manager/'+name,(ROOT/'mods/hangar_manager'/name).read_bytes())
             archive.writestr('client/sdgo/mods/hangar_manager/hangar_manager.dll',b'synthetic DLL')
-            archive.writestr('symbols.fragment.ini','[host]\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n[hangar.init]\nkind=code\nrva=0x202EA0\nexpect=55 8B EC\n')
+            archive.writestr('symbols.fragment.ini',fragment_text.getvalue())
         status,result=self.call('POST','/api/import',{'host':host,'package':base64.b64encode(buffer.getvalue()).decode()})
         self.assertEqual(status,200);self.assertEqual(result['installed_files'],5)
         root=self.client/'sdgo/mods/hangar_manager'
         self.assertEqual((root/'units.tsv').read_bytes(),(ROOT/'mods/hangar_manager/units.tsv').read_bytes())
         self.assertTrue((root/'manager.json').is_file());self.assertTrue((self.mod/'mod.ini').is_file())
         self.assertIn('[hangar.init]',(self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_text())
+        installed=storage.ini_values((root/'mod.ini').read_bytes())
+        installed_symbols=storage.ini_values((self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        self.assertEqual(installed['mod']['version'],manifest['mod']['version'])
+        self.assertIn('hangar.ui_add_skin',required)
+        for name in required:self.assertEqual(dict(installed_symbols[name]),dict(symbols[name]))
 
     def test_hangar_overlay_rejects_scripts_before_writing_any_files(self):
         buffer=io.BytesIO()

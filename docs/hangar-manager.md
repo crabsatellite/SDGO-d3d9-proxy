@@ -8,6 +8,13 @@ native page. Action buttons now use the adjacent native button's normal, hover
 and pressed skins, font and text color. Import the repair overlay in Manager and
 restart the target client to load it; no server restart is needed.
 
+Version 0.2.2 publishes the action buttons only after all controls, skins and
+captions initialize successfully. A partial failure leaves the Mod controls hidden
+and preserves the original lock/delete event handler. Initialization is automatic
+and uses the client's native assets; players supply no skin files or settings.
+Distribute the new DLL with its symbol fragment. An already running old DLL still
+requires the normal close, update and restart sequence.
+
 ## Install and open
 
 This gameplay extension is included in Full framework packages and omitted from

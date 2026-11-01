@@ -100,3 +100,17 @@ unavailable because the configured Ghidra/JDK paths are missing; conclusions use
 the current PE/Capstone instructions and retained decompilation, not a fresh REA
 decompiler run. Actual on-screen appearance and live-account operations remain
 manual acceptance tasks.
+
+## 0.2.2: publish only a complete page
+
+Every allocated child is immediately hidden and input-disabled, before any skin
+load or text initialization that may fail. Initial rendering prepares all text
+and states while publication is disabled, then reveals the two completed entry
+buttons. A later skin failure therefore cannot leave the first button exposed.
+An unattached Mod forwards native button events to the original service instead
+of swallowing lock/delete clicks. Fixtures inject a failure after the first
+button's three skins and verify hidden partial controls plus native-event
+forwarding with no Mod network request. Manager import tests now import every
+actual manifest prerequisite, including `hangar.ui_add_skin`, and read them back
+with the installed version. These are automatic initialization and delivery
+checks; live screen and account acceptance remain separate.
