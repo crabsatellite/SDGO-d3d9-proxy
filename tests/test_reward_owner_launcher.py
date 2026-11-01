@@ -22,7 +22,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import time
+
+sys.path.insert(0, __REPOSITORY_ROOT__)
+from owner.rewards.runtime_control import _atomic_write
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--server-ini", required=True)
@@ -52,9 +56,7 @@ while True:
             "Replays=0",
         ]
         target = runtime / "wallet-status.ini"
-        temporary = runtime / (".wallet-status." + str(os.getpid()) + ".tmp")
-        temporary.write_bytes(("\r\n".join(rows) + "\r\n").encode("ascii"))
-        os.replace(temporary, target)
+        _atomic_write(target, ("\r\n".join(rows) + "\r\n").encode("ascii"))
     time.sleep(0.1)
 '''
 
@@ -248,7 +250,10 @@ class RewardOwnerLauncherTests(unittest.TestCase):
     def fixture(self, root):
         tools = root / "fixture tools"
         tools.mkdir()
-        (tools / "reward_worker.py").write_text(FAKE_WORKER, encoding="utf-8")
+        worker = FAKE_WORKER.replace(
+            "__REPOSITORY_ROOT__", repr(str(ROOT))
+        )
+        (tools / "reward_worker.py").write_text(worker, encoding="utf-8")
         (tools / "reward_assistant.py").write_text(FAKE_ASSISTANT, encoding="utf-8")
         return tools
 
