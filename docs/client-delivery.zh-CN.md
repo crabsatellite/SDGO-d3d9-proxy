@@ -2,7 +2,9 @@
 
 朋友服客户端由 [Codeup 的 SDGO-client main](https://codeup.aliyun.com/65bb261da854e4c241ac5426/crabsatellite/SDGO-client) 发布。
 `install.bat` 用于首次安装或完整修复，`update.bat` 用于后续同步；两者先取得当前更新器，再执行同一套完整运行文件恢复。
-玩家从 Codeup 下载 `main` 的 ZIP，解压后直接运行 `install.bat`。脚本、程序和基础资源分段都从 Codeup 获取，连接失败即停止，不回退到 GitHub。
+玩家从 Codeup 或 [GitHub 的同一仓库](https://github.com/crabsatellite/SDGO-client)取得当前入口，解压后直接运行 `install.bat`。
+更新器优先读取 Codeup；无法访问时自动使用 GitHub HTTPS 和本机已有的 Git 凭据。
+入口自更新、完整运行文件和历史基础资源分段均使用该备用逻辑，两边都失败时停止并保留原文件。
 
 同步范围包括游戏程序、公共配置、Mod、原生基础资源及资源覆盖文件。以固定 Git 提交作为文件集来源，
 恢复缺失或被修改的文件，将过时运行文件移入备份，并在结束前核对全部文件。未通过整体核对不得显示更新完成。
@@ -22,3 +24,6 @@ python maintenance/publish_runtime.py --reference "D:\Games\SDGO"
 再读回全部运行文件和完整资源包。不要在验证中登录或修改真实玩家的库存。
 
 `check-client.bat` 比较实际文件，结果写入 `.sdgo-updater/client-audit.json`；它不把“下载校验通过”当成“安装内容一致”。
+
+若已经分发的旧入口只能读取 Codeup，且在取得新脚本前就认证失败，需要从当前仓库取得一次 `update.bat`，
+覆盖同名入口后再运行；成功后会同步其余入口。无需重新分发游戏资源或重新配置服务器。
