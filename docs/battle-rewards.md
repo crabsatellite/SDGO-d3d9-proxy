@@ -1,5 +1,12 @@
 # Battle contribution rewards (Beta)
 
+The optional [solo MB progression preset](solo-mb-progression.zh-CN.md) adds mission MB floors,
+3,000 MB for the first qualifying match each day, another 27,000 for three daily matches,
+and 15,000 for twelve weekly matches. Fixed bonuses do not multiply. Three-minute native
+participation and real combat contribution are required; solo AI matches and missions count.
+It targets 49,900–79,900 MB units in two or three daily sessions. Existing configurations
+remain disabled until reviewed in Manager; update the native DLL and wallet worker together.
+
 [完整中文安装教程](battle-rewards.zh-CN.md) · [Approved rule tables](battle-reward-design.md)
 
 This server Mod is wired to native final settlement, effective HP-loss statistics,

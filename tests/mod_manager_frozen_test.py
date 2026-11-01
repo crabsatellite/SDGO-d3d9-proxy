@@ -19,7 +19,7 @@ def main():
         for name in ('findwindow_fix','mission_ai'):
             folder=client/'sdgo/mods'/name;folder.mkdir(parents=True);shutil.copyfile(repo/'mods'/name/'mod.ini',folder/'mod.ini')
         (state/'manager.json').write_text(json.dumps({'schema_version':1,'hosts':[{'id':'client','name':'test client','path':str(client),'role':'client'}],
-             'modules':{'shop':{'workspace':str(root/'shop'),'demo':'1'}}}),encoding='utf-8')
+             'modules':{'shop':{'workspace':str(root/'shop'),'demo':'1'},'rewards':{'workspace':str(root/'rewards')}}}),encoding='utf-8')
         environment=dict(os.environ);environment.pop('PYTHONPATH',None)
         process=subprocess.Popen([str(args.exe.resolve()),'--workspace',str(state),'--no-browser'],cwd=root,env=environment)
         base=token=None
@@ -48,9 +48,14 @@ def main():
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
             created=call('/api/providers/shop/api/shop/create',{'category_id':catalog['items'][0]['Id']},{'X-Shop-Revision':catalog['revision']})
             assert len(created['catalog']['products'])==1
+            rewards=call('/api/providers/rewards/api/rewards')
+            assert not rewards['progression']['config']['enabled']
+            rewards=call('/api/providers/rewards/api/rewards/solo-preset',{}, {'X-Reward-Revision':rewards['revision']})
+            assert rewards['policy']['progression']['daily_mb']==27000 and rewards['policy']['progression']['enabled']
+            assert (root/'rewards/runtime/policies'/(rewards['revision']+'.json')).is_file()
             call('/api/exit',{});process.wait(timeout=30)
             assert process.returncode==0
-            print('PASS frozen EXE: standalone launch, daily mode, fix archive, collection provider, AI/PR guidance and C# shop CRUD')
+            print('PASS frozen EXE: standalone launch, daily mode, fix archive, collection provider, AI/PR guidance, C# shop CRUD and solo MB preset')
         finally:
             if process.poll() is None:
                 if base and token:

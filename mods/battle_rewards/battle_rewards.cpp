@@ -59,6 +59,7 @@ struct Session {
     uint32_t room_id = 0, started = 0, mission_id = 0;
     uint8_t mode = 0;
     uint64_t last_seen = 0;
+    uint64_t completed_unix = 0;
     std::string match_id;
     CombatTracker combat;
     BossCatalog bosses;
@@ -232,6 +233,7 @@ bool Freeze(Session& session, BYTE* room, uint32_t duration) {
     session.wallet_scope = wallet.scope;
     session.accounts = frozen_accounts;
     session.account_count = humans;
+    session.completed_unix = job_detail::UnixNow();
     session.frozen = true;
     return true;
 }
@@ -292,11 +294,15 @@ void SettleImpl(unsigned site, BYTE* frame) {
     if (!Calculate(session->policy, context, stats, &reward, &error, NativeSettlementLimits())) {
         g_error = error.message; ++g_counters.payouts_rejected; return;
     }
-    if (reward.mb > 0) {
+    if (reward.eligible) {
         if (g_pending.size() >= 4096) { g_error = "native wallet response queue is full"; ++g_counters.payouts_rejected; return; }
         Pending pending;
         pending.job = {session->match_id, "", session->policy.revision.data(), session->wallet_scope,
                        native.account, static_cast<uint32_t>(reward.mb)};
+        pending.job.completed_unix = session->completed_unix;
+        pending.job.active_seconds = stats.active_seconds;
+        pending.job.contributed = stats.damage > 0 || stats.kills > 0 || stats.assists > 0 ||
+            stats.minion_kills > 0 || stats.boss_credit_micro > 0;
         const std::string intent = pending.job.match_id + ":" + std::to_string(native.account) + ":" +
             pending.job.policy_revision + ":" + std::to_string(reward.gb) + ":" + std::to_string(reward.mb);
         if (!BossCatalog::Sha256(intent, &pending.job.plan_hash)) { g_error = "unable to hash native reward intent"; return; }
@@ -312,7 +318,7 @@ void SettleImpl(unsigned site, BYTE* frame) {
     }
     if (!WriteG(frame, site, static_cast<uint16_t>(reward.gb))) { g_error = "unable to write native G settlement"; ++g_counters.settlements_failed; return; }
     session->settled[session->settled_count++] = native.account;
-    if (reward.mb == 0) ++g_counters.payouts_committed;
+    if (!reward.eligible) ++g_counters.payouts_committed;
     ++g_counters.settlements_committed;
     if (g_trace) g_api->Log(g_mod, SDGO_LOG_INFO,
         "native reward prepared match %s account %u G=%d MB=%d event=%u humans=%u policy=%s",

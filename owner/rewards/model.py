@@ -53,6 +53,9 @@ def defaults():
 
 
 def validate(policy):
+    from . import progression
+    if "progression" in policy:
+        progression.validate(policy["progression"])
     try:
         if type(policy["schema_version"]) is not int or policy["schema_version"] != 1:
             raise ValueError("不支持的配置版本")

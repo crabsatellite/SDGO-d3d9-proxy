@@ -6,15 +6,17 @@ worker has no HTTP payout endpoint and never trusts browser combat telemetry.
 from __future__ import annotations
 import configparser
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import time
 import uuid
 from .runtime_control import _atomic_write
-from .sql_repository import validate_request
+from .sql_repository import validate_request, MbCreditReceipt
+from . import model, progression
 
-WORKER_REVISION = "sdgo-native-gc-ledger-v1"
+WORKER_REVISION = "sdgo-native-gc-ledger-v2"
 JOB_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}\.ini\Z")
 
 
@@ -40,17 +42,29 @@ def read_job(path):
         raise ValueError("Native reward job requires one reward section")
     values = dict(parser["reward"])
     expected = {"SchemaVersion", "MatchId", "AccountNumber", "PlanHash", "Mb", "PolicyRevision", "ExpectedScope"}
-    if set(values) != expected or values["SchemaVersion"] != "1":
+    version = values["SchemaVersion"]
+    if version == "2":
+        expected |= {"CompletedUnix", "ActiveSeconds", "Contributed"}
+    if set(values) != expected or version not in ("1", "2"):
         raise ValueError("Native reward job schema is invalid")
     if not values["AccountNumber"].isdigit() or not values["Mb"].isdigit():
         raise ValueError("Native reward job amounts are invalid")
-    match, account, plan, amount = validate_request(values["MatchId"], int(values["AccountNumber"]), values["PlanHash"], int(values["Mb"]))
+    amount = int(values["Mb"])
+    match, account, plan, _ = validate_request(values["MatchId"], int(values["AccountNumber"]), values["PlanHash"], amount or (1 if version == "2" else 0))
     if account > 2147483647 or amount > 2147483647 or not re.fullmatch(r"[a-f0-9]{64}", values["PolicyRevision"]):
         raise ValueError("Native reward job exceeds wallet or revision bounds")
     scope = uuid.UUID(values["ExpectedScope"])
-    return {"match_id": match, "account_number": account, "plan_hash": plan, "mb": amount,
+    result = {"match_id": match, "account_number": account, "plan_hash": plan, "mb": amount,
             "expected_scope": scope, "policy_revision": values["PolicyRevision"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
+    if version == "2":
+        if not values["CompletedUnix"].isdigit() or not values["ActiveSeconds"].isdigit() or values["Contributed"] not in ("0", "1"):
+            raise ValueError("Invalid native participation metadata")
+        completed, active = int(values["CompletedUnix"]), int(values["ActiveSeconds"])
+        if not 946684800 <= completed <= 253402214400 or not 0 <= active <= 86400:
+            raise ValueError("Native participation metadata out of range")
+        result.update(completed_unix=completed, active_seconds=active, contributed=values["Contributed"] == "1")
+    return result
 
 
 class WalletWorker:
@@ -93,19 +107,37 @@ class WalletWorker:
                 raise ValueError("Native reward job changed after its durable receipt")
             self._archive(path)
             return False
-        result = self.repository.apply_mb(**{k: job[k] for k in ("match_id", "account_number", "plan_hash", "mb", "expected_scope")})
+        bonus_mb = 0
+        progress = None
+        if "completed_unix" in job:
+            if job["completed_unix"] > self.clock() + 300:
+                raise ValueError("Native completion time is in the future")
+            snapshot = self.root / "policies" / (job["policy_revision"] + ".json")
+            policy = model.validate(json.loads(snapshot.read_text(encoding="utf-8")))
+            if model.revision(policy) != job["policy_revision"]:
+                raise ValueError("Native job policy snapshot hash mismatch")
+            progress = progression.validate(policy.get("progression", progression.defaults()))
+        if job["mb"]:
+            result = self.repository.apply_mb(**{k: job[k] for k in ("match_id", "account_number", "plan_hash", "mb", "expected_scope")})
+        else:
+            result = MbCreditReceipt(job["match_id"], job["account_number"], job["plan_hash"], 0, 0, 0, False)
+        if progress and progress["enabled"]:
+            bonus_mb = self.repository.apply_progression(job, progress)
         current_mb = self.repository.current_mb(job["account_number"])
         if type(current_mb) is not int or not 0 <= current_mb <= 2147483647:
             raise ValueError("Native cash query returned an invalid current balance")
         # The SQL ledger commits first. If this process loses power before the
         # atomic receipt write, the exact same job safely retries through SQL.
-        _atomic_write(receipt_path, ini_bytes("receipt", {
+        receipt_values = {
             "SchemaVersion": 1, "MatchId": result.match_id, "AccountNumber": result.account_number,
             "PlanHash": result.plan_hash, "Mb": result.mb_delta, "MbAfter": result.mb_after,
             "NativeRetVal": result.native_retval, "AlreadyApplied": int(result.already_applied),
             "PolicyRevision": job["policy_revision"], "ScopeId": str(self.scope), "SourceHash": job["source_hash"],
             "CurrentMb": current_mb, "PublishedUnix": int(self.clock()),
-        }))
+        }
+        if progress is not None:
+            receipt_values["BonusMb"] = bonus_mb
+        _atomic_write(receipt_path, ini_bytes("receipt", receipt_values))
         self.processed += 1
         self.replays += int(result.already_applied)
         self._archive(path)
