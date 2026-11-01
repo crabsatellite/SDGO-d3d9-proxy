@@ -25,6 +25,31 @@ CREATE TABLE dbo.sdgo_OperatorProcedureBackup (
     OriginalDefinition NVARCHAR(MAX) NOT NULL,
     InstalledHash CHAR(64) NOT NULL
 );
+IF OBJECT_ID(N'dbo.sdgo_OperatorRuleItems', N'U') IS NULL
+CREATE TABLE dbo.sdgo_OperatorRuleItems (
+    OperatorID INT NOT NULL,
+    RuleIndex INT NOT NULL,
+    ItemIndex INT NOT NULL,
+    CategoryID INT NOT NULL,
+    PRIMARY KEY(OperatorID,RuleIndex,ItemIndex),
+    UNIQUE(OperatorID,RuleIndex,CategoryID)
+);
+IF OBJECT_ID(N'dbo.sdgo_OperatorLegacyNameBackup', N'U') IS NULL
+CREATE TABLE dbo.sdgo_OperatorLegacyNameBackup (
+    UserOperatorNumber BIGINT NOT NULL PRIMARY KEY,
+    AccountNumber INT NOT NULL,
+    OperatorNickname VARCHAR(16) NOT NULL,
+    IsSetName TINYINT NOT NULL
+);
+IF OBJECT_ID(N'dbo.sdgo_OperatorLegacyEntitlementBackup', N'U') IS NULL
+CREATE TABLE dbo.sdgo_OperatorLegacyEntitlementBackup (
+    UserOperatorNumber BIGINT NOT NULL PRIMARY KEY,
+    AccountNumber INT NOT NULL,
+    OperatorNumber INT NOT NULL,
+    OPType TINYINT NOT NULL,
+    RunOut TINYINT NOT NULL,
+    DateEnd DATETIME NULL
+);
 IF OBJECT_ID(N'dbo.sdgo_OperatorDataBackup', N'U') IS NULL
 CREATE TABLE dbo.sdgo_OperatorDataBackup (
     OperatorID INT NOT NULL PRIMARY KEY,

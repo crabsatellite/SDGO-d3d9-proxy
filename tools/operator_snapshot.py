@@ -18,8 +18,11 @@ def export(server_ini, output):
         files={}
         target=pending/'GOnlineGame'
         target.mkdir()
-        for name in ('tbl_OperatorData','tbl_OperatorDropDice','tbl_ItemCategory'):
-            cur.execute('SELECT * FROM dbo.['+name+']')
+        sources={name:'*' for name in ('tbl_OperatorData','tbl_OperatorDropDice','tbl_ItemCategory',
+                                     'tbl_MixTreeFile','tbl_PaintItem','tbl_StickerItem','tbl_EtcItems')}
+        sources['tbl_Units']='UnitNumber'
+        for name,columns in sources.items():
+            cur.execute('SELECT '+columns+' FROM dbo.['+name+']')
             keys=[v[0] for v in cur.description]
             rows=[dict(zip(keys,row)) for row in cur.fetchall()]
             path=target/('dbo.'+name+'.json')

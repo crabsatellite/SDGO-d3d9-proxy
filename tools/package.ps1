@@ -39,7 +39,7 @@ Copy-Item -LiteralPath (Join-Path $stage "server") -Destination $out -Recurse
 Copy-Item -LiteralPath (Join-Path $repo "tools\install_client.ps1") -Destination $out
 Copy-Item -LiteralPath (Join-Path $repo "tools\install_server.ps1") -Destination $out
 New-Item -ItemType Directory -Force -Path (Join-Path $out "tools") | Out-Null
-foreach ($helper in "mod_assistant.py", "operator_snapshot.py", "Install-Operator.ps1", "Start-Assistant.ps1", "requirements-operator-assistant.txt") {
+foreach ($helper in "mod_assistant.py", "operator_snapshot.py", "Install-Operator.ps1", "Start-Assistant.ps1", "Initialize-OperatorDefaults.py", "requirements-operator-assistant.txt") {
     Copy-Item -LiteralPath (Join-Path $repo "tools\$helper") -Destination (Join-Path $out "tools")
 }
 $moduleSource=Join-Path $repo "tools\assistant_modules"

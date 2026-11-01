@@ -9,6 +9,8 @@
   "item_provider": "operator_catalog",
   "registration_export": "operator-registrations.json",
   "delivery_modes": ["all_players", "product"],
+  "default_pack": "legacy-support-v1",
+  "default_operator_ids": [60003, 60013, 60018, 60025, 60041],
   "manages_storefront": false,
   "manages_prices": false
 }

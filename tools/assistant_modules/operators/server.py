@@ -6,6 +6,65 @@ from pathlib import Path
 import re
 from .model import registrations, revision, validate
 
+
+def validate_pools(cur, catalog):
+    """Recheck typed references against the live host, without name matching."""
+    clauses={
+        'blueprints':("C.CatalogueID/100000=15 AND EXISTS(SELECT 1 FROM dbo.tbl_MixTreeFile M "
+                      "JOIN dbo.tbl_Units U ON U.UnitNumber=M.OutUnitID WHERE M.Idx=C.RefIndex)"),
+        'stickers':"C.CatalogueID/100000=17 AND EXISTS(SELECT 1 FROM dbo.tbl_StickerItem S WHERE S.StickerID=C.RefIndex)",
+        'paints':"C.CatalogueID/100000=16 AND EXISTS(SELECT 1 FROM dbo.tbl_PaintItem P WHERE P.PaintID=C.RefIndex AND P.Type IN (0,1))",
+        'polish':"C.CatalogueID/100000=16 AND EXISTS(SELECT 1 FROM dbo.tbl_PaintItem P WHERE P.PaintID=C.RefIndex AND P.Type=2)",
+    }
+    used={r['pool'] for o in catalog['operators'] if o['managed'] and o['enabled'] for r in o['drops'] if 'pool' in r}
+    for key in used:
+        pool=catalog['drop_pools'][key]
+        clause=clauses.get(key,'1=1')
+        valid={r[0] for r in cur.execute('SELECT C.CatalogueID FROM dbo.tbl_ItemCategory C WHERE '+clause)}
+        if not set(pool['category_ids'])<=valid:
+            raise ValueError('随机物品池与当前服务端类型/配方不一致：'+pool['label'])
+
+
+def migrate_default_aliases(cur, catalog):
+    if catalog.get('default_pack_version') != 1:return 0
+    from .presets import LEGACY_ALIASES
+    changed=0
+    enabled={o['id'] for o in catalog['operators'] if o['managed'] and o['enabled']}
+    for identity,alias in LEGACY_ALIASES.items():
+        if identity not in enabled:continue
+        # Only exact aliases written by the historical script are migrated.
+        # SQL varchar nicknames cannot reliably carry the new Unicode titles;
+        # clearing the generated alias lets the client use its definition name.
+        cur.execute('''INSERT dbo.sdgo_OperatorLegacyNameBackup
+            SELECT U.UserOperatorNumber,U.AccountNumber,U.OperatorNickname,U.IsSetName
+            FROM dbo.tbl_UserOperators U WHERE U.OperatorNumber=?
+            AND U.OperatorNickname COLLATE Latin1_General_100_BIN2=?
+            AND NOT EXISTS(SELECT 1 FROM dbo.sdgo_OperatorLegacyNameBackup B WHERE B.UserOperatorNumber=U.UserOperatorNumber)''',identity,alias)
+        cur.execute('''UPDATE dbo.tbl_UserOperators SET OperatorNickname='',IsSetName=0
+            WHERE OperatorNumber=? AND OperatorNickname COLLATE Latin1_General_100_BIN2=?''',identity,alias)
+        changed+=max(0,cur.rowcount)
+    return changed
+
+
+def migrate_default_entitlements(cur, catalog):
+    """Replace old default-officer entitlements in place; equipped IDs stay valid."""
+    if catalog.get('default_pack_version') != 1:return 0
+    from .presets import NAMES
+    changed=0
+    enabled={o['id'] for o in catalog['operators'] if o['managed'] and o['enabled'] and o['delivery']=='all_players'}
+    for identity in NAMES:
+        if identity not in enabled:continue
+        cur.execute('''INSERT dbo.sdgo_OperatorLegacyEntitlementBackup
+            SELECT U.UserOperatorNumber,U.AccountNumber,U.OperatorNumber,U.OPType,U.RunOut,U.DateEnd
+            FROM dbo.tbl_UserOperators U WHERE U.OperatorNumber=? AND ISNULL(U.Forbidden,0)=0
+            AND (U.OPType<>0 OR U.RunOut<>0 OR U.DateEnd IS NOT NULL)
+            AND NOT EXISTS(SELECT 1 FROM dbo.sdgo_OperatorLegacyEntitlementBackup B WHERE B.UserOperatorNumber=U.UserOperatorNumber)''',identity)
+        cur.execute('''UPDATE dbo.tbl_UserOperators SET OPType=0,RunOut=0,DateEnd=NULL
+            WHERE OperatorNumber=? AND ISNULL(Forbidden,0)=0
+            AND (OPType<>0 OR RunOut<>0 OR DateEnd IS NOT NULL)''',identity)
+        changed+=max(0,cur.rowcount)
+    return changed
+
 _ROOT = Path(__file__).resolve().parents[3]
 MODULE_DIR = next((p for p in (_ROOT/"mods"/"operator_catalog", _ROOT/"assistant_module"/"operator_catalog")
                    if (p/"server"/"schema.sql").exists()), _ROOT/"mods"/"operator_catalog")
@@ -132,6 +191,7 @@ def apply_catalog(catalog, server_ini):
         if cur.fetchone()[0] < 0:
             raise ValueError("另一项副官更新正在进行，请稍后重试")
         cur.execute((MODULE_DIR / "server" / "schema.sql").read_text(encoding="utf-8"))
+        validate_pools(cur,catalog)
         managed = [o for o in catalog["operators"] if o["managed"]]
         cur.execute("""UPDATE O SET DropType=CASE WHEN B.WasPresent=1 THEN B.OriginalDropType ELSE 0 END
                        FROM dbo.tbl_OperatorData O JOIN dbo.sdgo_OperatorDataBackup B ON O.OperatorID=B.OperatorID""")
@@ -175,6 +235,7 @@ def apply_catalog(catalog, server_ini):
                 cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET CategoryID=?,Enabled=?,DeliveryMode=?,DisplayName=?,Revision=? WHERE OperatorID=?", *values)
             else:
                 cur.execute("INSERT dbo.sdgo_OperatorProfiles(CategoryID,Enabled,DeliveryMode,DisplayName,Revision,OperatorID) VALUES(?,?,?,?,?,?)", *values)
+            cur.execute("DELETE FROM dbo.sdgo_OperatorRuleItems WHERE OperatorID=?", op["id"])
             cur.execute("DELETE FROM dbo.sdgo_OperatorRules WHERE OperatorID=?", op["id"])
             cumulative = 0
             for index, rule in enumerate(op["drops"]):
@@ -182,13 +243,21 @@ def apply_catalog(catalog, server_ini):
                     raise ValueError("掉落物品在服务端不存在")
                 cur.execute("INSERT dbo.sdgo_OperatorRules VALUES(?,?,?,?,?,?)", op["id"], index,
                             rule["category_id"], rule["chance_bps"], rule["min_amount"], rule["max_amount"])
+                if 'pool' in rule:
+                    for item_index,category_id in enumerate(catalog['drop_pools'][rule['pool']]['category_ids']):
+                        cur.execute('INSERT dbo.sdgo_OperatorRuleItems VALUES(?,?,?,?)',op['id'],index,item_index,category_id)
                 cumulative += rule["chance_bps"]
             if cumulative > 10000:
                 raise ValueError("概率合计超过100%")
         install_procedures(cur)
+        legacy_aliases=migrate_default_aliases(cur,catalog)
+        entitlements=migrate_default_entitlements(cur,catalog)
         cur.execute("COMMIT TRANSACTION")
         return {"revision": rev, "managed_operators": len(managed), "storefront_changes": False,
-                "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": False}
+                "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": bool(legacy_aliases),
+                "personal_nicknames_changed":False,
+                "legacy_script_aliases_cleared":legacy_aliases,
+                "existing_default_entitlements_upgraded":entitlements}
     except Exception:
         try:
             cn.cursor().execute("IF XACT_STATE()<>0 ROLLBACK TRANSACTION")

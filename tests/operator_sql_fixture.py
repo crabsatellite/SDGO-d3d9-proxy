@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
-from assistant_modules.operators import model,server
+from assistant_modules.operators import model,server,presets
 from assistant_modules.operators.assets import Assets
 
 
@@ -31,6 +31,7 @@ def main():
     p.add_argument('--client',type=Path,required=True)
     p.add_argument('--snapshot',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--default-pack',action='store_true')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
     db='sdgo_operator_fixture_'+stamp
@@ -41,8 +42,12 @@ def main():
         source_db=n.execute('SELECT DB_NAME()').fetchone()[0]
         assert source_db!=db
         names=['sp_OperatorDrop','sp_GetUserOperatorPage','sp_GetPilotOperator','sp_CreateUserOperator',
-               'sp_CheckUserOperatorTimeLimit','sp_GeOperatorProbability']
+               'sp_CheckUserOperatorTimeLimit','sp_GeOperatorProbability','sp_CreateUserMixTreeItem']
         definitions={name:server.definition(n,name) for name in names}
+        if n.execute('SELECT OBJECT_ID(?)','dbo.sdgo_OperatorProcedureBackup').fetchone()[0] is not None:
+            for name in server.WRAPPED:
+                row=n.execute('SELECT OriginalDefinition FROM dbo.sdgo_OperatorProcedureBackup WHERE ProcedureName=?',name).fetchone()
+                if row:definitions[name]=row[0]
         n.execute('CREATE DATABASE ['+db+']')
     finally:native.close()
     source_ini=configparser.ConfigParser(interpolation=None)
@@ -71,11 +76,19 @@ def main():
     CREATE TABLE dbo.tbl_DiceList_1000(Idx INT PRIMARY KEY,Probability INT);
     CREATE TABLE dbo.FixtureSerial(ID BIGINT IDENTITY PRIMARY KEY);
     CREATE TABLE dbo.FixtureRoll(Roll INT,Quantity INT);
+    CREATE TABLE dbo.tbl_MixTreeFile(Idx INT PRIMARY KEY,OutUnitID INT);
+    CREATE TABLE dbo.tbl_Units(UnitNumber INT PRIMARY KEY);
+    CREATE TABLE dbo.tbl_PaintItem(PaintID INT PRIMARY KEY,Type INT);
+    CREATE TABLE dbo.tbl_StickerItem(StickerID INT PRIMARY KEY);
+    CREATE TABLE dbo.tbl_UserMixTreeItemsSlotNumberList(SlotNumber INT PRIMARY KEY);
+    CREATE TABLE dbo.tbl_UserMixTreeItems(UserMixTreeItemNumber BIGINT IDENTITY PRIMARY KEY,AccountNumber INT,
+        SlotNumber INT,MixTreeItemID INT,CategoryNumber INT,RemainCount INT,BuyType INT,ShopItemtblidx INT);
     INSERT dbo.FixtureRoll VALUES(0,0);
     """
     cur.execute(schema)
     cur.execute("CREATE PROCEDURE dbo.sp_CreateSerial @Account INT,@Serial BIGINT OUTPUT,@Ret INT OUTPUT AS BEGIN SET NOCOUNT ON;INSERT dbo.FixtureSerial DEFAULT VALUES;SET @Serial=SCOPE_IDENTITY();SET @Ret=0;END")
-    catalog=model.import_catalog(args.snapshot,Assets(args.client))
+    catalog=model.import_catalog(args.snapshot,Assets(args.client),include_installed=False)
+    default_catalog=presets.initialize(catalog,args.snapshot,Assets(args.client)) if args.default_pack else None
     data=catalog['native_server_data']
     cols=['OperatorID','OperatorName','TeamWin','TeamLose','BattleResult','ChangeSp','ServiceType','AddOn1','AddOn2','AddOn3','AddOn4','DropType','GParts']
     for source in data.values():cur.execute('INSERT dbo.tbl_OperatorData VALUES('+','.join('?' for _ in cols)+')',*[source[x] for x in cols])
@@ -84,6 +97,9 @@ def main():
     needed.update(o['category_id'] for o in catalog['operators'] if any(c['CatalogueID']==o['category_id'] for c in cat_rows))
     dice=model.load(args.snapshot/'GOnlineGame/dbo.tbl_OperatorDropDice.json')
     needed.update(x['CategoryID'] for x in dice)
+    if default_catalog:
+        needed.update(r['category_id'] for o in default_catalog['operators'] if o['managed'] for r in o['drops'])
+        needed.update(c for pool in default_catalog['drop_pools'].values() for c in pool['category_ids'])
     for source in cat_rows:
         if source['CatalogueID'] in needed:
             cur.execute('INSERT dbo.tbl_ItemCategory VALUES(?,?,?,?,?,?)',source['CatalogueID'],'fixture item',source['RefIndex'],source['TimeLimit'],source['Option1'],source['Option2'])
@@ -91,6 +107,12 @@ def main():
         cur.execute('INSERT dbo.tbl_OperatorDropDice VALUES(?,?,?,?,?,?,?,?)',source['Idx'],source['OperatorNumber'],source['CategoryID'],source['Prob'],'fixture',source['Amount'],source['Opt'],source['SumProb'])
     for i in range(100):cur.execute('INSERT dbo.tbl_UserOperatorSlotNumberList VALUES(?)',i+1)
     for i in range(1000):cur.execute('INSERT dbo.tbl_DiceList_1000 VALUES(?,?)',i,i)
+    for i in range(1,121):cur.execute('INSERT dbo.tbl_UserMixTreeItemsSlotNumberList VALUES(?)',i)
+    if default_catalog:
+        for table,columns in [('tbl_MixTreeFile',['Idx','OutUnitID']),('tbl_Units',['UnitNumber']),
+                              ('tbl_PaintItem',['PaintID','Type']),('tbl_StickerItem',['StickerID'])]:
+            for r in model.load(args.snapshot/'GOnlineGame'/('dbo.'+table+'.json')):
+                cur.execute('INSERT dbo.'+table+' VALUES('+','.join('?' for _ in columns)+')',*[r[c] for c in columns])
     for name,text in definitions.items():
         text=re.sub(r'\[GDStoreBilling\]',lambda _: '['+db+']',text,flags=re.I)
         assert 'GDStoreBilling' not in text
@@ -150,12 +172,49 @@ def main():
     cur.execute(modify)
     source_hash=server.source_hash(server.definition(cur,'sp_GetPilotOperator'))
     assert cur.execute('SELECT InstalledHash FROM dbo.sdgo_OperatorProcedureBackup WHERE ProcedureName=?','sp_GetPilotOperator').fetchone()[0]==source_hash
+    default_results={}
+    if default_catalog:
+        cur.execute("INSERT dbo.tbl_UserOperators(AccountNumber,SlotNumber,OperatorNumber,CategoryNumber,OperatorNickname,OPType,RunOut,DateEnd,IsSetName) VALUES(7770003,2,60013,1210012,'Mizuki(EXP)',1,1,'20000101',1)")
+        applied=server.apply_catalog(default_catalog,fixture_ini)
+        assert applied['legacy_script_aliases_cleared']==1
+        assert applied['existing_default_entitlements_upgraded']==1
+        assert tuple(cur.execute('SELECT OPType,RunOut,DateEnd FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=60013').fetchone())==(0,0,None)
+        assert tuple(cur.execute('SELECT OperatorNickname,IsSetName FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=60013').fetchone())==('',0)
+        assert cur.execute('SELECT OperatorNickname FROM dbo.tbl_UserOperators WHERE AccountNumber=7770001 AND OperatorNumber=60003').fetchone()[0]=='keep-personal'
+        page(7770003);page(7770003)
+        assert cur.execute('SELECT COUNT(DISTINCT OperatorNumber) FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber IN (60003,60013,60018,60025,60041)').fetchone()[0]==5
+        assert not cur.execute('SELECT 1 FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber IN (60003,60013,60018,60025,60041) GROUP BY OperatorNumber HAVING COUNT(*)>1').fetchone()
+        cur.execute("ALTER PROCEDURE dbo.sdgo_OperatorUniform @Bound INT,@Value INT OUTPUT AS BEGIN SET NOCOUNT ON;SELECT @Value=CASE WHEN @Bound=10000 THEN Roll ELSE Quantity END FROM dbo.FixtureRoll;SET @Value=@Value % @Bound;END")
+        # Exercise the first and last member of every typed pool in SQL.
+        for op in default_catalog['operators']:
+            if not op['managed']:continue
+            number=cur.execute('SELECT UserOperatorNumber FROM dbo.tbl_UserOperators WHERE AccountNumber=7770003 AND OperatorNumber=?',op['id']).fetchone()[0]
+            offset=0
+            for rule in op['drops']:
+                members=default_catalog['drop_pools'][rule['pool']]['category_ids'] if 'pool' in rule else [rule['category_id']]
+                for index in (0,len(members)-1):
+                    cur.execute('UPDATE dbo.FixtureRoll SET Roll=?,Quantity=?',offset,index)
+                    got=tuple(drop(7770003,number))
+                    assert got[0]==members[index] and rule['min_amount']<=got[1]<=rule['max_amount'] and got[2]==0
+                offset+=rule['chance_bps']
+        # Every accepted design can be passed to the real native inventory proc.
+        blueprints=default_catalog['drop_pools']['blueprints']['category_ids']
+        for category in blueprints:
+            # Test-only account can reuse empty synthetic blueprint slots.
+            cur.execute('DELETE dbo.tbl_UserMixTreeItems WHERE AccountNumber=7770003')
+            result=last_row(cur.execute('DECLARE @Count INT,@Number BIGINT,@R INT;EXEC dbo.sp_CreateUserMixTreeItem 7770003,0,?,1,11,@Count OUTPUT,@Number OUTPUT,@R OUTPUT;SELECT @R,@Count,@Number',category))
+            assert result[0]==0 and result[1]==1 and result[2]>0
+        server.apply_catalog(default_catalog,fixture_ini)
+        assert cur.execute('SELECT COUNT(*) FROM dbo.sdgo_OperatorLegacyEntitlementBackup').fetchone()[0]==1
+        assert 'CRYPT_GEN_RANDOM' in server.definition(cur,'sdgo_OperatorUniform')
+        default_results={'default_five_permanent_grants':True,'legacy_alias_only_migration':True,'existing_entitlements_migrated_in_place':True,
+                         'typed_pool_sql_sampling':True,'native_blueprint_inventory_proc':len(blueprints)}
     model.save(args.output/'catalog.json',catalog)
     model.save(args.output/'result.json',{'database':db,'synthetic_accounts_only':True,'source_game_database_written':False,
         'native_procedures_exercised':True,'all_players_grant':True,'permanent_upgrade_preserves_nickname':True,
         'product_registration_without_storefront':True,'full_inventory_preserved':True,'cross_account_drop_rejected':True,
         'native_bonus_preserved_once':True,'zero_drop':True,'probability_boundaries':True,'quantity_bounds':True,
-        'production_rng_restored':True,'idempotent_apply':True,'procedure_conflict_rolls_back':True})
+        'production_rng_restored':True,'idempotent_apply':True,'procedure_conflict_rolls_back':True,**default_results})
     print(json.dumps({'database':db,'result':'PASS','source_game_database_written':False}))
     cn.close()
 

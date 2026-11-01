@@ -58,6 +58,19 @@ def validate(catalog):
     templates = {int(x) for x in catalog["native_operator_ids"]}
     assets = catalog.get("uploaded_assets", {})
     item_defs = {int(x["id"]): x for x in catalog["items"]}
+    pools = catalog.get('drop_pools', {})
+    if not isinstance(pools, dict) or len(pools) > 128:
+        raise ValueError('随机物品池配置无效')
+    for key, pool in pools.items():
+        if not isinstance(key, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,47}', key):
+            raise ValueError('随机物品池编号无效')
+        label, members = pool.get('label'), pool.get('category_ids')
+        if not isinstance(label,str) or not label or len(label)>48 or any(ord(c)<32 for c in label):
+            raise ValueError('随机物品池名称无效')
+        if (not isinstance(members,list) or not 1<=len(members)<=4096
+                or any(type(x) is not int or x not in items or x==1070001 for x in members)
+                or len(set(members))!=len(members)):
+            raise ValueError('随机物品池必须包含不重复且已注册的物品')
     if sum(op["managed"] for op in operators) > 256:
         raise ValueError("当前客户端模块最多支持 256 个自定义副官配置")
     for op in operators:
@@ -93,6 +106,9 @@ def validate(catalog):
         for drop in op["drops"]:
             if type(drop["category_id"]) is not int or drop["category_id"] not in items or drop["category_id"] == 1070001:
                 raise ValueError("掉落物品未注册；不掉落请留出概率余量")
+            if 'pool' in drop and (drop['pool'] not in pools or
+                    drop['category_id'] != pools[drop['pool']]['category_ids'][0]):
+                raise ValueError('掉落规则引用的随机物品池不一致')
             chance = drop["chance_bps"]
             if type(chance) is not int or not 0 <= chance <= 10000:
                 raise ValueError("掉落概率无效")
@@ -106,14 +122,14 @@ def validate(catalog):
         raise ValueError("全员免费副官不能超过原版 100 个仓位")
 
 
-def import_catalog(snapshot, assets):
+def import_catalog(snapshot, assets, *, include_installed=True):
     root = Path(snapshot) / "GOnlineGame"
     source = load(root / "dbo.tbl_OperatorData.json")
     drops = load(root / "dbo.tbl_OperatorDropDice.json")
     items = load(root / "dbo.tbl_ItemCategory.json")
     records = assets.records("gdrs/0255.gdt", OP_SIZE)
     sidecar=assets.root/'sdgo/mods/operator_catalog/definitions.json'
-    saved=load(sidecar) if sidecar.exists() else None
+    saved=load(sidecar) if include_installed and sidecar.exists() else None
     saved_ops={}
     if saved:
         if saved.get('schema_version')!=1 or saved.get('client_index_sha256')!=assets.index_hash:
@@ -134,6 +150,9 @@ def import_catalog(snapshot, assets):
                "items": [{"id": int(r["CatalogueID"]), "name": str(r["Name"]).split("\0")[0],
                           "ref_index": int(r["RefIndex"]), "time_limit": int(r["TimeLimit"])} for r in items],
                "native_server_data": {str(r["OperatorID"]): r for r in source}, "operators": []}
+    if saved:
+        for field in ('drop_pools', 'default_pack_version'):
+            if field in saved:catalog[field]=copy.deepcopy(saved[field])
     for r in source:
         identity = int(r["OperatorID"])
         if identity not in records:continue
@@ -194,7 +213,7 @@ def create_operator(catalog, template_id):
     return result, identity
 
 
-def choose_drop(profile, roll, quantity_roll=0):
+def choose_drop(profile, roll, quantity_roll=0, *, pools=None, item_roll=0):
     """Reference semantics: mutually exclusive outcomes per native trigger."""
     if not 0 <= roll < 10000:
         raise ValueError("概率采样值越界")
@@ -205,7 +224,12 @@ def choose_drop(profile, roll, quantity_roll=0):
             span = rule["max_amount"] - rule["min_amount"] + 1
             if not 0 <= quantity_roll < span:
                 raise ValueError("数量采样值越界")
-            return rule["category_id"], rule["min_amount"] + quantity_roll
+            chosen=rule['category_id']
+            if 'pool' in rule:
+                members=(pools or {}).get(rule['pool'],{}).get('category_ids',[])
+                if not 0<=item_roll<len(members):raise ValueError('物品池采样值越界')
+                chosen=members[item_roll]
+            return chosen, rule["min_amount"] + quantity_roll
     return None
 
 
@@ -216,4 +240,4 @@ def registrations(catalog):
                        "drop_rules": copy.deepcopy(o["drops"]),
                        "registration": "product" if o["delivery"] == "product" else "free_for_all",
                        "enabled": o["enabled"]} for o in catalog["operators"] if o["managed"]],
-            "storefront_changes": False}
+            "drop_pools":copy.deepcopy(catalog.get('drop_pools',{})), "storefront_changes": False}

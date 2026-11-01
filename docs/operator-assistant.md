@@ -17,7 +17,18 @@ registration exports stable item descriptors without store prices or listings.
 
 Read [the detailed workflow and storefront handoff contract](operator-assistant.zh-CN.md).
 
-Validation includes 14 Python tests, 3 DLL/native fixtures, actual UI operation,
+Fresh full imports include five permanent free support officers for blueprints,
+experience packs, cosmetics, upgrade kits and capsule coins. The historical
+branch probabilities and quantity ranges are preserved; each native drop now
+samples independently. Typed server references and matching client registrations
+replace name searches. Blueprint aliases are deduplicated by recipe, invalid
+outputs/materials are excluded, and only exact historical generated nicknames
+are backed up and cleared to reveal the Unicode definition name.
+Existing holdings of the five defaults are backed up and upgraded in place to
+permanent use; user-operator IDs, slots, custom names and equipped references stay.
+
+Validation includes 19 Python tests, 3 DLL/native fixtures, actual UI operation,
 and a fresh SQL fixture database using synthetic accounts. Live gameplay and
-in-game presentation remain manual acceptance gates; no production installation
-or live-game acceptance is claimed.
+in-game presentation remain manual acceptance gates. The default pack also has
+isolated SQL tests of permanent grants, legacy alias migration, typed pools and
+all 289 current deduplicated blueprints through the native inventory procedure.

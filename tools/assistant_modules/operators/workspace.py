@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import struct
 import zipfile
-from . import assets, model, server
+from . import assets, model, server, presets
 
 
 class Workspace:
@@ -19,6 +19,8 @@ class Workspace:
         self.path = self.root / "operators.json"
         self.baseline = model.import_catalog(snapshot, self.assets)
         if not self.path.exists():
+            if presets.available(snapshot):
+                self.baseline=presets.initialize(self.baseline,snapshot,self.assets)
             for op in self.baseline["operators"]:
                 avatar=op["avatar"]
                 if avatar["kind"]=="upload":
@@ -59,6 +61,7 @@ class Workspace:
     def public(self, value=None):
         value = value or self.read()
         return {"schema_version": 1, "revision": model.revision(value), "operators": value["operators"],
+                "drop_pools":value.get('drop_pools',{}),
                 "items": value["items"], "native_operator_ids": value["native_operator_ids"],
                 "gallery": [{"id": o["id"], "name": o["name"], "url": f"/api/operators/portrait/{o['id']}"}
                             for o in self.baseline["operators"] if o['id'] in self.baseline['native_operator_ids']],
@@ -120,6 +123,8 @@ class Workspace:
                             "client_index_sha256":catalog['client_index_sha256'],
                             "operators":[o for o in catalog['operators'] if o['managed']],
                             "uploaded_assets":catalog['uploaded_assets']}
+        for field in ('drop_pools','default_pack_version'):
+            if field in catalog:public_definitions[field]=copy.deepcopy(catalog[field])
         files[prefix+'definitions.json']=(json.dumps(public_definitions,ensure_ascii=False,indent=2)+'\n').encode()
         fragment = server.MODULE_DIR / "symbols.fragment.ini"
         if not fragment.exists():
