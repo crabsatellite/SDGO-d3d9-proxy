@@ -35,7 +35,7 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
             'rewards':'奖励策略由 Manager 发布到原生 BattleServer 读取的运行目录；GB 沿用游戏原结算，MB 由受管工作器处理持久队列。界面以真实心跳和回执判断连接，保存不等于运行中已加载。',
             'frp':'服主填写实际 Sakura FRP 端点。生成器只导出客户端需要的地址映射；Agent 复用已登记的 UDP 池，玩家使用原启动器，不需要 Sakura 账号或专用联机入口。',
             'ai_catalog':'根据服主的原生目录表和配套客户端表生成一致的 AI 机体清单，在客户端和 BattleServer 装配同一份数据，保留旧编号分配记录。它不自动等于 AI 实战验收通过。'}
-        stories['collection_capsule']='活动收藏扭蛋固定100,000 GP，C/B/A/S先按35/30/20/15加权、等级内等概率；收集完的等级移出后重新归一。通过原生活动机台奖品箱协议发放永久1级初始形态，未领取也预留历史防重复。初始入口来自原生目录或内容声明；旧账号缺完整历史时拒绝。生成、安装、真人领取和扣费验收是不同状态。'
+        stories['collection_capsule']='活动收藏扭蛋固定100,000 GP，先补图鉴未解锁机体，全解锁后补当前永久机库与领取箱缺少的机体。候选来自可用数据库初始机体，包含无原生图鉴条目的合法新内容；过滤训练、占位、不可出击和不可独立持有的变形态。当前阶段C/B/A/S按35/30/20/15加权并按可用等级归一，通过原生奖品箱发放永久1级机体。Mod仅保留最小图鉴解锁标记；无完整历史证明或导入门槛，Manager安装更新自动处理SQL，玩家不运行SQL。生成、安装、真人领取和扣费验收是不同状态。'
         mechanism=stories.get(provider_id,'此功能由登记的业务模块提供配置和管理操作。')
         settings=redact(provider.config)
         capabilities={

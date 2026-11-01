@@ -849,6 +849,249 @@ def _strict_fixed_plan(baseline, units, required, candidate_ids):
         "units per six-slot pool")
 
 
+def _usage_rows(counter, units, original_fixed_units):
+    return [
+        {
+            "unit_id": uid,
+            "grade": units[uid]["grade"],
+            "uses": counter[uid],
+            "original_native": uid in original_fixed_units,
+        }
+        for uid in sorted(counter)
+    ]
+
+
+def rebalance_initialization_c_fillers(
+        catalog, machine_ids, original_fixed_units, required_unit_ids):
+    """Mutate selected initialized pools to broaden C fillers below 30% overlap."""
+    units = {unit["id"]: unit for unit in catalog["units"]}
+    selected_ids = set(machine_ids)
+    selected = [
+        machine for machine in catalog["fixed_machines"]
+        if machine["id"] in selected_ids
+    ]
+    selected.sort(key=lambda machine: machine["id"])
+    if not selected:
+        return {
+            "mode": "global_old_overlap_under_30_percent_c_only_v1",
+            "total_generated_slot_count": 0,
+            "old_overlap_slot_count_before": 0,
+            "old_overlap_slot_count_after": 0,
+            "old_overlap_rate_before": 0.0,
+            "old_overlap_rate_after": 0.0,
+            "maximum_old_overlap_slots": 0,
+            "replacement_count": 0,
+            "required_root_count": len(required_unit_ids),
+            "retained_required_root_count": 0,
+            "missing_required_unit_ids": sorted(required_unit_ids),
+            "c_unique_before": 0,
+            "c_unique_after": 0,
+            "c_max_use_before": 0,
+            "c_max_use_after": 0,
+            "unit_usage_before": [],
+            "unit_usage_after": [],
+            "per_machine": [],
+            "replacements": [],
+        }
+
+    total_slots = sum(len(machine["slots"]) for machine in selected)
+    maximum_old_slots = (3 * total_slots - 1) // 10
+
+    def usage():
+        return collections.Counter(
+            slot["unit_id"] for machine in selected
+            for slot in machine["slots"])
+
+    before_usage = usage()
+    before_c_usage = collections.Counter({
+        uid: count for uid, count in before_usage.items()
+        if units[uid]["grade"] == "C"
+    })
+    old_before = sum(
+        count for uid, count in before_usage.items()
+        if uid in original_fixed_units)
+    remaining_budget = max(0, maximum_old_slots - old_before)
+    native_c_ids = sorted(
+        uid for uid in original_fixed_units
+        if units[uid]["grade"] == "C")
+    current_c_usage = before_c_usage.copy()
+    current_required_usage = collections.Counter({
+        uid: before_usage[uid] for uid in required_unit_ids
+    })
+    changed_machines = set()
+    replacements = []
+
+    while len(replacements) < remaining_budget:
+        choices = []
+        for machine in selected:
+            if machine["id"] in changed_machines:
+                continue
+            machine_ids_now = {
+                slot["unit_id"] for slot in machine["slots"]}
+            old_count = sum(
+                uid in original_fixed_units for uid in machine_ids_now)
+            if old_count >= 2:
+                continue
+            for slot_index, slot in enumerate(machine["slots"]):
+                uid = slot["unit_id"]
+                if (slot.get("initialization_role")
+                        != "filler_non_native"
+                        or units[uid]["grade"] != "C"
+                        or uid in original_fixed_units):
+                    continue
+                if (uid in required_unit_ids
+                        and current_required_usage[uid] <= 1):
+                    continue
+                targets = [
+                    target for target in native_c_ids
+                    if target not in machine_ids_now
+                ]
+                if not targets:
+                    continue
+                target = min(
+                    targets,
+                    key=lambda candidate: (
+                        current_c_usage[candidate],
+                        candidate,
+                    ),
+                )
+                choices.append((
+                    -current_c_usage[uid],
+                    0 if machine["price"] in (1200, 1400, 1600) else 1,
+                    machine["price"],
+                    machine["id"],
+                    slot_index,
+                    target,
+                ))
+        if not choices:
+            break
+        _, _, _, machine_id, slot_index, target = min(choices)
+        machine = next(
+            row for row in selected if row["id"] == machine_id)
+        slot = machine["slots"][slot_index]
+        source = slot["unit_id"]
+        source_role = slot["initialization_role"]
+        slot["unit_id"] = target
+        slot["sprites"] = copy.deepcopy(
+            units[target].get("capsule_sprites", []))
+        slot["initialization_role"] = "filler_native_overlap"
+        slot["filler_usage_before"] = current_c_usage[target]
+        slot["c_diversity_rebalanced_from_unit_id"] = source
+        current_c_usage[source] -= 1
+        if not current_c_usage[source]:
+            del current_c_usage[source]
+        current_c_usage[target] += 1
+        if source in required_unit_ids:
+            current_required_usage[source] -= 1
+        changed_machines.add(machine_id)
+        replacements.append({
+            "machine_id": machine_id,
+            "slot": slot_index + 1,
+            "from_unit_id": source,
+            "to_unit_id": target,
+            "from_role": source_role,
+            "price": machine["price"],
+        })
+
+    for machine in selected:
+        old_ids = [
+            slot["unit_id"] for slot in machine["slots"]
+            if slot["unit_id"] in original_fixed_units
+        ]
+        non_old_ids = [
+            slot["unit_id"] for slot in machine["slots"]
+            if slot["unit_id"] not in original_fixed_units
+        ]
+        non_old_fillers = [
+            slot["unit_id"] for slot in machine["slots"]
+            if slot.get("initialization_role") == "filler_non_native"
+        ]
+        mix = machine.get("initialization_mix")
+        if isinstance(mix, dict):
+            mix.update({
+                "baseline_filler_unit_ids": list(old_ids),
+                "initialized_filler_unit_ids": list(non_old_fillers),
+                "native_overlap_unit_ids": list(old_ids),
+                "non_native_filler_unit_ids": list(non_old_fillers),
+                "non_native_slot_count": len(non_old_ids),
+                "native_overlap_slot_count": len(old_ids),
+            })
+
+    after_usage = usage()
+    after_c_usage = collections.Counter({
+        uid: count for uid, count in after_usage.items()
+        if units[uid]["grade"] == "C"
+    })
+    old_after = sum(
+        count for uid, count in after_usage.items()
+        if uid in original_fixed_units)
+    missing_required = sorted(
+        uid for uid in required_unit_ids if after_usage[uid] < 1)
+    if missing_required:
+        raise ValueError(
+            "C filler rebalance removed required acquisition roots: "
+            f"{missing_required}")
+    if old_after > maximum_old_slots:
+        raise ValueError(
+            "C filler rebalance exceeded the global old-unit overlap budget")
+    for machine in selected:
+        ids = [slot["unit_id"] for slot in machine["slots"]]
+        if len(ids) != len(set(ids)):
+            raise ValueError(
+                f"C filler rebalance duplicated a unit in machine "
+                f"{machine['id']}")
+        if sum(uid in original_fixed_units for uid in ids) > 2:
+            raise ValueError(
+                f"C filler rebalance exceeded two old units in machine "
+                f"{machine['id']}")
+
+    return {
+        "mode": "global_old_overlap_under_30_percent_c_only_v1",
+        "total_generated_slot_count": total_slots,
+        "old_overlap_slot_count_before": old_before,
+        "old_overlap_slot_count_after": old_after,
+        "old_overlap_rate_before": old_before / total_slots,
+        "old_overlap_rate_after": old_after / total_slots,
+        "maximum_old_overlap_slots": maximum_old_slots,
+        "replacement_count": len(replacements),
+        "required_root_count": len(required_unit_ids),
+        "retained_required_root_count":
+            len(required_unit_ids) - len(missing_required),
+        "missing_required_unit_ids": missing_required,
+        "c_unique_before": len(before_c_usage),
+        "c_unique_after": len(after_c_usage),
+        "c_max_use_before": max(before_c_usage.values(), default=0),
+        "c_max_use_after": max(after_c_usage.values(), default=0),
+        "unit_usage_before": _usage_rows(
+            before_usage, units, original_fixed_units),
+        "unit_usage_after": _usage_rows(
+            after_usage, units, original_fixed_units),
+        "c_usage_before": _usage_rows(
+            before_c_usage, units, original_fixed_units),
+        "c_usage_after": _usage_rows(
+            after_c_usage, units, original_fixed_units),
+        "per_machine": [
+            {
+                "machine_id": machine["id"],
+                "price": machine["price"],
+                "old_overlap_unit_ids": [
+                    slot["unit_id"] for slot in machine["slots"]
+                    if slot["unit_id"] in original_fixed_units
+                ],
+                "old_overlap_slot_count": sum(
+                    slot["unit_id"] in original_fixed_units
+                    for slot in machine["slots"]),
+                "c_unit_ids": [
+                    slot["unit_id"] for slot in machine["slots"]
+                    if units[slot["unit_id"]]["grade"] == "C"
+                ],
+            }
+            for machine in selected
+        ],
+        "replacements": replacements,
+    }
+
+
 def initialize(snapshot, catalog, price=None):
     if price is not None and (type(price) is not int or price < 0):
         raise ValueError("Initialization price override must be a nonnegative integer or null")
@@ -888,6 +1131,7 @@ def initialize(snapshot, catalog, price=None):
     configured_fixed_units = set()
     max_new_roots_per_machine = 4
     fixed_plan_report = None
+    c_diversity_report = None
     new_pool_rarity_audit = []
 
     def add_fixed_machines(derived=False):
@@ -1028,8 +1272,8 @@ def initialize(snapshot, catalog, price=None):
             slot_grades = [
                 units[slot["unit_id"]]["grade"] for slot in template["slots"]]
 
-            # Exactly one old-fixed slot keeps old overlap at 1/6 while the
-            # other five slots use units absent from all original 78 pools.
+            # Start with one old-fixed slot. A bounded C-only pass below may
+            # broaden that overlap globally without changing template grades.
             old_slot_choices = []
             for old_index, old_grade in enumerate(slot_grades):
                 if root_counts[old_grade] > slot_grades.count(old_grade) - 1:
@@ -1239,6 +1483,25 @@ def initialize(snapshot, catalog, price=None):
             })
             add_strict_fixed_machines(
                 plan, templates, candidate_ids, original_fixed_units)
+            c_diversity_report = rebalance_initialization_c_fillers(
+                catalog, new_machines, original_fixed_units, fixed_required)
+            filler_usage.clear()
+            non_native_usage.clear()
+            machines_by_id = {
+                machine["id"]: machine for machine in catalog["fixed_machines"]
+                if machine["id"] in set(new_machines)
+            }
+            for machine in machines_by_id.values():
+                for slot in machine["slots"]:
+                    counter = (
+                        filler_usage
+                        if slot["unit_id"] in original_fixed_units
+                        else non_native_usage
+                    )
+                    counter[slot["unit_id"]] += 1
+            for row in fixed_machine_mix:
+                machine = machines_by_id[row["machine_id"]]
+                row.update(copy.deepcopy(machine["initialization_mix"]))
             template_counts = collections.Counter(
                 entry["template_id"] for entry in plan)
             actual_template_prices = collections.Counter(
@@ -1258,6 +1521,7 @@ def initialize(snapshot, catalog, price=None):
                 "total_generated_slot_count": total_slots,
                 "native_overlap_rate":
                     overlap_slots / total_slots if total_slots else 0.0,
+                "c_diversity_rebalance": c_diversity_report,
             })
     else:
         add_fixed_machines()

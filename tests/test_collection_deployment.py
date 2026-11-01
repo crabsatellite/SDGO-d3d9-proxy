@@ -66,7 +66,7 @@ class FakeCursor:
                 100000,
                 True,
                 CLI.pool_hash(self.model["pool"]),
-                2, 0, 100000, 0,
+                3, 0, 100000, 0,
             )
         raise AssertionError(f"Unexpected fixture fetch: {self.last}")
 
@@ -198,7 +198,6 @@ class CollectionDeploymentTests(unittest.TestCase):
         with (
             patch.object(CLI, "checked_model", return_value=(model, "fixture install SQL")),
             patch.object(CLI, "connection", return_value=database),
-            patch.object(CLI, "registration_baseline", return_value=2),
             patch.object(CLI, "_world_is_running", return_value=False) as running,
             patch.object(CLI.subprocess, "run", side_effect=installer),
             patch.object(CLI, "HOST_SHA256", sha256(executable)),
@@ -357,6 +356,10 @@ class CollectionDeploymentTests(unittest.TestCase):
                 b"new mod",
             )
             self.assertEqual(result["price_gp"], 100000)
+            self.assertTrue(result["database_setup_automatic"])
+            self.assertFalse(result["players_require_sql"])
+            self.assertEqual(result["catalog_schema_version"], 3)
+            self.assertIn("fixture install SQL", commands)
             self.assertTrue(Path(result["backup"]).is_dir())
             self.assertEqual(len(calls), 1)
             running.assert_called_once_with(target)
