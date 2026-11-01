@@ -23,7 +23,23 @@ Both carry subject pilot at +6, slot at +10 and native room index at +14. The
 existing room broadcaster rewrites recipient routing at +2, skips AI clients and
 retains the native Agent delivery path. The server's existing builders at
 `0x004B45F2` and `0x004D8A0C` establish these packet layouts. No selection request,
-database write, private opcode or additional client Mod is used.
+database write or private opcode is used.
+
+The 0.1.5 live retest still failed. Its original regression exercised copy
+instructions while omitting the 3D room's command dispatcher. The 3D handler at
+`0x00733840` translates a unit notification to a per-participant command; its
+operation is subject to room/start state and queue processing. Correct packet
+bytes and successful queueing were not sufficient acceptance evidence.
+
+The required 0.1.6 `room_random_client` companion applies validated full records
+at an interior site of `CServiceManaged::OnPacket`, before service command queues.
+It refreshes a matching complete pending record at `0x06C3`, retains separate
+inventory UIDs and reports missing/mismatched data instead of inventing a record.
+The site at function +5 coexists with `match_ai`'s function-entry hook. An actual
+core/DLL fixture registers both owners, reproduces stale model construction with
+the companion disabled, and checks fresh construction with it enabled while the
+original queued handler is still blocked by starting state. A pass-through native
+factory observer records the model used by the real client for manual testing.
 
 The full ship leader and four inventory UIDs match the chosen unit records.
 Partial notification or later start failure restores original records; native

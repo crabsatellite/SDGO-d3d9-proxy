@@ -37,7 +37,7 @@ Beta and Experimental labels indicate release channels.
 | AI mech catalog (Beta, separate addon) <!-- catalog: `ai_catalog` --> | Custom AI rosters | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | Combat reward management | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | Collection gameplay | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts (Beta) <!-- catalog: `room_random` --> | Randomized mission and PvP loadouts | [Use](docs/room-random.md) |
+| Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | Randomized mission and PvP loadouts | [Use](docs/room-random.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Room title extensions | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Combat AI behavior | [Use](docs/battle-ai.md) |
 | Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Unit inventory management | [Use](docs/hangar-manager.md) |

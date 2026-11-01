@@ -7,9 +7,9 @@ at most four slots and exactly ten native points. When alternatives exist, the n
 round excludes the previous model or model set. Insufficient inventories cancel
 the whole start; they never borrow another account's units or silently use eight points.
 
-This is a server-only mod using native constructors and start packets. It does not
-update `GoUserUnitNum`, inventory or saved decks. No process is restarted by the
-installer. AI mods retain their own pools and use different hook sites.
+This feature needs `room_random` on BattleServer and `room_random_client` on every
+participating client. It uses native constructors and messages and does not update
+`GoUserUnitNum`, inventory or saved decks. AI mods retain their own pools.
 The core's shared room-command service scopes arguments to each command. Both
 `!rand !ai3 lv4` and `!ai3 lv4 !rand` work; keep AI options immediately after
 `!ai`, before the next `!command`. Native short titles retain their 20-byte limit.
@@ -20,14 +20,17 @@ The whole title is read, including commands after byte 20; randomization itself 
 Title transport does not install or enable the AI or random-loadout features.
 See [combined commands](room-commands.md).
 
-`!ai !rand` is valid. Version 0.1.5 fixes a synchronization gap: changing only the
-server's battle record left the stock client's preparation cache unchanged.
-After all human units build, native `0x0861` full-unit notifications are queued
-before `0x06C3` battle start; deck modes also receive native `0x098B` full-ship
-records, including the leader and all 64-bit unit UIDs. Failed starts and teardown
-restore the original records through the same notifications. Type-3 announcement
-IDs are synchronized as well. No additional client Mod or database selection
-write is required. A queued notification is not a client/gameplay acceptance receipt.
+`!ai !rand` is valid. The server sends native `0x0861` full-unit and, for deck modes,
+`0x098B` full-ship notifications before `0x06C3` battle start. Version 0.1.5 alone
+was insufficient in real gameplay: the 3D room handles those notices as queued
+commands. The 0.1.6 client companion applies complete records before that queue,
+then refreshes them at the start boundary. It also records native human-factory
+observations for manual acceptance. Failed starts and teardown restore originals.
+
+Close the client, select it in Mod Manager and import the supplied
+`SDGO-RoomRandomClient-0.1.6-beta.zip`, then use the normal launcher. No new settings
+are needed. Distribute this overlay to every participant. It contains no game files
+or server credentials, and its symbol fragment merges with other installed Mods.
 
 The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
 executes the actual server model-selection and client cache-copy instructions
@@ -43,7 +46,7 @@ the exact supported executable, source evidence, limits and manual acceptance.
 Automatic checks are not live multiplayer proof.
 The feature is catalogued as `gameplay` / `room-random` / `beta` / `room-title`.
 Category installers can select `-Features room-random`; the category, feature and
-per-mod switches retain their normal precedence. It needs only the server mod;
+per-mod switches retain their normal precedence. Keep both components enabled;
 AI composition retains the AI mods' existing client requirements.
 
 ```powershell

@@ -137,6 +137,8 @@ sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item re
              SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
+sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
+             SOURCES mods/room_random_client/room_random_client.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
@@ -625,6 +627,20 @@ if(BUILD_TESTING)
     sdgo_strict(room_random_test)
     add_test(NAME room_random_offline COMMAND room_random_test)
     set_tests_properties(room_random_offline PROPERTIES TIMEOUT 30)
+    add_library(room_random_head_probe SHARED tests/room_random_head_probe.cpp)
+    add_executable(room_random_client_policy_test tests/room_random_client_policy_test.cpp)
+    sdgo_strict(room_random_client_policy_test)
+    add_test(NAME room_random_client_policy COMMAND room_random_client_policy_test)
+    target_link_libraries(room_random_head_probe PRIVATE sdgo_api)
+    sdgo_strict(room_random_head_probe)
+    add_executable(room_random_client_runtime_test tests/room_random_client_runtime_test.cpp)
+    target_link_libraries(room_random_client_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(room_random_client_runtime_test)
+    add_dependencies(room_random_client_runtime_test sdgo_core room_random_client room_random_head_probe)
+    add_test(NAME room_random_client_runtime COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/room_random_client_runtime_test.ps1"
+        -BuildDir "${CMAKE_BINARY_DIR}" -Config "$<CONFIG>")
+    set_tests_properties(room_random_client_runtime PROPERTIES TIMEOUT 120)
 
     # Explicitly invoked read-only host probe; not a CTest or staged executable.
     add_executable(room_random_inventory_probe tests/room_random_inventory_probe.cpp mods/room_random/inventory.cpp)
