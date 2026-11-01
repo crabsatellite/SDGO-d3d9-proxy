@@ -129,7 +129,21 @@ python tools/install_battle_rewards.py --battle-dir "D:\SDGO\Server\BattleServer
 - 与独立双倍模块同载，GB/MB 只消费一次活动倍率，经验保持该组件行为。
 - 复制原生钱包过程到新隔离数据库，验证真实事务、断线后重试、余额重读和零遗留测试库。
 - 复制的真实 Agent 从 BATTLE 连接接收 `0x064B`，向合成客户端连接转发完全一致的十字节消息；独立端口复测通过。
+- 复制的真实 BattleServer 隔离启动，核对全部 11 处 Hook 归属当前奖励 DLL；探针阻断对外连接，不启动真实对局。
 - 安装/更新/卸载保护、中文路径、配置版本、进程身份、文件并发和原子发布检查。
+
+在 Windows 源码目录安装 Visual Studio C++ 工具后，可复现框架和奖励回归：
+
+```powershell
+cmake -S . -B build -A Win32
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
+
+默认运行时测试使用真实 core/Mod DLL、合成原生帧和隔离账本，不需要生产数据库。
+真实 SQL 复测另需服主本机的原生服务器 INI 和创建/删除临时数据库的权限；测试只在新隔离库中
+复制原生钱包过程，不向原库账号发币。Agent 和真实宿主启动探针另需本机合法持有的原生 EXE，
+游戏文件不随源码或工具包分发。
 
 这些检查不使用真实账号对局，也不改生产余额。服主手动验收时，记录一次对战胜/负与 MVP、一次任务
 Boss、小怪/伤害变化、双倍窗口边界、倍率更新、多人数量变化和断线重连，并对照余额差额与回执。

@@ -85,5 +85,22 @@ notification. A copied native wallet procedure was tested in new isolated SQL
 Databases. A copied real Agent forwarded the exact ten-byte cash packet from its
 BATTLE connection to a synthetic client connection twice. Installation, owner
 entry lifecycle and Windows file-sharing races have explicit regression tests.
+A copied real BattleServer also starts with all eleven hooks owned by the current
+reward DLL; its probe blocks outbound connections and does not start a real match.
+
+From a Windows source checkout with the Visual Studio C++ tools installed:
+
+```powershell
+cmake -S . -B build -A Win32
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
+
+Default runtime checks use the real core/Mod DLLs, synthetic native frames and an
+isolated ledger. Optional native SQL checks require a local server INI and scratch
+database create/drop privileges; original account wallets are not credited.
+The Agent and native-host probes also require locally owned game executables,
+which are not distributed with the source or owner toolkit.
+
 These are not authenticated real-client combat/HUD proof. See the Chinese tutorial
 for manual match, event-window, multiplier, party-size and reconnect acceptance.
