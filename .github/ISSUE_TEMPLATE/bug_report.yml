@@ -1,0 +1,28 @@
+name: Bug report / 问题反馈
+description: Report a reproducible Mod or Manager issue. 请勿附带凭据或私有游戏资源。
+title: "[Bug] "
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Feature / 功能
+      description: Which Mod or Manager page is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Include expected and actual behavior. 请区分真实游戏验收与配置保存结果。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Versions and scope / 版本与影响范围
+      description: Manager/Mod version, client/server build and whether other features are affected. Do not include private absolute paths or addresses.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence / 脱敏证据
+      description: Minimal logs or screenshots only. Never attach database INIs, passwords, tokens, accounts, player saves, game resources or private snapshots.

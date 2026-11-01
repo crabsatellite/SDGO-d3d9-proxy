@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Installs, updates or removes the SDGO mod framework in Battle or Agent server folders.
+  Installs, updates or removes the SDGO mod framework in Battle, Agent or World server folders.
 
 .DESCRIPTION
-  -ServerRoot is either one battle server folder (it contains BattleServer.exe) or a folder
-  whose subfolders are battle servers (BattleServer1, BattleServer2, ...). The folder names
+  -ServerRoot is either one server folder containing the selected role's EXE or a folder
+  whose subfolders contain it (BattleServer1, BattleServer2, ...). The folder names
   and how the servers are started (a server manager, a batch file, a service) do not
   matter: Windows loads winmm.dll from BattleServer.exe's own folder.
 
@@ -23,6 +23,7 @@
   * -Only limits the install to the named subfolders; -Uninstall removes the framework.
   * -Role Agent selects AgentServer.exe folders for agent_udp_pool. The default
     remains Battle (BattleServer.exe), so existing commands keep their meaning.
+  * -Role World selects WorldServer.exe for rank and new-account profile fixes.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"
@@ -36,7 +37,7 @@ param(
     [string]$Source,
     [switch]$OverwriteConfig,
     [switch]$Uninstall,
-    [ValidateSet("Battle", "Agent")][string]$Role = "Battle"
+    [ValidateSet("Battle", "Agent", "World")][string]$Role = "Battle"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,7 +46,7 @@ $ProductName = "SDGO mod framework"
 $Loader = "winmm.dll"
 $Chain = "winmm_chain.dll"
 $ChainKey = "chain_winmm"
-$HostExe = if ($Role -eq "Agent") { "AgentServer.exe" } else { "BattleServer.exe" }
+$HostExe = switch ($Role) { "Agent" { "AgentServer.exe" } "World" { "WorldServer.exe" } default { "BattleServer.exe" } }
 
 Add-Type -Namespace SdgoInstall -Name Ini -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -224,5 +225,5 @@ foreach ($target in $targets) {
     Write-Host "$name : installed ($($summary -join ', '))"
 }
 if (-not $Uninstall) {
-    Write-Host "Start the $Role servers again. Features with a server part also need the client install (install_client.ps1) on the players' machines."
+    Write-Host "Start the $Role servers again. Check each feature's guide for any required client-side install."
 }

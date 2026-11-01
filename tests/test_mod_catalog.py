@@ -33,12 +33,38 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
         self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
+        self.assertEqual(c["features"]["room-random"]["mods"], ["room_random"])
+        self.assertEqual(c["features"]["room-random"]["category"], "gameplay")
+        self.assertEqual(c["features"]["room-random"]["activation"], "room-title")
         self.assertFalse(next(m for m in c["mods"] if m["id"] == "net_probe")["enabled_by_default"])
 
     def test_base_has_only_fixes(self):
         c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
+
+    def test_shop_components_are_classified_and_generated_helper_is_declared(self):
+        c = catalog.read_catalog(self.root)
+        label = next(m for m in c["mods"] if m["id"] == "shop_labels")
+        host = next(m for m in c["mods"] if m["id"] == "shop_catalog")
+        self.assertEqual(label["category"], "fixes")
+        self.assertEqual(host["category"], "network")
+        self.assertFalse(host["enabled_by_default"])
+        self.assertEqual(host["runtime_files"], ["shop_catalog_apply.exe"])
+        self.assertIn("catalog.ini", host["config_files"])
+
+    def test_generated_tools_must_have_safe_executable_paths(self):
+        self.replace("mods/shop_catalog/mod.ini", "runtime_files=shop_catalog_apply.exe", "runtime_files=../outside.exe")
+        with self.assertRaises(ValueError):
+            catalog.read_catalog(self.root)
+
+    def test_starter_policy_is_a_default_server_fix(self):
+        c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
+        mod = next(m for m in c["mods"] if m["id"] == "new_account_profile")
+        self.assertEqual(mod["target"], "server")
+        self.assertTrue(mod["enabled_by_default"])
+        self.assertEqual(mod["config_files"], ["config.ini"])
+        self.assertEqual(mod["hosts"], ["WorldServer-548A86E3-0010C000"])
 
     def test_catalog_and_package_contents_follow_category_order(self):
         c = catalog.read_catalog(self.root)
@@ -55,6 +81,15 @@ class CatalogTests(unittest.TestCase):
     def test_unknown_feature_is_rejected(self):
         with self.assertRaises(ValueError):
             catalog.select_catalog(catalog.read_catalog(self.root), features=["random-unit-not-bundled"])
+
+    def test_operator_feature_preserves_live_config_and_is_optional(self):
+        source=catalog.read_catalog(self.root)
+        selected=catalog.select_catalog(source,features=['operator-assistant'])
+        mod=next(m for m in selected['mods'] if m['id']=='operator_catalog')
+        self.assertEqual(mod['target'],'client')
+        self.assertEqual(set(mod['config_files']),{'display.ini','definitions.json'})
+        self.assertTrue(all(m['category']=='fixes' or m['id']=='operator_catalog' for m in selected['mods']))
+        self.assertNotIn('operator_catalog',{m['id'] for m in catalog.select_catalog(source,'base')['mods']})
 
     def test_bad_profile_is_rejected(self):
         with self.assertRaises(ValueError):

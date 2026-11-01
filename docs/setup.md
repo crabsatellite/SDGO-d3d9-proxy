@@ -2,7 +2,9 @@
 
 [中文](setup.zh-CN.md) · [Feature categories](../README.md)
 
-Choose core fixes first, then add the gameplay or hosting features you need. All participating clients and servers need the matching parts of a feature.
+Choose core fixes first, then add the gameplay or hosting features you need.
+Install each feature on the hosts its guide lists. Multi-host features need matching
+parts; server-only features such as new-account defaults need no player client Mod.
 
 ## Supported game builds
 
@@ -14,6 +16,7 @@ The framework only touches code it can verify. Each exe build has a *host key*,
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2 (and the client it is based on) |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | the common private server pack (BattleServer1..N folders) |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | Native Agent relay hosts |
+| WorldServer.exe | `WorldServer-548A86E3-0010C000` | Native World account initialization and settlement host |
 
 The install scripts print the host key of your exe. With another build the framework still
 loads, logs that no symbol file matches and keeps every mod disabled, so the game is
@@ -23,10 +26,10 @@ unaffected. See [Other game builds](#other-game-builds).
 
 Requirements: Windows with Windows PowerShell 5.1 (built in). No VC++ redistributable is
 needed. Download `SDGO-ModFramework-<version>.zip` from the
-[latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest), extract it,
+[latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest), extract it,
 then open PowerShell in the extracted folder.
 
-### Client (every player)
+### Client (features with a client component)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games\SDGO"
@@ -79,6 +82,33 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 The default role is Battle. Owner/player profile preparation is covered by the
 [FRP distribution guide](frp-distribution.md).
 
+### World servers
+
+WorldServer core fixes use the same installer with `-Role World` (stop that
+WorldServer first):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
+```
+
+Base and Full packages built from current master include the default-enabled [new-account policy](new-account-profile.md)
+and [rank repair](rank-progression-fix.md). Neither needs a client component. Install
+on each independent World instance, restart World, and check `loaded` plus the
+new-account `new-account defaults active` line in `sdgo/logs/sdgo.log`.
+If a downloaded release does not yet contain `server/sdgo/mods/new_account_profile/`,
+[build a package from current source](#building-from-source).
+
+New-account defaults are 5,000 GP, zero cash and Corporal 1, with at most one automatic
+unit gift from first profile creation. Copy the bundled `config.example.ini` to
+`sdgo/mods/new_account_profile/config.ini` to customize them, then restart World.
+`InitialUnitLimit=0` removes only those automatic gifts; normal starter selection and
+later unit acquisition remain available. Existing pilots and hangars keep their data;
+use a fresh account for [manual acceptance](new-account-profile.md#verification).
+
+To disable only the new-account policy, set `new_account_profile=0` under `[mods]`
+in World's `sdgo/sdgo.ini` and restart. Use `-Role World -Uninstall` only when removing
+the entire World framework.
+
 ## Uninstall
 
 ```powershell
@@ -100,8 +130,10 @@ This removes the loader DLL and `sdgo\` (to the Recycle Bin) and puts a chained
 | `[loader] chain_d3d9` / `chain_winmm` | another DLL to forward to instead of the system copy, relative to the exe folder (set by the installers) |
 | `[mods] <id>=0` | turn a mod off |
 
-Each mod's settings are in the `[settings]` section of its `mod.ini`; every key is
-documented there and in the feature's guide.
+Each feature's guide names its configuration file. Mods with a separate `config.ini`
+read its `[settings]` first; without that file they read `[settings]` in `mod.ini`.
+The new-account policy uses `sdgo/mods/new_account_profile/config.ini`. The updater
+preserves declared owner configuration files.
 
 ## Troubleshooting
 
@@ -119,7 +151,7 @@ Messages of a particular feature are listed in its guide.
 
 ### Other game builds
 
-A different `GOnline.exe` or `BattleServer.exe` needs its own `sdgo\symbols\<host key>.ini`
+A different `GOnline.exe`, `BattleServer.exe`, `AgentServer.exe` or `WorldServer.exe` needs its own `sdgo\symbols\<host key>.ini`
 with addresses and signatures found for that build; see
 [docs/framework.md](framework.md#symbol-files). Until then the framework loads and does
 nothing.

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "operator_catalog",
+  "title": "副官目录",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "provider": "operators",
+  "description": "副官目录，由配套配置提供内容。",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "enabled",
+      "label": "副官目录功能",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

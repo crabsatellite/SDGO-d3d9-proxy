@@ -1,0 +1,4 @@
+{
+  "context": {"mode": "pve", "outcome": "clear", "human_count": 4, "event_multiplier": "2", "duration_seconds": 180, "bosses_defeated": 1, "difficulty": "normal"},
+  "stats": {"kind": "human", "active_seconds": 180, "minion_kills": 15, "boss_credit": "1", "damage": 8000}
+}

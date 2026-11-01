@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "shop_labels",
+  "title": "商城物品显示",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "provider": "shop",
+  "description": "商城物品显示，由配套配置提供内容。",
+  "settings": [
+    {
+      "id": "showpermanent",
+      "key": "ShowPermanent",
+      "label": "显示永久物品标签",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "showrental",
+      "key": "ShowRental",
+      "label": "显示租赁物品标签",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "useunicodeoverrides",
+      "key": "UseUnicodeOverrides",
+      "label": "使用自定义中文名称",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

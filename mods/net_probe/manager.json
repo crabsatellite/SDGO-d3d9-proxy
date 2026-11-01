@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "net_probe",
+  "title": "网络诊断",
+  "category": "development",
+  "hosts": [
+    "client"
+  ],
+  "description": "仅用于开发诊断。",
+  "settings": [
+    {
+      "id": "max_per_opcode",
+      "key": "MaxPerOpcode",
+      "label": "每个消息最大日志数",
+      "type": "integer",
+      "default": 60,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    {
+      "id": "dump_bytes",
+      "key": "DumpBytes",
+      "label": "每条日志记录字节数",
+      "type": "integer",
+      "default": 64,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 65535
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "通过客户端已验证的网络调用记录有限的消息诊断信息，不作为游戏功能或联机修复启用。"
+}

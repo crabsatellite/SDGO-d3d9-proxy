@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "agent_relay_log_fix",
+  "title": "中继日志修复",
+  "category": "fixes",
+  "hosts": [
+    "agent"
+  ],
+  "description": "修正原生 Agent 的中继日志。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "修正原生 Agent 中继日志格式，不改变中继数据包和账号。"
+}

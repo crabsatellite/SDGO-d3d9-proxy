@@ -29,6 +29,9 @@ if ((Test-Path -LiteralPath $out) -or (Test-Path -LiteralPath $zip)) {
     throw 'Package output already exists; choose another -OutputDir or increment VERSION.'
 }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+$manager = Join-Path $buildRoot 'manager\SDGO Mod Manager.exe'
+if (-not (Test-Path -LiteralPath $manager)) { throw 'Build the unified Mod Manager before packaging' }
+Copy-Item -LiteralPath $manager -Destination $out
 
 # Core files are always present. Only catalog-owned, complete mod payloads enter
 # the archive, so stale build folders cannot silently add features or user files.
@@ -45,7 +48,7 @@ foreach ($tree in @('client','server')) {
 foreach ($mod in $catalog.mods) {
     $relative = "$($mod.target)\sdgo\mods\$($mod.id)"
     $destination = Join-Path $out $relative
-    foreach ($file in @("$($mod.id).dll",'mod.ini') + @($mod.files)) {
+    foreach ($file in @("$($mod.id).dll",'mod.ini') + @($mod.files) + @($mod.runtime_files)) {
         $target = Join-Path $destination $file
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath (Join-Path $stage "$relative\$file") -Destination $target
@@ -75,6 +78,22 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Name -eq 'game-t
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test.py') -Destination (Join-Path $out 'tools')
     foreach ($header in @('sdgo_api.h','game_test.h','pvp_ai_observer.h','pvp_ai_client_observer.h')) {
         Copy-Item -LiteralPath (Join-Path $repo "include\sdgo\$header") -Destination (Join-Path $out 'sdk\include\sdgo')
+    }
+}
+if ($catalog.features.PSObject.Properties.Name -contains 'battle-rewards') {
+    & python (Join-Path $PSScriptRoot 'package_rewards.py') --out (Join-Path $out 'rewards') --binaries (Join-Path $buildRoot $Config) --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Battle reward owner toolkit packaging failed' }
+}
+if ($catalog.features.PSObject.Properties.Name -contains 'collection-capsule') {
+    & python (Join-Path $PSScriptRoot 'package_collection_capsule.py') --out (Join-Path $out 'collection') --stage $stage --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Collection capsule owner toolkit packaging failed' }
+}
+if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
+    $shopDestination=Join-Path $out 'shop'
+    New-Item -ItemType Directory -Path $shopDestination -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'docs\shop-catalog.zh-CN.md') -Destination (Join-Path $shopDestination 'README.zh-CN.md')
+    foreach ($guide in @('shop-testing.zh-CN.md','shop-validation.zh-CN.md','shop-labels.zh-CN.md')) {
+        Copy-Item -LiteralPath (Join-Path $repo "docs\$guide") -Destination $shopDestination
     }
 }
 Add-Type -AssemblyName System.IO.Compression

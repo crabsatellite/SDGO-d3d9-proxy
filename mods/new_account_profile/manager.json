@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "id": "new_account_profile",
+  "title": "新账号默认配置",
+  "category": "fixes",
+  "hosts": [
+    "world"
+  ],
+  "description": "服主为新角色设置的初始内容。",
+  "settings": [
+    {
+      "id": "initial_g_p",
+      "key": "InitialGP",
+      "label": "初始 GB",
+      "type": "integer",
+      "default": 5000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    {
+      "id": "initial_cash",
+      "key": "InitialCash",
+      "label": "初始 MB",
+      "type": "integer",
+      "default": 0,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    {
+      "id": "rank_number",
+      "key": "RankNumber",
+      "label": "初始军衔",
+      "type": "integer",
+      "default": 5,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 15
+    },
+    {
+      "id": "rank_step",
+      "key": "RankStep",
+      "label": "初始军衔子等级",
+      "type": "integer",
+      "default": 1,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 5
+    },
+    {
+      "id": "initial_unit_limit",
+      "key": "InitialUnitLimit",
+      "label": "初始机体数量上限",
+      "type": "integer",
+      "default": 1,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 64
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "在 WorldServer 的账号/角色创建流程应用服主配置的初始货币、军衔和机体上限，保留既有进度，不扫描重置老角色。"
+}

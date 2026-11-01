@@ -11,6 +11,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Configure Win32
+        run: python -m pip install -r manager/requirements-build.txt
+      - name: Configure native framework
         run: cmake -S . -B build -A Win32
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -18,14 +20,26 @@ jobs:
         run: python -m unittest discover -s tests -p "test_frp*.py" -v
       - name: Categorized mod contracts
         run: ctest --test-dir build -C Release --output-on-failure -R "(mod_catalog|catalog_gates|package_catalog)_offline"
+      - name: Unified Manager and contribution disclosure
+        run: ctest --test-dir build -C Release --output-on-failure -R "(mod_manager|pr_ai_disclosure)_offline"
       - name: Framework regressions
         shell: powershell
         run: |
           & tests/loader_test.ps1
           & tests/findwindow_fix_test.ps1
           & tests/install_test.ps1
+      - name: New-account policy
+        run: ctest --test-dir build -C Release --output-on-failure -R "^new_account_policy$"
       - name: AI and staging regressions
-        run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|mod_staging_offline)$"
+        run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|rank_progression_fix_offline|mod_staging_offline)$"
+      - name: Daily reward policy and runtime
+        run: ctest --test-dir build -C Release --output-on-failure -R "^daily_rewards_"
+      - name: Native battle reward integration
+        run: ctest --test-dir build -C Release --output-on-failure -R "^battle_reward_"
+      - name: Room commands and owned random loadouts
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(random|commands)|ai_catalog_provider)_offline"
+      - name: Full room title feature
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(metadata|titles)|title_rules)"
       - name: FRP runtime and installer
         shell: powershell
         run: |

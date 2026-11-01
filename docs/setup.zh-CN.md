@@ -2,7 +2,8 @@
 
 [English](setup.md) · [返回功能分类](../README.zh-CN.md)
 
-先安装基础修复，再选择需要的玩法扩展或联机工具。跨客户端/服务端的功能需要安装配套部分。
+先安装基础修复，再选择需要的玩法扩展或联机工具。按各功能标明的安装位置安装；
+跨客户端/服务端的功能需要配套部分，新账号规则等仅服务端功能不需要玩家安装客户端 Mod。
 
 ## 支持的游戏版本
 
@@ -14,6 +15,7 @@
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | 原生 Agent 中继宿主 |
+| WorldServer.exe | `WorldServer-548A86E3-0010C000` | 原生 World 账号初始化与结算宿主 |
 
 安装脚本会打印你的 exe 的 host key。其它版本也能装，但框架会记录"没有匹配的 symbol 文件"并关闭所有
 mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
@@ -21,10 +23,10 @@ mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
 ## 安装
 
 需要 Windows 自带的 Windows PowerShell 5.1，不需要 VC++ 运行库。从
-[最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest)下载 `SDGO-ModFramework-<版本>.zip`，
+[最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)下载 `SDGO-ModFramework-<版本>.zip`，
 解压后在解压目录打开 PowerShell。
 
-### 客户端（每个玩家）
+### 客户端（需要客户端组件的功能）
 
 先关闭游戏，然后：
 
@@ -72,6 +74,27 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 
 默认角色仍为 Battle。服主和玩家的配置分发见 [FRP 分发指南](frp-distribution.zh-CN.md)。
 
+### World 服务器
+
+WorldServer 基础修复使用同一安装器的 `-Role World`，先停止目标 WorldServer：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
+```
+
+当前 master 构建的 Base 和 Full 包均包含默认启用的[新账号规则](new-account-profile.zh-CN.md)和
+[军衔修复](rank-progression-fix.zh-CN.md)，两者都无需客户端组件。每套独立 World 实例分别安装，
+装完重启 World，并在 `sdgo/logs/sdgo.log` 确认 `loaded` 与新账号的 `new-account defaults active` 记录。
+若下载的发布包中还没有 `server/sdgo/mods/new_account_profile/`，请按[源码构建说明](#从源码构建)生成新包。
+
+新账号默认 5,000 GP、0 点券、下士 1 阶，首次建档的自动机体赠送最多一台。
+配置位于 `sdgo/mods/new_account_profile/config.ini`，可从同目录的 `config.example.ini` 复制创建；
+修改后重启 World。`InitialUnitLimit=0` 只取消这部分自动赠送，不限制正常初始机体选择和后续获得机体。
+已有角色与机库不重置，测试时请使用全新账号；详细步骤见[手动验收](new-account-profile.zh-CN.md#手动验收)。
+
+只停用新账号规则时，在 World 的 `sdgo/sdgo.ini` 的 `[mods]` 段设置 `new_account_profile=0` 并重启；
+不要为此卸载整个框架。卸载整个 World 框架时才使用 `-Role World -Uninstall`。
+
 ## 卸载
 
 ```powershell
@@ -92,7 +115,12 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 | `[loader] chain_d3d9` / `chain_winmm` | 代替系统副本转发到的另一个 DLL，相对 exe 目录（安装脚本自动设置） |
 | `[mods] <id>=0` | 关闭某个 mod |
 
-各 mod 的设置在其 `mod.ini` 的 `[settings]`，每项都有注释，功能说明里也有列表。
+各 Mod 的配置位置见功能说明。使用独立 `config.ini` 的 Mod 会优先读取其中的 `[settings]`；
+没有该文件时读取 `mod.ini` 的 `[settings]`。新账号规则使用
+`sdgo/mods/new_account_profile/config.ini`；服主自己的配置文件由更新器保留。
+每局随机机体由服主在 `room_random/config.ini` 配置现有 WorldServer INI 的路径后启用，
+玩家使用原客户端，在房名加入 `!rand`；可与 `!ai` 组合。
+见[每局随机机体](room-random.zh-CN.md)及[房名组合指令](room-commands.zh-CN.md)。
 
 ## 排错
 
@@ -109,7 +137,7 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 
 ### 其它游戏版本
 
-其它版本的 `GOnline.exe` / `BattleServer.exe` 需要为该版本新增 `sdgo\symbols\<host key>.ini`
+其它版本的 `GOnline.exe`、`BattleServer.exe`、`AgentServer.exe` 或 `WorldServer.exe` 需要新增对应的 `sdgo\symbols\<host key>.ini`
 （见 [docs/framework.md](framework.md#symbol-files)），在此之前框架会加载但什么都不做。
 
 ## 从源码构建

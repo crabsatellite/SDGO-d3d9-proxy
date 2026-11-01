@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "battle_rewards",
+  "title": "Battle contribution rewards (Beta)",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "description": "配置战斗贡献奖励并发布给配套服务器。",
+  "settings": [
+    {
+      "id": "runtime_directory",
+      "key": "RuntimeDirectory",
+      "label": "奖励运行目录",
+      "type": "string",
+      "default": "",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "instance_id",
+      "key": "InstanceId",
+      "label": "服务器实例标识",
+      "type": "string",
+      "default": "",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "trace",
+      "key": "Trace",
+      "label": "诊断日志",
+      "type": "boolean",
+      "default": false,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable",
+  "provider": "rewards",
+  "mechanism": "从原生最终结算捕获真实参战统计计算贡献奖励；GB 沿原通路，MB 经持久队列和原生钱包过程按回执去重。Manager 发布策略并读取真实运行心跳。"
+}
