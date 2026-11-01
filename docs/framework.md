@@ -240,8 +240,10 @@ whitespace-separated `!command` has its own argument span, ending before the nex
 such as `!ai3` require `SDGO_ROOM_COMMAND_ALLOW_COUNT`. The first valid matching
 command wins. The parser does not modify titles or install hooks. This lets mods
 compose `!rand !ai3 lv4` in either order without consuming each other's options.
-AI options must stay inside the `!ai` span; the native 20-byte limit remains.
-See [the composition guide](room-commands.zh-CN.md) for examples.
+AI options must stay inside the `!ai` span. Native room fields remain 20 bytes; optional
+[extended titles](room-titles.md) provide the confirmed full UTF-8 title to updated consumers
+through `sdgo/room_titles.h`. The command parser itself does not enlarge native fields.
+See [the composition guide](room-commands.md) for examples.
 
 `HookCode` hooks made while the mods load are switched on together right after the last mod
 has loaded (`core: N code hooks switched on`), before the host's own code runs; `original`

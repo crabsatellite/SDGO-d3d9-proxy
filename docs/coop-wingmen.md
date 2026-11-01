@@ -20,7 +20,7 @@ Players without the client part do not see the wingmen.
 
 ## Use
 
-Put a command in the co-op mission room title (the title holds 20 bytes):
+Put a command in the co-op mission room title:
 
 | title | effect |
 |---|---|
@@ -46,6 +46,17 @@ Put a command in the co-op mission room title (the title holds 20 bytes):
   Without `lvN` the room uses `DefaultLevel` (2).
 * Mission enemies normally only target human players; the client mod lets an enemy switch
   to a wingman that is closer than its current target (`EnemiesTargetWingmen`).
+
+## Longer names and combined commands
+
+With the [extended-title client, Agent and Battle Mods](room-titles.md) enabled and an updated
+`coop_ai`, commands are read from the full title, up to 128 Unicode scalars / 512 UTF-8 bytes.
+For example, `Weekend mission with friends !ai3 lv4 !rand` requests level-4 wingmen and,
+when `room_random` is installed and enabled, randomizes the humans each round.
+Existing free-slot limits and `mission_ai` client requirements still apply.
+Keep `lv4` inside the `!ai` argument span, before `!rand`.
+Without the title extension, the native limit remains 20 bytes.
+See [combined commands](room-commands.md) for both mission and PvP examples.
 
 ## Settings
 

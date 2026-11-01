@@ -40,7 +40,7 @@ Updated `coop_ai`, `pvp_ai` and `room_random` read the confirmed full title thro
 an optional process-local provider. Their existing command grammar and settings
 remain in force: `!ai e2 a1 lv4 !rand` composes normally, including after byte 20.
 Text alone does not implement additional game rules. Without the provider they
-continue to read native titles. See [combined commands](room-commands.zh-CN.md).
+continue to read native titles. See [combined commands](room-commands.md).
 Update these consuming Mods with the same full framework package when using
 long rules; an older AI/random DLL still has its original 20-byte reader.
 Selecting only `room-titles` in the publisher's feature filter includes the
