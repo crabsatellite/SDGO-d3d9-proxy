@@ -122,6 +122,8 @@ sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES 
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta)"
+             SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -167,6 +169,12 @@ sdgo_strict(net_route_conflict_mod)
 add_executable(agent_udp_pool_test tests/agent_udp_pool_test.cpp)
 target_link_libraries(agent_udp_pool_test PRIVATE sdgo_api ws2_32)
 sdgo_strict(agent_udp_pool_test)
+add_executable(daily_rewards_policy_test tests/daily_rewards_policy_test.cpp)
+target_link_libraries(daily_rewards_policy_test PRIVATE sdgo_api)
+sdgo_strict(daily_rewards_policy_test)
+add_executable(daily_rewards_runtime_test tests/daily_rewards_runtime_test.cpp)
+target_link_libraries(daily_rewards_runtime_test PRIVATE sdgo_api)
+sdgo_strict(daily_rewards_runtime_test)
 
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.

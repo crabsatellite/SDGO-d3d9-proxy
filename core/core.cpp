@@ -152,6 +152,19 @@ namespace
         return 1;
     }
 
+    int Api_HookSite(SdgoMod* mod, const char* name, void* detour, void** original)
+    {
+        const sdgo::Symbol* symbol = VerifiedSymbol(mod, name, "site");
+        if (!symbol || !mod) return 0;
+        std::string error;
+        if (!sdgo::hooks::HookCode(mod->id, reinterpret_cast<void*>(symbol->address), detour, original, error, true)) {
+            sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "hook site %s failed: %s", name, error.c_str());
+            return 0;
+        }
+        sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "hooked site %s", name);
+        return 1;
+    }
+
     int Api_HookSlot(SdgoMod* mod, const char* name, void* detour, void** original)
     {
         const sdgo::Symbol* symbol = VerifiedSymbol(mod, name, "slot");
@@ -405,6 +418,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.SettingString = Api_SettingString;
     g_api.ModDirectory = Api_ModDirectory;
     g_api.HookSystemExport = Api_HookSystemExport;
+    g_api.HookSite = Api_HookSite;
 
     LoadMods();
     size_t active = 0;

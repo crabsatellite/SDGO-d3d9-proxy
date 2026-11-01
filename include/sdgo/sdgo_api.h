@@ -81,6 +81,13 @@ typedef struct SdgoApi {
      * Optional API 1 extension: check size before reading this field. */
     int (*HookSystemExport)(SdgoMod* mod, const wchar_t* dll, const char* function,
                             void* detour, void** original);
+
+    /* Inline detour at a verified kind=site instruction boundary. There is no
+     * function-call ABI at a site: the detour must preserve all live registers,
+     * flags, stack and floating-point/SIMD state, then jump to the trampoline.
+     * Same queued activation, ownership and rollback as HookCode. Optional API
+     * 1 extension: check size before reading this field. */
+    int (*HookSite)(SdgoMod* mod, const char* name, void* detour, void** original);
 } SdgoApi;
 
 /* Every mod DLL exports this. Return nonzero when the mod is active. */
