@@ -235,7 +235,10 @@ def merge_symbols(existing, source, role, stamp, size):
 
 
 def install(overlay, role, source, catalog, host_exe=None):
-    from ai_catalog import HEADER, MAGIC, RECORD, fnv
+    try:
+        from .ai_catalog import HEADER, MAGIC, RECORD, fnv
+    except ImportError:
+        from ai_catalog import HEADER, MAGIC, RECORD, fnv
     executable = overlay.root / (host_exe or HOSTS[role][0])
     if executable.parent != overlay.root or executable.suffix.lower() != ".exe":
         raise ValueError("host-exe must be an executable basename")

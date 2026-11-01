@@ -29,6 +29,9 @@ if ((Test-Path -LiteralPath $out) -or (Test-Path -LiteralPath $zip)) {
     throw 'Package output already exists; choose another -OutputDir or increment VERSION.'
 }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+$manager = Join-Path $buildRoot 'manager\SDGO Mod Manager.exe'
+if (-not (Test-Path -LiteralPath $manager)) { throw 'Build the unified Mod Manager before packaging' }
+Copy-Item -LiteralPath $manager -Destination $out
 
 # Core files are always present. Only catalog-owned, complete mod payloads enter
 # the archive, so stale build folders cannot silently add features or user files.
@@ -70,40 +73,32 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
     & python (Join-Path $PSScriptRoot 'package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'FRP toolkit packaging failed' }
 }
+if (@($catalog.features.PSObject.Properties | Where-Object { $_.Name -eq 'game-test' }).Count) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools'), (Join-Path $out 'sdk\include\sdgo') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test.py') -Destination (Join-Path $out 'tools')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test_record.py') -Destination (Join-Path $out 'tools')
+    Copy-Item -LiteralPath (Join-Path $buildRoot "$Config\game_test_audio.exe") -Destination (Join-Path $out 'tools')
+    foreach ($header in @('sdgo_api.h','game_test.h','pvp_ai_observer.h','pvp_ai_client_observer.h')) {
+        Copy-Item -LiteralPath (Join-Path $repo "include\sdgo\$header") -Destination (Join-Path $out 'sdk\include\sdgo')
+    }
+}
 if ($catalog.features.PSObject.Properties.Name -contains 'battle-rewards') {
     & python (Join-Path $PSScriptRoot 'package_rewards.py') --out (Join-Path $out 'rewards') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'Battle reward owner toolkit packaging failed' }
 }
+if ($catalog.features.PSObject.Properties.Name -contains 'collection-capsule') {
+    & python (Join-Path $PSScriptRoot 'package_collection_capsule.py') --out (Join-Path $out 'collection') --stage $stage --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Collection capsule owner toolkit packaging failed' }
+}
 if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
     $shopDestination=Join-Path $out 'shop'
     New-Item -ItemType Directory -Path $shopDestination -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $buildRoot 'shop-ui\SdgoShopManager.exe') -Destination $shopDestination
     Copy-Item -LiteralPath (Join-Path $repo 'docs\shop-catalog.zh-CN.md') -Destination (Join-Path $shopDestination 'README.zh-CN.md')
     foreach ($guide in @('shop-testing.zh-CN.md','shop-validation.zh-CN.md','shop-labels.zh-CN.md')) {
         Copy-Item -LiteralPath (Join-Path $repo "docs\$guide") -Destination $shopDestination
     }
 }
 Add-Type -AssemblyName System.IO.Compression
-if ($catalog.features.PSObject.Properties.Name -contains 'operator-assistant') {
-    New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools') | Out-Null
-    foreach ($helper in @('mod_assistant.py','operator_snapshot.py','Install-Operator.ps1','Start-Assistant.ps1','Initialize-OperatorDefaults.py','requirements-operator-assistant.txt')) {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $helper) -Destination (Join-Path $out 'tools')
-    }
-    $operatorTools=Join-Path $out 'tools\assistant_modules\operators'
-    New-Item -ItemType Directory -Force -Path $operatorTools | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assistant_modules\__init__.py') -Destination (Join-Path $out 'tools\assistant_modules')
-    foreach ($file in @('__init__.py','assets.py','model.py','presets.py','server.py','workspace.py','ui.html')) {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assistant_modules\operators\$file") -Destination $operatorTools
-    }
-    $operatorData=Join-Path $out 'assistant_module\operator_catalog'
-    New-Item -ItemType Directory -Force -Path (Join-Path $operatorData 'server') | Out-Null
-    foreach ($file in @('mod.ini','symbols.fragment.ini','module.json','display.example.ini')) {
-        Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\$file") -Destination $operatorData
-    }
-    foreach ($file in @('schema.sql','random.sql','drop.sql','free.sql','naming.sql')) {
-        Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\server\$file") -Destination (Join-Path $operatorData 'server')
-    }
-}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {

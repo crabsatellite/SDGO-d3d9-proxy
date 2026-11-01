@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "capsule_price_probe",
+  "title": "扭蛋价格诊断",
+  "category": "development",
+  "hosts": [
+    "client"
+  ],
+  "provider": "capsules",
+  "description": "扭蛋价格诊断，由配套配置提供内容。",
+  "settings": [],
+  "presentation": "configurable"
+}

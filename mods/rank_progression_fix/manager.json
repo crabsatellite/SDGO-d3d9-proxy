@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "rank_progression_fix",
+  "title": "军衔回退修复",
+  "category": "fixes",
+  "hosts": [
+    "world"
+  ],
+  "description": "防止战斗结算错误降低已有军衔。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "WorldServer 在两条精确匹配的战斗经验结算调用前，借用原生 OLE DB 会话，生成 Mod 自己 schema 下的过程副本并修正军衔比较。原生 dbo 定义不由 Mod 改写；历史独立修复需按部署回执另行核对。"
+}

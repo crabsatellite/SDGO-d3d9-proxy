@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "mission_ai",
+  "title": "任务 AI 队友 · 客户端",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "在任务房名中添加 !ai 请求 AI 队友，需要配套服务器支持。",
+  "settings": [
+    {
+      "id": "enemies_target_wingmen",
+      "key": "EnemiesTargetWingmen",
+      "label": "敌人可以攻击 AI 队友",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload"
+    },
+    {
+      "id": "enemy_aggro_range",
+      "key": "EnemyAggroRange",
+      "label": "敌人索敌距离",
+      "type": "integer",
+      "default": 2500,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "hot_reload",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    {
+      "id": "log_combat",
+      "key": "LogCombat",
+      "label": "记录 AI 战斗日志",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "hot_reload"
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "客户端在任务模式生成并更新 AI 队友，使用原生机体和 AI 行为；对应服务端由 coop_ai 添加真实 AI 席位。部分脚本参数支持运行中重新读取。"
+}

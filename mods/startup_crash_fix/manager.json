@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "startup_crash_fix",
+  "title": "启动崩溃修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "description": "避免部分缺失机体导致启动读取界面崩溃。",
+  "settings": [],
+  "presentation": "automatic_fix",
+  "mechanism": "在已验证的启动加载逻辑中跳过缺失机体引用，不改写原生游戏 EXE。"
+}

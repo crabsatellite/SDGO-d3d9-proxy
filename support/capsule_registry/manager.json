@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "capsule_catalog",
+  "title": "扭蛋机目录",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "provider": "capsules",
+  "description": "共享普通机台、自定义机台和收藏扭蛋资源。收藏玩法的构建和分发请用收藏扭蛋面板。",
+  "settings": [],
+  "presentation": "configurable"
+}

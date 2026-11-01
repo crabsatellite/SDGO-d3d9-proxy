@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "ai_catalog",
+  "title": "AI 机体清单",
+  "category": "gameplay",
+  "hosts": [
+    "battle",
+    "client"
+  ],
+  "description": "使用配套的 AI 机体清单。",
+  "settings": [],
+  "presentation": "configurable",
+  "provider": "ai_catalog",
+  "mechanism": "服主生成相同的客户端和 Battle 机体目录；运行时只扩展进程内表和机体池，不重写原始游戏档案或数据库原表。"
+}

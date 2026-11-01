@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="182" height="108" viewBox="0 0 182 108">
+  <rect width="182" height="108" rx="7" fill="#101b2b"/>
+  <rect x="3" y="3" width="176" height="102" rx="5" fill="none" stroke="#50d8d0" stroke-width="2"/>
+  <path d="M8 28H174M8 82H174" stroke="#28495d"/>
+  <g fill="#d6f7f3" font-family="Arial,sans-serif" text-anchor="middle">
+    <text x="91" y="20" font-size="13" font-weight="bold">COLLECTION</text>
+    <text x="91" y="76" font-size="9">NEW UNIT / BASE FORM</text>
+  </g>
+  <rect x="72" y="34" width="38" height="30" rx="14" fill="#193c50" stroke="#50d8d0" stroke-width="2"/>
+  <path d="M73 49H109" stroke="#50d8d0"/>
+  <circle cx="91" cy="49" r="10" fill="#101b2b"/>
+  <text x="91" y="55" fill="#ffffff" font-family="Arial,sans-serif" font-size="18" text-anchor="middle">?</text>
+  <text x="91" y="97" fill="#f4ce72" font-family="Arial,sans-serif" font-size="12" font-weight="bold" text-anchor="middle">100,000 GP</text>
+  <text x="173" y="79" fill="#73949e" font-family="Arial,sans-serif" font-size="5" text-anchor="end">PLACEHOLDER</text>
+</svg>

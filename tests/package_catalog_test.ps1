@@ -64,7 +64,7 @@ try {
     Check-Package $operatorZip ($baseMods + @('operator_catalog'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
     try {
-        foreach ($required in @('tools/Start-Assistant.ps1','tools/Initialize-OperatorDefaults.py','tools/assistant_modules/operators/presets.py','tools/assistant_modules/operators/ui.html','assistant_module/operator_catalog/server/free.sql','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+        foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
             if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
         }
         foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
@@ -79,27 +79,54 @@ try {
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
     try {
-        foreach ($required in @('rewards/tools/install_battle_rewards.py','rewards/tools/Start-Battle-Rewards.ps1','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
+        foreach ($required in @('SDGO Mod Manager.exe','rewards/tools/install_battle_rewards.py','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
             if (-not $rewardArchive.GetEntry($required)) { throw "Selected reward package lacks $required" }
         }
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
+    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager','collection_capsule','game_test_client','game_test_server'))
+    $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
+    Check-Package $dailyZip ($baseMods + @('daily_rewards'))
+    $dailyFolder = Join-Path $work 'daily-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($dailyZip, $dailyFolder)
+    $dailyServer = Join-Path $work 'daily-server'
+    New-FakeExe (Join-Path $dailyServer 'BattleServer.exe') 0x548A891D 0x0046C000
+    $dailyInstaller = Join-Path $dailyFolder 'install_server.ps1'
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Daily reward installer failed: $output" }
+    $dailyConfig = Join-Path $dailyServer 'sdgo\mods\daily_rewards\config.ini'
+    $ownerSchedule = "[settings]`r`nStartTime=20:30`r`nEndTime=01:15`r`nTrace=0"
+    [IO.File]::WriteAllText($dailyConfig, $ownerSchedule)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllText($dailyConfig) -cne $ownerSchedule) {
+        throw "Daily reward update lost the owner's time-window configuration: $output"
+    }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
-        foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
+        foreach ($required in @('collection/tools/collection_capsule.py','collection/owner/collection_capsule/native_catalog.py','collection/framework/support/capsule-registry/capsule_catalog.dll','collection/SHA256.json')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "Full package lost collection owner component: $required" }
+        }
+        foreach ($required in @('SDGO Mod Manager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
         }
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
-        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1')) {
+        foreach ($required in @('tools/game_test.py','tools/game_test_record.py','tools/game_test_audio.exe','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "GameTest package lacks $required" }
+        }
+        foreach ($relative in @('client/sdgo/mods/game_test_client/mod.ini','server/sdgo/mods/game_test_server/mod.ini')) {
+            $manifestReader = New-Object IO.StreamReader ($fullArchive.GetEntry($relative).Open())
+            try { $manifestText = $manifestReader.ReadToEnd() } finally { $manifestReader.Dispose() }
+            if ($manifestText -notmatch '(?m)^enabled=0\s*$') { throw "GameTest must ship disabled: $relative" }
+        }
+        if ($fullArchive.Entries.FullName -match 'private/account\.ini|gametest/run\.ini|real-native-') { throw 'Private runtime files entered the package' }
+        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('SDGO Mod Manager.exe')) {
             throw 'Full package lost the complete reward owner toolkit'
         }
-        if (-not $fullArchive.GetEntry('tools/Start-Assistant.ps1') -or -not $fullArchive.GetEntry('assistant_module/operator_catalog/server/schema.sql')) {
-            throw 'Full package lost the operator owner assistant or SQL adapter'
-        }
+        if ($fullArchive.GetEntry('rewards/tools/reward_assistant.py') -or $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1') -or $fullArchive.GetEntry('rewards/tools/assistant_modules/rewards/ui.html')) { throw 'Retired reward UI leaked into the unified package' }
+        if ($fullArchive.GetEntry('tools/Start-Assistant.ps1') -or $fullArchive.GetEntry('shop/SdgoShopManager.exe')) { throw 'Retired per-feature entry entered the package' }
     } finally { $fullArchive.Dispose() }
 
     $baseFolder = Join-Path $work 'base-unpacked'; $customFolder = Join-Path $work 'custom-unpacked'
@@ -180,7 +207,7 @@ try {
     }
     if ([IO.File]::ReadAllText((Join-Path $world 'sdgo\mods\shop_catalog\mod.ini')) -notmatch '(?m)^enabled=0\s*$') { throw 'An unconfigured shop catalog must remain disabled' }
     $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
-    if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
+    if (($rankFiles -join ',') -ne 'manager.json,mod.ini,rank_progression_fix.dll') { throw 'Rank repair is missing its unified Manager registration' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'
 } finally {
     # Only remove the exact files this fixture introduced in the staged build.

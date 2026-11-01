@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "room_titles_agent",
+  "title": "长房名 · Agent",
+  "category": "gameplay",
+  "hosts": [
+    "agent"
+  ],
+  "description": "传递完整房名，需要客户端与对战服务器配套。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "Agent 转发并核对完整房名元数据，需客户端和 Battle 组件版本配套，关闭后恢复原生短房名流程。"
+}

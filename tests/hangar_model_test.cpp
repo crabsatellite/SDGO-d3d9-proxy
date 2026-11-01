@@ -71,5 +71,13 @@ int main() {
         auto p=Duplicates(s,rules,2,Kind::GB,false);Runner r;r.Start(p,s);s.units[0].full[45]=1;assert(!r.Next(s));
         s.units[0].full[45]=0;r.Start(p,s);s.units[0].lock=1;assert(!r.Next(s));
     }
+    {
+        auto before=Base();before.units={Make(1,10,1),Make(2,10,2)};
+        assert(SamePreview(before,before));auto changed=before;
+        changed.units[0].lock=1;assert(SameLayout(before,changed) && !SamePreview(before,changed));
+        changed=before;changed.activeSlot=2;assert(!SamePreview(before,changed));
+        changed=before;changed.units[0].full[45]=1;assert(!SamePreview(before,changed));
+        changed=before;changed.units[0].fullReady=false;assert(!SamePreview(before,changed));
+    }
     std::cout<<"HANGAR MODEL CONTRACTS PASSED (250 permutations, native packet layouts, protection, confirmation, cancellation, stale state)\n";
 }

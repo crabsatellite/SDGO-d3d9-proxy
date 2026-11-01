@@ -3,9 +3,13 @@
 为 SD敢达 Online 客户端和私服提供基础修复与可选扩展。所有 Mod 共用版本校验、加载、配置和更新框架。
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
+**统一入口：[SDGO Mod Manager](docs/mod-manager.zh-CN.md)。** 日常界面支持玩家和服主管理客户端、服务器、
+商城、副官、扭蛋机、奖励与联机；自动 Bug 修复收在归档，内部代号和诊断参数在开发视图展开。
+每个功能可复制 AI 配置说明或 GitHub Bug 报告指令；[修复 PR 必须披露实际使用的模型](docs/contributing.zh-CN.md)。
+
 **先安装基础修复，再按需要选择扩展。** Beta 是功能的发布标记，与分类独立。
 
-[安装与配置](docs/setup.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [开发接口](docs/framework.md)
+[安装与配置](docs/setup.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest) · [开发接口](docs/framework.md)
 
 ## 基础修复
 
@@ -44,12 +48,14 @@
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战；[长房名组合用法](#long-room-title-commands) | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（Beta，独立附加包） | 用服主生成的配套数据扩充 LV1–LV5 机体池，关闭并重启后恢复原池；[长房名组合用法](#long-room-title-commands) | `ai_catalog` | 对战服务器 + 所有参战客户端 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
+| 收藏扭蛋（Beta） | 十万 GP 抽取未曾获得的初始形态；通过 Mod Manager 配置和分发 | `collection_capsule` | World 服务器 + 客户端机台资源 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） | 默认 Medium（Lv12），房名选择三档；Hard EX、协同战术、盾面防御及玩家同规则 SP/部件/道具。需配套 PvP 组件。 | `battle_ai`、`battle_ai_server` | 对战服务器 + 所有玩家 | [使用说明](docs/battle-ai.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格、权重、PNG 头像与互动取景，两端配置配套生成 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
+| 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
@@ -58,10 +64,14 @@
 上传处理好的 PNG 后可拖动、拉角和缩放取景框，预览原生扭蛋卡。AI 恢复单独离线处理；
 编辑器与玩家运行时都不包含 AI 模型或显卡依赖。
 
-进入机库后点击「**整理机库**」「**重复兑换…**」，也可按 **F8** 打开管理窗口。
+进入游戏「**机体管理**」页，在「机体锁定/解除」「机体解体」旁点击「**一键整理**」「**重复兑换**」。
+兑换奖励选择、分页预览、再次确认和停止都在当前游戏页内完成；偏好设置在统一 Mod Manager。
 相同状态的未培养机体默认保留两台，已培养机体不参与兑换；锁定、出击、舰队、租赁和未知状态机体均受保护。
 正常操作由原生回包同步并刷新机库，无需重新登录；结果无法确认时停止批次，提示重新登录。
 真实游戏效果仍需手动验收；安装、预览规则和奖励领取见[机库管理说明](docs/hangar-manager.zh-CN.md)。
+
+每日双倍仅需服主更新对战服务器，玩家沿用现有客户端。配置、关闭和实测步骤见
+[每日双倍教程](docs/daily-rewards.zh-CN.md#手动验收)。
 
 副官管理通过包内 `tools/Start-Assistant.ps1` 打开服主 UI，可修改名称、头像和掉落概率、数量。
 自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官，直接使用固定中文名，免玩家起名；旧记录原位迁移，保留当前装备，其他副官仍可个人命名。
@@ -156,6 +166,8 @@ Medium 保留基础地面走射和解围必杀；Hard 再用高级走位与有�
 |---|---|---|---|---|
 | 发包日志 | 记录发包，辅助协议排错 | `net_probe` | 客户端 | [使用说明](docs/net-probe.md) |
 | 扭蛋价格探针（Experimental） | 只读记录列表价格刷新，默认关闭 | `capsule_price_probe` | 客户端 | [说明](docs/capsule-price-probe.md) |
+
+| GameTest（Experimental） | 在独立的原生游戏实例里运行断言 | `game_test_client`、`game_test_server` | 客户端 + 战斗服务器 | [使用说明](docs/game-test.zh-CN.md) |
 <!-- /mod-category:development -->
 
 ## 安装与使用

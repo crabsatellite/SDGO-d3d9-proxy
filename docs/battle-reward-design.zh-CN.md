@@ -92,36 +92,10 @@ Boss 贡献按实际 HP 损失贡献分配，不只奖励最后一击：两个 B
 这个典型对战胜利的 GB 约为任务的 4.37 倍，MVP 约为 5.46 倍；MB 差距更大。
 这是同条件样本比较，不承诺每种极端任务与每种极端对战都满足固定倍数。
 
-## 辅助入口的接入方式
+## 统一管理入口
 
-新增“战斗奖励”模块，页面 `/rewards`、API `/api/rewards`：
-
-- GET `/api/rewards`：配置、版本号、接入状态和会话 token。
-- POST `/api/rewards/multiplier`：保存基础倍率，要求预期配置版本，避免覆盖另一处修改。
-- POST `/api/rewards/policy`：保存完整规则。
-- POST `/api/rewards/preview`：演算单场明细，可临时试算新倍率而不保存。
-
-已经提供同端口挂载适配器，不改另一条正在开发的辅助主入口文件：
-
-```python
-from owner.rewards.workspace import Workspace
-from assistant_modules.rewards import attach
-
-# 在现有辅助 HTTP server 创建之后、serve_forever 之前调用。
-attach(server, Workspace(owner_workspace / "battle-rewards"))
-```
-
-它保留原有模块路由，并在遵循现有 `json_response` 约定的 `/api/modules` 列表追加奖励入口。
-真实 HTTP 测试验证了同端口挂载、原路由保留、会话 token/Origin 检查和配置版本保护。
-服主可用[部署入口](battle-rewards.zh-CN.md#启动奖励工作器和辅助入口)装配已安装助手的同端口实例，保留原有模块；不对已经运行的 Python 进程做动态修改。
-
-也可以独立打开设计预览，不启动游戏：
-
-```powershell
-python tools/reward_preview.py --workspace build/reward-preview --port 0
-```
-
-控制台会显示实际分配的本机端口。未收到有效原生/钱包心跳时，页面显示“未连接”；服务加载相同配置且钱包健康后才显示已连接。连接中的保存会发布给真实服务，因此请区分试算和保存。
+策略、倍率、结算预览和工作器在 [SDGO Mod Manager](mod-manager.zh-CN.md) 中注册，
+共用本机地址、会话检查和版本冲突检查。旧的独立奖励 HTTP 服务和网页入口已移除。
 
 ## 倍率、双倍与旧十倍的边界
 
@@ -158,8 +132,8 @@ Team 表两人胜利 6,000、四人胜利 6,600；个人击杀和伤害不是这
 
 ```powershell
 python -m unittest discover -s tests -p "test_battle_reward_model.py" -v
-python tools/reward_preview.py --scenario owner/rewards/examples/pvp-mvp.json
-python tools/reward_preview.py --scenario owner/rewards/examples/mission-clear.json
+python -B -m unittest discover -s tests -p "test_battle_reward_http.py" -v
 ```
 
 计算使用精确有理数；连有效时长的 1/3 也不先转浮点数，避免本应是整数的奖励少发一币。
+交互预览使用统一 Manager 的战斗奖励面板。
