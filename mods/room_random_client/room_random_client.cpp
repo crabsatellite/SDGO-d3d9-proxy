@@ -12,8 +12,6 @@ void* g_original=nullptr;
 const DWORD g_defaultMxcsr=0x1F80;
 room_random_client::CacheSync g_sync;
 CRITICAL_SECTION g_lock;
-using FactoryFn=void*(__cdecl*)(int,uint32_t);
-FactoryFn g_factory=nullptr;
 using FillFn=void(__thiscall*)(uint8_t*,uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
 FillFn g_fill=nullptr;
 
@@ -60,17 +58,6 @@ __declspec(naked) void DispatchSite() {
     __asm { popad }
     __asm { popfd }
     __asm { jmp dword ptr [g_original] }
-}
-void* __cdecl Factory(int type,uint32_t model) {
-    void* result=g_factory(type,model);
-    const DWORD error=GetLastError();bool expected=false,tracked=false;
-    if(type==8 || type==15) {
-        EnterCriticalSection(&g_lock);tracked=g_sync.ObserveFactory(model,&expected);LeaveCriticalSection(&g_lock);
-        if(tracked) g_api->Log(g_mod,expected ? SDGO_LOG_INFO : SDGO_LOG_ERROR,
-            "human factory type %d model %lu: %s; native result %s",type,static_cast<unsigned long>(model),
-            expected ? "matches server" : "still the previous model",result ? "created" : "null");
-    }
-    SetLastError(error);return result;
 }
 room_random_client::Construction GuardedConstruction(uint8_t* model,const uint8_t* source,
                                                      const uint8_t* entry,uint8_t deck) {
@@ -120,7 +107,6 @@ SDGO_MOD_ENTRY {
     if(!bindSlots(g_bindings.normal,"normal") || !bindSlots(g_bindings.mission,"mission"))return 0;
     InitializeCriticalSection(&g_lock);
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
-    if(!api->HookCode(mod,"room_random.client_factory",reinterpret_cast<void*>(&Factory),reinterpret_cast<void**>(&g_factory))) return 0;
     if(!api->HookCode(mod,"room_random.client_fill_human",reinterpret_cast<void*>(&FillHuman),reinterpret_cast<void**>(&g_fill))) return 0;
     api->Log(mod,SDGO_LOG_INFO,"native loadout notices update room caches and matching human construction snapshots; no client configuration");
     return 1;

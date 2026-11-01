@@ -27,8 +27,11 @@ commands. Client 0.1.8 updated the visible 3D cache, but live testing still crea
 the old model from a separate pre-start snapshot. Client 0.1.9 also supplies the
 shared native human converter with a private complete source matched to this
 round's start entry and owner. It preserves unit UIDs, skills, appearance and full
-decks without overwriting the frozen snapshot. Construction and human-factory
-logs support manual acceptance. Failed starts and teardown restore originals.
+decks without overwriting the frozen snapshot. Failed starts and teardown restore originals.
+The mission retest confirmed a changed controlled unit, matching the server and
+native factory logs. Client 0.1.10 removes that temporary factory observer; the
+functional dispatch and human-construction hooks remain. Full PvP, multiplayer,
+respawn and reward-persistence acceptance is still pending.
 
 Server 0.1.7 also retires stale bookkeeping when a disconnect/abort skipped the
 resource-release callback. It requires the native setup's cleared human pilot
@@ -52,7 +55,8 @@ deck leaves the native source unchanged.
 The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
 executes the actual server model-selection and client cache-copy instructions
 in private fixture memory, without game entry points, imports or networking.
-Full mission/PvP models, weapons, respawn and reward persistence remain manual acceptance.
+Beyond the confirmed mission model change, other modes, weapon/skill fidelity,
+respawn, multiplayer and reward persistence remain manual acceptance.
 The real core/DLL regression also covers frozen mission/PvP sources and complete
 deck conversion. Supply a local client to execute the authenticated native source
 selection and model/attribute projection spans as well:

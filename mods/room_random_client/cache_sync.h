@@ -27,7 +27,7 @@ struct Construction {
 };
 class CacheSync {
     struct Pending {
-        uint32_t owner=0,oldModel=0;
+        uint32_t owner=0;
         bool unit=false,ship=false;
         std::array<uint8_t,0x99> active{};
         std::array<uint8_t,0x2BC> deck{};
@@ -36,7 +36,7 @@ class CacheSync {
     uint32_t key_=0;
     uint8_t* model_=nullptr;
     std::array<Pending,kSlots> pending_{};
-    std::array<uint32_t,kSlots> expected_{},previous_{};
+    std::array<uint32_t,kSlots> expected_{};
     std::array<std::array<uint8_t,0x10F>,kSlots> starts_{};
     std::array<bool,kSlots> constructing_{};
     void Unit(const Context& c,size_t slot,Pending& p) {
@@ -56,7 +56,7 @@ public:
         if(Read<uint16_t>(packet,0)!=opcode) {result.reason=2;return result;}
         const uint32_t key=Read<uint32_t>(c.room,0);
         if(c.room!=room_ || key!=key_ || c.model!=model_) {
-            room_=c.room;key_=key;model_=c.model;pending_={};expected_={};previous_={};constructing_={};
+            room_=c.room;key_=key;model_=c.model;pending_={};expected_={};constructing_={};
         }
         if(opcode==0x0861 || opcode==0x098B) {
             constructing_={};
@@ -67,7 +67,6 @@ public:
             if(p.owner!=owner) p={};
             p.owner=owner;
             if(opcode==0x0861) {
-                p.oldModel=Read<uint32_t>(c.Active(slot),0);
                 std::memcpy(p.active.data(),packet+0x12,p.active.size());p.unit=true;
                 Unit(c,slot,p);result.model=Read<uint32_t>(p.active.data(),0);
             } else {
@@ -76,7 +75,7 @@ public:
             }
             result.applied=1;result.owner=owner;
         } else if(opcode==0x06C3) {
-            expected_={};previous_={};constructing_={};
+            expected_={};constructing_={};
             for(size_t slot=0;slot<kSlots;++slot) {
                 const auto* entry=packet+0x20+slot*0x10F;
                 const uint32_t owner=Read<uint32_t>(entry,0),model=Read<uint32_t>(entry,0x0E);
@@ -92,7 +91,7 @@ public:
                 const auto cached=Read<uint32_t>(c.Active(slot),0);
                 if(cached!=model) {++result.mismatched;result.owner=owner;result.model=model;result.cached=cached;}
                 else if(!result.mismatched) {result.owner=owner;result.model=model;result.cached=cached;}
-                expected_[slot]=model;previous_[slot]=p.oldModel;
+                expected_[slot]=model;
             }
         }
         return result;
@@ -127,11 +126,6 @@ public:
             out.applied=true;return out;
         }
         return out;
-    }
-    bool ObserveFactory(uint32_t model,bool* expected) const {
-        for(size_t i=0;i<kSlots;++i) if(expected_[i] && model==expected_[i]) {*expected=true;return true;}
-        for(size_t i=0;i<kSlots;++i) if(expected_[i] && model==previous_[i]) {*expected=false;return true;}
-        return false;
     }
 };
 }

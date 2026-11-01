@@ -116,7 +116,6 @@ void Symbols() {
     Symbol(f,"test.dispatch.entry",reinterpret_cast<void*>(&NativeDispatch),"code");
     Symbol(f,"room_random.client_dispatch",reinterpret_cast<const uint8_t*>(&NativeDispatch)+5,"site");
     Symbol(f,"room_random.client_profile",&profilePointer,"data");
-    Symbol(f,"room_random.client_factory",reinterpret_cast<void*>(&NativeFactory),"code");
     Symbol(f,"room_random.client_fill_human",reinterpret_cast<void*>(&NativeFill),"code");
     Symbol(f,"room_random.client_app",&appPointer,"data");
     Symbol(f,"room_random.client_waitroom_vtable",ownerVtable.data(),"data");

@@ -83,10 +83,23 @@ callbacks and other game setup; complete UIDs/skill/appearance preservation is
 checked on the supplied full record, not inferred from those projection spans.
 Passing these checks still does not establish live gameplay acceptance.
 
+The 0.1.9 manual mission retest succeeded: the user confirmed a changed controlled
+unit. Server selection and native factory both recorded model 11044; the final
+human construction log recorded the frozen source changing from 11016 to 11044.
+Client 0.1.10 removes the temporary global factory observer and its symbol/state.
+The functional dispatch and final-construction hooks remain covered by the real
+core/DLL and native-instruction regressions. PvP, multiple clients, respawn and
+reward-persistence acceptance remain separate and have not been claimed passed.
+
 The reported post-round Korean notice says the equipped skill part has been
 fully consumed and asks the player to equip a new skill. Its appearance alone
 does not establish which unit was charged, nor identify the transient start
 notice. Do not suppress consumption or alter owned records to hide that popup.
+The temporary existing `match_ai.LogErrors` diagnostic subsequently captured
+4509 (`ERR_WAITTEAM_IN_BATTLE`) during start, before successful human construction.
+It identifies an in-battle room-change rejection on the queued room path; this
+is separate from the post-round skill-part notice. Restore the diagnostic setting
+after retaining the narrow evidence; do not ship an enabled debug configuration.
 
 The subsequent re-entry test exposed a separate server lifecycle failure:
 `previous battle has not released its loadouts`. Resource release is not a

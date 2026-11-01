@@ -52,11 +52,11 @@ def main():
         'Read docs/room-random.zh-CN.md before installing into a STOPPED BattleServer.\n'
         'tools/install_room_random.ps1 -ServerRoot <one server folder> -DatabaseIni <host WorldServer.ini>\n'
         'No game executable, account data, database password, or private configuration is included.\n'
-        'Live gameplay/multiplayer acceptance is pending manual testing. No public release.\n'
+        'One mission controlled-model retest passed; broader mode/multiplayer/reward acceptance remains pending. No public release.\n'
     ).encode('utf-8')
     revision=subprocess.run(['git','rev-parse','HEAD'],cwd=repo,capture_output=True,text=True,check=True).stdout.strip()
     manifest={'schema_version':1,'version':version,'server_component_version':server_version,'client_component_version':client_config['mod']['version'],'source_commit':revision,
-        'status':'preview; manual gameplay acceptance pending',
+        'status':'beta preview; one mission controlled-model retest passed; broader acceptance pending',
         'supported_host':'BattleServer-548A891D-0046C000',
         'supported_host_sha256':'f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4',
         'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in payload.items()}}

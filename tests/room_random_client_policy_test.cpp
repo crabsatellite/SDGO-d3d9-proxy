@@ -30,8 +30,6 @@ int main() {
     Put<uint32_t>(room.data(),0x57C,15019); // a pending old UI command ran late
     auto result=sync.Process(c,0x06C3,start.data());
     Check(result.applied==1 && !result.mismatched && Read<uint32_t>(room.data(),0x57C)==11032,"start boundary reapplies the full pending record before native construction");
-    bool expected=false;Check(sync.ObserveFactory(11032,&expected)&&expected,"native factory can report the authoritative model");
-    Check(sync.ObserveFactory(15019,&expected)&&!expected,"native factory can detect an old cached model");
     room[5]=7;std::array<uint8_t,0x2BC> ship{};
     Put<uint64_t>(ship.data(),0x1C,0x123456789ABCuLL);Put<uint64_t>(ship.data(),0x34,0x123456789ABCuLL);
     Put<uint32_t>(ship.data(),0x58,11032);
