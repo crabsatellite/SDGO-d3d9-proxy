@@ -20,7 +20,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Output is staged as two trees that mirror the install targets:
 #   stage/<config>/client/  -> the game folder (next to GOnline.exe): d3d9.dll, sdgo/...
-#   stage/<config>/server/  -> each battle server folder (next to BattleServer.exe): winmm.dll, sdgo/...
+#   stage/<config>/server/  -> Battle/Agent/World host folders: winmm.dll, sdgo/...
 # tools/install_client.ps1 / install_server.ps1 copy them; tools/package.ps1 zips a release.
 set(SDGO_STAGE "${CMAKE_BINARY_DIR}/stage/$<CONFIG>")
 
@@ -73,7 +73,7 @@ add_library(winmm_shim SHARED loader/winmm/winmm_shim.cpp loader/winmm/winmm.def
 set_target_properties(winmm_shim PROPERTIES OUTPUT_NAME winmm)
 target_link_libraries(winmm_shim PRIVATE early_boot)
 sdgo_strict(winmm_shim)
-sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (battle server)")
+sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (server)")
 sdgo_stage(winmm_shim "server")
 
 # ---- core: sdgo/core.dll ----------------------------------------------------------
@@ -126,6 +126,8 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
+             SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -185,6 +187,14 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(rank_progression_fix_test tests/rank_progression_fix_test.cpp)
+    target_link_libraries(rank_progression_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(rank_progression_fix_test)
+    add_test(NAME rank_progression_fix_offline COMMAND rank_progression_fix_test)
+    set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
+    add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
+    target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(rank_progression_db_test)
     add_library(ai_catalog_provider_fixture SHARED tests/ai_catalog_provider_fixture.cpp)
     set_target_properties(ai_catalog_provider_fixture PROPERTIES OUTPUT_NAME ai_catalog
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/provider_fixture/$<CONFIG>/ai_catalog")
