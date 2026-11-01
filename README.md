@@ -49,6 +49,7 @@ and random-unit gameplay belong in this category.
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
+| Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 <!-- /mod-category:gameplay -->
 
 In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
@@ -58,6 +59,15 @@ Successful native operations
 update the visible hangar without relogging; an unconfirmed result stops the batch
 and requires relogging. Real-game acceptance remains manual. See the
 [hangar guide](docs/hangar-manager.md) for installation, preview rules and reward handling.
+
+Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
+names, portraits and drop probabilities/amounts. Five permanent free support officers
+cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
+holdings migrate in place, preserving equipped references and personal nicknames.
+The owner applies server rules and distributes a matching client update; players
+keep their normal launcher. The module registers products for the storefront to
+price and list. In-game display, claiming and settlement still need manual acceptance.
+See the [configuration and migration guide](docs/operator-assistant.md).
 
 The AI catalog is a separate, default-off addon; Base/Full framework packages do
 not install it. The owner generates `catalog.bin` from their database catalog and
@@ -116,8 +126,21 @@ gameplay. The package's feature directory lists the tools actually included.
 ## Reward rules and verification
 
 [Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
-settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
-contains the approved values and offline calculator. Real account combat, HUD and
+settlement and the owner wallet worker. Owners change the GB/MB base multiplier
+at `/rewards`; players keep their normal client and launcher. Kills, effective
+damage, assists, mission minions and Boss contribution affect payouts, and PvP
+MVP earns additional MB. AI matches use the same PvP tier. Each extra qualifying
+human multiplies rewards by another `1.1`, together with double time: base ten,
+double time and four humans give `10 × 2 × 1.1³ = 26.62`.
+
+Use the full package's `rewards/` toolkit to install every participating
+BattleServer with one shared owner workspace, then run
+`tools/Start-Battle-Rewards.ps1` for the wallet worker and assistant. It can mount
+the installed operator assistant on the same port while preserving its modules;
+closing the browser does not stop the worker. Stop each target BattleServer for
+installation and restart it afterward; later multiplier changes are hot-loaded.
+See [installation, startup and recovery](docs/battle-rewards.md) and the
+[full reward rules](docs/battle-reward-design.md). Real account combat, HUD and
 reconnect acceptance remain manual; installation keeps existing unrelated state.
 
 ## Developer tools

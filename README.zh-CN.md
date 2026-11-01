@@ -45,12 +45,18 @@
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 进入机库后点击「**整理机库**」「**重复兑换…**」，也可按 **F8** 打开管理窗口。
 相同状态的未培养机体默认保留两台，已培养机体不参与兑换；锁定、出击、舰队、租赁和未知状态机体均受保护。
 正常操作由原生回包同步并刷新机库，无需重新登录；结果无法确认时停止批次，提示重新登录。
 真实游戏效果仍需手动验收；安装、预览规则和奖励领取见[机库管理说明](docs/hangar-manager.zh-CN.md)。
+
+副官管理通过包内 `tools/Start-Assistant.ps1` 打开服主 UI，可修改名称、头像和掉落概率、数量。
+自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官；旧持有记录原位迁移，保留当前装备与个人昵称。
+服主应用服务端配置并分发客户端更新包后，玩家仍使用原启动器。商品只登记，上架和定价由商城模块负责。
+游戏内显示、领取和结算仍需服主手动验收。[完整配置与迁移说明](docs/operator-assistant.zh-CN.md#默认补给副官)。
 
 机体目录是**默认关闭的独立 Mod**，Base / Full 框架包不会直接安装它。服主用自己的数据库目录表和
 配套客户端表生成 `catalog.bin`，安装到两端，再导出玩家增量包；玩家只需运行包内的一次性安装工具，
@@ -105,7 +111,17 @@
 ## 奖励规则与验证
 
 [战斗贡献奖励（Beta）](docs/battle-rewards.zh-CN.md)已接入原生结算和服主钱包工作器。
-[规则文档](docs/battle-reward-design.zh-CN.md)包含已确认数值与离线计算器。
+服主在辅助入口的 `/rewards` 页面调整 GB/MB 基础倍率；玩家继续使用原客户端和启动器。
+击杀、实际伤害、助攻、任务小怪与 Boss 贡献参与结算，对战 MVP 额外获得 MB。
+带 AI 的对战与纯真人同档；每多一名有效真人再乘 `1.1`，并与已有双倍时段相乘。
+例如基础十倍、双倍时段、四名真人为 `10 × 2 × 1.1³ = 26.62` 倍。
+
+安装完整包中的 `rewards/` 工具到所有参与结算的 BattleServer，共用一个服主 workspace，
+再用 `tools/Start-Battle-Rewards.ps1` 启动钱包工作器与辅助入口。
+该入口可挂载已安装的副官助手，在同一端口保留原有模块；关闭浏览器不会停止入账工作器。
+更新前需停止目标 BattleServer，安装后重启；随后调倍率可以热更新。
+具体步骤见[安装、启动与恢复教程](docs/battle-rewards.zh-CN.md)，
+数值与封顶见[完整奖励规则](docs/battle-reward-design.zh-CN.md)。
 真实账号对局、HUD 和重连仍由服主手动验收；安装保留其他功能与原有状态。
 
 ## 开发诊断
