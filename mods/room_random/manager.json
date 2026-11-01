@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "room_random",
+  "title": "每局随机机体",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "description": "每局从玩家自己的机库抽取机体用于战斗。",
+  "settings": [
+    {
+      "id": "database_ini",
+      "key": "DatabaseIni",
+      "label": "原生服务器 INI 路径",
+      "type": "string",
+      "default": "",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "driver",
+      "key": "Driver",
+      "label": "SQL 驱动名称",
+      "type": "string",
+      "default": "SQL Server",
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "query_timeout_seconds",
+      "key": "QueryTimeoutSeconds",
+      "label": "查询超时（秒）",
+      "type": "integer",
+      "default": 2,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 30
+    },
+    {
+      "id": "max_rows_per_player",
+      "key": "MaxRowsPerPlayer",
+      "label": "单玩家机库读取上限",
+      "type": "integer",
+      "default": 4096,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 65536
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "每局从选中服务器数据库读取玩家真实拥有的机体，为本局构建随机出战配置；不把临时出战配置写成永久机库变更。"
+}

@@ -64,7 +64,7 @@ try {
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
     try {
-        foreach ($required in @('rewards/tools/install_battle_rewards.py','rewards/tools/Start-Battle-Rewards.ps1','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
+        foreach ($required in @('SDGO Mod Manager.exe','rewards/tools/install_battle_rewards.py','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
             if (-not $rewardArchive.GetEntry($required)) { throw "Selected reward package lacks $required" }
         }
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
@@ -76,9 +76,10 @@ try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
-        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1')) {
+        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('SDGO Mod Manager.exe')) {
             throw 'Full package lost the complete reward owner toolkit'
         }
+        if ($fullArchive.GetEntry('rewards/tools/reward_assistant.py') -or $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1') -or $fullArchive.GetEntry('rewards/tools/assistant_modules/rewards/ui.html')) { throw 'Retired reward UI leaked into the unified package' }
     } finally { $fullArchive.Dispose() }
 
     $baseFolder = Join-Path $work 'base-unpacked'; $customFolder = Join-Path $work 'custom-unpacked'
@@ -135,7 +136,7 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $world $file))) { throw "World install lost $file" }
     }
     $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
-    if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
+    if (($rankFiles -join ',') -ne 'manager.json,mod.ini,rank_progression_fix.dll') { throw 'Rank repair is missing its unified Manager registration' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'
 } finally {
     # Only remove the exact files this fixture introduced in the staged build.

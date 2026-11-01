@@ -68,6 +68,8 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         if len(targets) != 1:
             raise ValueError(f"A bundled mod needs exactly one install target: {path}")
         files = [safe_file(name) for name in list_value(cfg.get("files", ""))]
+        if (path.parent / "manager.json").is_file() and "manager.json" not in files:
+            files.append("manager.json")
         configs = [safe_file(name) for name in list_value(cfg.get("config_files", ""))]
         if len(set(files)) != len(files) or any(Path(name).name.lower() in {"mod.ini", dll.lower()} for name in files):
             raise ValueError(f"Duplicate/reserved payload files in {path}")

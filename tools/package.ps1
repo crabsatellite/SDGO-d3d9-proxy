@@ -29,6 +29,9 @@ if ((Test-Path -LiteralPath $out) -or (Test-Path -LiteralPath $zip)) {
     throw 'Package output already exists; choose another -OutputDir or increment VERSION.'
 }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+$manager = Join-Path $buildRoot 'manager\SDGO Mod Manager.exe'
+if (-not (Test-Path -LiteralPath $manager)) { throw 'Build the unified Mod Manager before packaging' }
+Copy-Item -LiteralPath $manager -Destination $out
 
 # Core files are always present. Only catalog-owned, complete mod payloads enter
 # the archive, so stale build folders cannot silently add features or user files.

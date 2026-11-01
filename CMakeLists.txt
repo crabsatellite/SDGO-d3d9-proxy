@@ -102,7 +102,7 @@ function(sdgo_add_mod id)
     # Copy on every target build: this refreshes changed source data and also
     # repairs a stale/corrupted staged file whose timestamp is newer than source.
     set(mod_data_commands COMMAND "${CMAKE_COMMAND}" -E make_directory "${SDGO_STAGE}/${root}/mods/${id}")
-    foreach(file mod.ini ${MOD_FILES})
+    foreach(file mod.ini manager.json ${MOD_FILES})
         list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
@@ -171,6 +171,10 @@ foreach(role client server)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
             "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/manager.json"
+            "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/manager.json")
 endforeach()
 add_custom_target(ai_catalog_data ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"
@@ -200,6 +204,33 @@ add_custom_target(sdgo_catalog ALL
         --output "${SDGO_STAGE}/server/sdgo/catalog.json"
     COMMENT "Validating and staging the categorized mod catalog"
 )
+
+# One self-contained user entry. Individual mods only contribute contracts/panels.
+option(SDGO_BUILD_MANAGER "Build the unified Mod Manager EXE" ON)
+if(SDGO_BUILD_MANAGER)
+    find_program(SDGO_MANAGER_POWERSHELL NAMES powershell pwsh REQUIRED)
+    file(GLOB_RECURSE SDGO_MANAGER_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.js"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.html" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.css"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mods/*/manager.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.sql" "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.ps1")
+    set(SDGO_MANAGER_EXE "${CMAKE_BINARY_DIR}/manager/SDGO Mod Manager.exe")
+    add_custom_command(OUTPUT "${SDGO_MANAGER_EXE}"
+        COMMAND "${SDGO_MANAGER_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
+            -BuildDir "${CMAKE_BINARY_DIR}" -Python "${Python3_EXECUTABLE}"
+        DEPENDS ${SDGO_MANAGER_INPUTS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_manager.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_mod_manager.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/manager/SDGOModManager.spec"
+        VERBATIM)
+    add_custom_target(mod_manager ALL DEPENDS "${SDGO_MANAGER_EXE}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/manager"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SDGO_MANAGER_EXE}" "${SDGO_STAGE}/manager/")
+endif()
 
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
@@ -238,6 +269,17 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    if(SDGO_BUILD_MANAGER)
+        add_test(NAME mod_manager_frozen COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/mod_manager_frozen_test.py" --exe "${SDGO_MANAGER_EXE}")
+        set_tests_properties(mod_manager_frozen PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    endif()
+    add_test(NAME mod_manager_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_manager*.py" -v)
+    set_tests_properties(mod_manager_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
+    add_test(NAME pr_ai_disclosure_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_pr_ai_disclosure.py" -v)
+    set_tests_properties(pr_ai_disclosure_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
     target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
     sdgo_strict(catalog_conflict_mod)

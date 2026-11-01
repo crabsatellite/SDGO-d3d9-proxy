@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "room_titles",
+  "title": "长房名 · 客户端",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "支持完整的长房名和组合指令，需要服务器与 Agent 配套。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "客户端通过独立的完整房名元数据传输配合 Agent/Battle 组件，支持 128 Unicode 标量或 512 UTF-8 字节的房名；原生短房名字段仍受原限制。"
+}

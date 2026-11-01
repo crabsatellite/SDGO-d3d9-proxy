@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "room_titles_server",
+  "title": "长房名 · 对战服",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "description": "对战服务器接收完整房名与组合指令。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "Battle 组件接收并按房间生命周期保存完整房名，供 AI/随机机体解析组合指令，服务重启不会保留临时房间状态。"
+}

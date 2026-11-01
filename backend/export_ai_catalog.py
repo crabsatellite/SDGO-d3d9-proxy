@@ -6,8 +6,12 @@ import json
 from pathlib import Path
 import sys
 import zipfile
-from ai_catalog import HEADER, MAGIC, RECORD, fnv
-from install_ai_catalog import manifest_enabled, SECTIONS, ini
+try:
+    from .ai_catalog import HEADER, MAGIC, RECORD, fnv
+    from .install_ai_catalog import manifest_enabled, SECTIONS, ini
+except ImportError:
+    from ai_catalog import HEADER, MAGIC, RECORD, fnv
+    from install_ai_catalog import manifest_enabled, SECTIONS, ini
 
 
 def export(source, catalog, output):
