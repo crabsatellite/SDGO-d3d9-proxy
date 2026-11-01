@@ -92,5 +92,61 @@
       ]
     }
   ],
-  "conclusion": "Mission list request A08h is 16h bytes; success824h length13h+count*123h, count at12h, max10. Do not force Battle617h fixedsize or alias6C1h."
+  "conclusion": "Mission list request A08h is 16h bytes; success824h length13h+count*123h, count at12h, max10. Do not force Battle617h fixedsize or alias6C1h.",
+  "native_error_carriers": [
+    {
+      "request": "0x640",
+      "response": "0x54e",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x4494f1",
+      "hex": "b9 4e 05 00 00 66 89 8d 18 a7 fc ff"
+    },
+    {
+      "request": "0x7fb",
+      "response": "0x709",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x456457",
+      "hex": "b8 09 07 00 00 8b 4d fc 66 89 01 8b"
+    },
+    {
+      "request": "0xa08",
+      "response": "0x916",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x449479",
+      "hex": "b8 16 09 00 00 66 89 85 24 a7 fc ff"
+    },
+    {
+      "request": "0x50f",
+      "response": "0x9f4",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x4571b7",
+      "hex": "b8 f4 09 00 00 8b 4d fc 66 89 01 8b"
+    },
+    {
+      "request": "0x89e",
+      "response": "0x7ac",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x458287",
+      "hex": "b8 ac 07 00 00 8b 4d fc 66 89 01 8b"
+    },
+    {
+      "request": "0x9ed",
+      "response": "0x8fb",
+      "native_bytes": 8,
+      "recipient_offset": 2,
+      "error_offset": 6,
+      "opcode_assignment_va": "0x449828",
+      "hex": "b8 fb 08 00 00 66 89 85 c4 a6 fc ff"
+    }
+  ]
 }

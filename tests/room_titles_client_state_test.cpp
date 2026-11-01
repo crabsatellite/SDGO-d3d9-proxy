@@ -318,6 +318,8 @@ void TestFailuresPreserveDraft()
                   rm::RemoteError::Unauthorized &&
               !state.CanStartBattle(1),
           "server error keeps failed draft and blocks battle start");
+    Check(!state.RetryPending(1, rejected.request_id, 20),
+          "definitive server rejection cannot replay its old mutation nonce");
     state.CancelPending(1);
     Check(!state.HasPending(1) && state.CanStartBattle(1),
           "explicit cancel resolves failed pending state");
@@ -332,6 +334,11 @@ void TestFailuresPreserveDraft()
               state.LastError(1).code == rt::ClientError::Timeout &&
               !state.CanStartBattle(1),
           "timeout preserves draft and blocks silent legacy fallback");
+    Check(!state.RetryPending(1, timed.request_id + 1, 6000) &&
+              state.RetryPending(1, timed.request_id, 6000) &&
+              state.Pending(1)->request.request_id == timed.request_id &&
+              state.Pending(1)->status == rt::PendingStatus::Awaiting,
+          "timeout retry re-arms exactly the original request for server deduplication");
     state.CancelPending(1);
 
     const rm::Message local_failure =
@@ -349,6 +356,9 @@ void TestFailuresPreserveDraft()
               state.Pending(1)->request.request_id ==
                   local_failure.request_id,
           "local failure requires the exact pending request ID");
+    Check(state.RetryPending(1, local_failure.request_id, 950) &&
+              state.Pending(1)->request.title == "local transport failure draft",
+          "uncertain local send outcome retries without allocating a new request ID");
     state.CancelPending(1);
 
     const std::string invalid("bad\0title", 9);
@@ -502,6 +512,23 @@ void TestConnectionBound()
           "connection cache rejects entry above fixed bound");
 }
 
+void TestRetryAfterRoomChanged()
+{
+    rt::ClientState state;
+    Check(ReadyWithEmptyBatch(&state, 1, 77, 0) &&
+              state.AcceptMessage(1, Snapshot(Record(77, 5, 1, 1, "old"), 0)),
+          "changed-room retry fixture is ready");
+    const auto request = state.BeginSetTitle(1, 5, "uncertain edit", 100);
+    state.AdvanceTime(1, 100 + rt::kSetTitleTimeoutMilliseconds);
+    Check(state.AcceptMessage(1, Snapshot(Record(77, 5, 1, 2, "new host title"), 0)) &&
+              !state.RetryPending(1, request.request_id, 6000),
+          "newer confirmed revision prevents replay of an obsolete uncertain edit");
+    state.CancelPending(1);
+    const auto fresh = state.BeginSetTitle(1, 5, "uncertain edit", 6001);
+    Check(fresh.request_id != request.request_id && fresh.revision == 2,
+          "editing after a room change uses a new nonce and current revision");
+}
+
 }  // namespace
 
 int main()
@@ -514,6 +541,7 @@ int main()
     TestConnectionIsolation();
     TestCacheBounds();
     TestConnectionBound();
+    TestRetryAfterRoomChanged();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

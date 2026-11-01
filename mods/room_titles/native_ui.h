@@ -17,6 +17,9 @@ enum class Surface : std::uint8_t {
     PvpCreate,
     MissionCreate,
     MissionSettings,
+    // The host reuses this dialog for both PvP and mission wait rooms. Keep
+    // the stable identifier because the controller also uses it as the
+    // native 0x089E title-change operation.
     PvpTitleEdit
 };
 
@@ -37,9 +40,12 @@ bool Bind(const SdgoApi* api, SdgoMod* mod);
 // containing Mod decline to load so the core rolls back any earlier slot swap.
 bool InstallInitHooks(InitCallback callback = nullptr);
 
-// Hook the verified PvP and mission title-bar and lobby-list renderers. The
-// native renderer runs first so existing layout, state and localized wrappers
-// stay intact; confirmed full titles are then projected into native UI strings.
+// Hook the verified PvP and mission wait-room title, lobby-list and
+// room-details renderers. The native renderer runs first so existing layout,
+// state and localized wrappers stay intact. Static room-name labels use the
+// host's WordSkip mode, which expands an overflowing title while the pointer
+// is over the label. The native title-change dialog is shared by PvP and
+// mission rooms and provides the editable full-title view in a wait room.
 bool InstallTitleDisplayHooks(TitleLookupCallback callback);
 
 // Find the native room-name edit owned by a service after its init completed.
@@ -64,6 +70,15 @@ bool SetEditText(void* edit, const std::wstring& text, bool selection_flag = fal
 // allocator. This keeps title-edit cancel/reopen behavior on the full title
 // without changing either room structure's fixed legacy field.
 bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text);
+
+// Resolve the native room selected by the shared wait-room title bar. The
+// host checks its PvP room pointer at +0x108 first, then its mission room
+// pointer at +0x10C. The returned id is the raw native id without a Mod domain
+// bit; legacy_title is copied from the matching fixed room field.
+bool ReadTitleBarRoom(void* title_bar,
+                      bool* battle_domain,
+                      std::uint32_t* native_room_id,
+                      std::wstring* legacy_title);
 
 // Use the host's code-page-874 conversion helper and immediately copy its
 // rotating-buffer result. This preserves any client-side IAT language mapping.

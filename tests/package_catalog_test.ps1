@@ -107,8 +107,13 @@ try {
     foreach ($item in @(@{Root=$server;Role='Battle';Id='room_titles_server';Other='room_titles_agent'}, @{Root=$agent;Role='Agent';Id='room_titles_agent';Other='room_titles_server'})) {
         $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $titlesFolder 'install_server.ps1') -ServerRoot $item.Root -Role $item.Role 2>&1
         if ($LASTEXITCODE -ne 0) { throw "Packaged room-title $($item.Role) install failed: $output" }
-        if (-not (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Id)\$($item.Id).dll")) -or
-            (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Other)"))) { throw 'Room-title server role selection is incorrect' }
+        if (-not (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Id)\$($item.Id).dll"))) { throw 'Room-title server payload missing for selected host role' }
+        # The framework's common server tree intentionally carries both hosts'
+        # Mods. Runtime host manifests decide which DLL can load, as before.
+        $otherManifest = Join-Path $item.Root "sdgo\mods\$($item.Other)\mod.ini"
+        $wrongHost = if ($item.Role -eq 'Battle') { 'BattleServer-' } else { 'AgentServer-' }
+        if ((Test-Path -LiteralPath $otherManifest) -and
+            [IO.File]::ReadAllText($otherManifest) -match ('(?m)^hosts=' + $wrongHost)) { throw 'Room-title manifest allows the wrong server host' }
     }
     $world = Join-Path $work 'world'
     New-FakeExe (Join-Path $world 'WorldServer.exe') 0x548A86E3 0x0010C000

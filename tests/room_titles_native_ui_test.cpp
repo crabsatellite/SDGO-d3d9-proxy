@@ -53,7 +53,7 @@ struct FakeTitleBar {
 };
 
 struct FakeStaticText {
-    std::array<std::uint8_t, 0x260> bytes = {};
+    std::array<std::uint8_t, 0x298> bytes = {};
 };
 
 struct FakeRoom {
@@ -63,7 +63,7 @@ struct FakeRoom {
 void* g_editVtable[8] = {};
 void* g_buttonVtable[32] = {};
 void* g_staticTextVtable[40] = {};
-void* g_titlebarVtable[8] = {};
+void* g_titleBarVtable[8] = {};
 NativeString g_native = {};
 std::wstring g_heapText;
 std::wstring g_setText;
@@ -82,6 +82,7 @@ FakeStaticText* g_missionStatic = nullptr;
 bool g_renderOriginalRan = false;
 bool g_lastBattleDomain = false;
 std::uint32_t g_lastRoomId = 0;
+int g_wordSkipCalls = 0;
 
 void SetPointer(void* owner, std::size_t offset, void* value)
 {
@@ -215,6 +216,15 @@ void __fastcall FakeStaticTextSet(void* control, void*, const NativeString* text
     SetNative(NativeAt(control, 0x21C), GetNative(*text));
 }
 
+void __fastcall FakeStaticTextWordSkip(void* control, void*, std::uint8_t enabled)
+{
+    auto* bytes = static_cast<std::uint8_t*>(control);
+    bytes[0x288] = enabled;
+    bytes[0x289] = 0;
+    bytes[0x28A] = 1;
+    ++g_wordSkipCalls;
+}
+
 void __fastcall FakeOriginal(void*, void*, std::uint32_t argument)
 {
     g_originalRan = true;
@@ -225,14 +235,14 @@ void __fastcall FakePvpRender(void*, void*, const void*)
 {
     g_renderOriginalRan = true;
     SetNative(g_renderButton->itemPointers[0], L"Room 42: Short [PW]");
-    SetNative(g_renderButton->itemPointers[1], L"Short / hover");
+    SetNative(g_renderButton->itemPointers[1], L"Short / alternate");
 }
 
 void __fastcall FakeMissionRender(void*, void*, const void*)
 {
     g_renderOriginalRan = true;
     SetNative(g_renderButton->itemPointers[0], L"Mission 17: Task");
-    SetNative(g_renderButton->itemPointers[1], L"Task / hover");
+    SetNative(g_renderButton->itemPointers[1], L"Task / alternate");
 }
 
 void __fastcall FakePvpRoomList(void*, void*, const void*)
@@ -244,6 +254,18 @@ void __fastcall FakePvpRoomList(void*, void*, const void*)
 void __fastcall FakeMissionRoomRow(void*, void*, int)
 {
     SetNative(NativeAt(g_missionStatic->bytes.data(), 0x21C), L"Task");
+}
+
+void __fastcall FakePvpRoomDetails(void*, void*, void* dialog, int)
+{
+    auto* control = static_cast<FakeDialog*>(dialog)->staticText;
+    SetNative(NativeAt(control, 0x21C), L"Short");
+}
+
+void __fastcall FakeMissionRoomDetails(void*, void*, void* dialog, int)
+{
+    auto* control = static_cast<FakeDialog*>(dialog)->staticText;
+    SetNative(NativeAt(control, 0x21C), L"Task");
 }
 
 void* FakeSymbol(SdgoMod*, const char* name)
@@ -264,6 +286,8 @@ void* FakeSymbol(SdgoMod*, const char* name)
         return reinterpret_cast<void*>(&FakeButtonTextItem);
     if (!std::strcmp(name, "room_titles.ui_static_text_set"))
         return reinterpret_cast<void*>(&FakeStaticTextSet);
+    if (!std::strcmp(name, "room_titles.ui_static_text_word_skip"))
+        return reinterpret_cast<void*>(&FakeStaticTextWordSkip);
     if (!std::strcmp(name, "room_titles.ui_edit_vtable"))
         return g_editVtable;
     if (!std::strcmp(name, "room_titles.ui_button_vtable"))
@@ -271,7 +295,7 @@ void* FakeSymbol(SdgoMod*, const char* name)
     if (!std::strcmp(name, "room_titles.ui_static_text_vtable"))
         return g_staticTextVtable;
     if (!std::strcmp(name, "room_titles.ui_titlebar_vtable"))
-        return g_titlebarVtable;
+        return g_titleBarVtable;
     return nullptr;
 }
 
@@ -293,6 +317,10 @@ int FakeHookCode(SdgoMod*, const char* name, void* detour, void** original)
         *original = reinterpret_cast<void*>(&FakePvpRoomList);
     else if (!std::strcmp(name, "room_titles.ui_mission_room_row"))
         *original = reinterpret_cast<void*>(&FakeMissionRoomRow);
+    else if (!std::strcmp(name, "room_titles.ui_pvp_room_details"))
+        *original = reinterpret_cast<void*>(&FakePvpRoomDetails);
+    else if (!std::strcmp(name, "room_titles.ui_mission_room_details"))
+        *original = reinterpret_cast<void*>(&FakeMissionRoomDetails);
     else
         return 0;
     return 1;
@@ -464,13 +492,13 @@ int main()
         return 1;
 
     NativeString normalText = {};
-    NativeString hoverText = {};
+    NativeString alternateStateText = {};
     SetNative(&normalText, L"before");
-    SetNative(&hoverText, L"before");
+    SetNative(&alternateStateText, L"before");
     FakeButton button;
     void* buttonTable = g_buttonVtable;
     std::memcpy(button.bytes.data(), &buttonTable, sizeof(buttonTable));
-    button.itemPointers = {&normalText, &hoverText};
+    button.itemPointers = {&normalText, &alternateStateText};
     NativeString** itemBegin = button.itemPointers.data();
     NativeString** itemEnd = itemBegin + button.itemPointers.size();
     SetPointer(button.bytes.data(), 0x190, itemBegin);
@@ -479,7 +507,7 @@ int main()
     g_renderButton = &button;
 
     FakeTitleBar titleBar;
-    void* titlebarTable = g_titlebarVtable;
+    void* titlebarTable = g_titleBarVtable;
     std::memcpy(titleBar.bytes.data(), &titlebarTable, sizeof(titlebarTable));
     SetPointer(titleBar.bytes.data(), 0x48, &dialog);
     SetNative(NativeAt(titleBar.bytes.data(), 0x110), L"Short");
@@ -491,7 +519,7 @@ int main()
                    L"Direct full cached title",
                "read back titlebar cache") ||
         !Check(native_ui::InstallTitleDisplayHooks(&LookupTitle),
-               "install two title display hooks"))
+               "install title display and details hooks"))
         return 1;
 
     FakeRoom pvpRoom;
@@ -510,15 +538,33 @@ int main()
         !Check(GetNative(normalText) ==
                    L"Room 42: Full PvP title longer than twenty bytes [PW]",
                "PvP normal label preserves wrapper") ||
-        !Check(GetNative(hoverText) ==
-                   L"Full PvP title longer than twenty bytes / hover",
-               "PvP hover label"))
+        !Check(GetNative(alternateStateText) ==
+                   L"Full PvP title longer than twenty bytes / alternate",
+               "PvP alternate button label"))
+        return 1;
+
+    bool titleBarBattleDomain = false;
+    std::uint32_t titleBarRoomId = 0;
+    std::wstring titleBarLegacyTitle;
+    SetPointer(titleBar.bytes.data(), 0x108, pvpRoom.bytes.data());
+    if (!Check(native_ui::ReadTitleBarRoom(
+                   titleBar.bytes.data(), &titleBarBattleDomain,
+                   &titleBarRoomId, &titleBarLegacyTitle),
+               "read shared titlebar PvP room") ||
+        !Check(titleBarBattleDomain && titleBarRoomId == pvpId &&
+                   titleBarLegacyTitle == L"Short",
+               "shared titlebar PvP identity and legacy title"))
         return 1;
 
     FakeRoom missionRoom;
     const std::uint32_t missionId = 17;
     std::memcpy(missionRoom.bytes.data(), &missionId, sizeof(missionId));
+    missionRoom.bytes[5] = 10;
     std::memcpy(missionRoom.bytes.data() + 0x54, "Task", 5);
+    SetPointer(titleBar.bytes.data(), 0x108, nullptr);
+    SetPointer(titleBar.bytes.data(), 0x10C, missionRoom.bytes.data());
+    titlebarTable = g_titleBarVtable;
+    std::memcpy(titleBar.bytes.data(), &titlebarTable, sizeof(titlebarTable));
     g_renderOriginalRan = false;
     reinterpret_cast<RenderDetour>(g_detours.at("room_titles.ui_mission_titlebar_render"))(
         titleBar.bytes.data(), nullptr, missionRoom.bytes.data());
@@ -530,9 +576,21 @@ int main()
         !Check(GetNative(normalText) ==
                    L"Mission 17: Full mission title for task rules",
                "mission normal label preserves wrapper") ||
-        !Check(GetNative(hoverText) ==
-                   L"Full mission title for task rules / hover",
-               "mission hover label"))
+        !Check(GetNative(alternateStateText) ==
+                   L"Full mission title for task rules / alternate",
+                "mode-10 mission alternate button label"))
+        return 1;
+
+    titleBarBattleDomain = true;
+    titleBarRoomId = 0;
+    titleBarLegacyTitle.clear();
+    if (!Check(native_ui::ReadTitleBarRoom(
+                   titleBar.bytes.data(), &titleBarBattleDomain,
+                   &titleBarRoomId, &titleBarLegacyTitle),
+               "read shared titlebar mode-10 mission room") ||
+        !Check(!titleBarBattleDomain && titleBarRoomId == missionId &&
+                   titleBarLegacyTitle == L"Task",
+               "shared titlebar mode-10 identity and legacy title"))
         return 1;
 
     NativeString pvpNumber = {};
@@ -566,8 +624,23 @@ int main()
                "PvP lobby list leaves room number item"))
         return 1;
 
-    FakeStaticText missionStatic;
+    FakeStaticText pvpDetailsStatic;
     void* staticTable = g_staticTextVtable;
+    std::memcpy(pvpDetailsStatic.bytes.data(), &staticTable, sizeof(staticTable));
+    SetNative(NativeAt(pvpDetailsStatic.bytes.data(), 0x21C), L"before");
+    FakeDialog pvpDetailsDialog = {nullptr, nullptr, &pvpDetailsStatic};
+    using DetailsDetour = void (__fastcall*)(void*, void*, void*, int);
+    reinterpret_cast<DetailsDetour>(g_detours.at("room_titles.ui_pvp_room_details"))(
+        pvpListService.data(), nullptr, &pvpDetailsDialog, 0);
+    if (!Check(GetNative(*NativeAt(pvpDetailsStatic.bytes.data(), 0x21C)) ==
+                   L"Full PvP title longer than twenty bytes",
+               "PvP details full title") ||
+        !Check(pvpDetailsStatic.bytes[0x288] == 1 &&
+                   pvpDetailsStatic.bytes[0x28A] == 1,
+               "PvP details native hover expansion"))
+        return 1;
+
+    FakeStaticText missionStatic;
     std::memcpy(missionStatic.bytes.data(), &staticTable, sizeof(staticTable));
     SetNative(NativeAt(missionStatic.bytes.data(), 0x21C), L"before");
     FakeDialog missionRow = {nullptr, nullptr, &missionStatic};
@@ -581,7 +654,48 @@ int main()
         missionListService.data(), nullptr, 0);
     if (!Check(GetNative(*NativeAt(missionStatic.bytes.data(), 0x21C)) ==
                    L"Full mission title for task rules",
-               "mission lobby list full title"))
+               "mission lobby list full title") ||
+        !Check(missionStatic.bytes[0x288] == 1 &&
+                   missionStatic.bytes[0x28A] == 1,
+               "mission lobby native hover expansion"))
+        return 1;
+
+    FakeStaticText missionDetailsStatic;
+    std::memcpy(missionDetailsStatic.bytes.data(), &staticTable, sizeof(staticTable));
+    SetNative(NativeAt(missionDetailsStatic.bytes.data(), 0x21C), L"before");
+    FakeDialog missionDetailsDialog = {nullptr, nullptr, &missionDetailsStatic};
+    std::array<std::uint8_t, 0x123> missionDetailsEntry = {};
+    std::memcpy(missionDetailsEntry.data(), &missionId, sizeof(missionId));
+    std::memcpy(missionDetailsEntry.data() + 0x54, "Task", 5);
+    std::array<std::uint8_t, 0x150> missionDetailsService = {};
+    SetPointer(missionDetailsService.data(), 0x134, missionDetailsEntry.data());
+    SetPointer(missionDetailsService.data(), 0x138,
+               missionDetailsEntry.data() + missionDetailsEntry.size());
+    reinterpret_cast<DetailsDetour>(
+        g_detours.at("room_titles.ui_mission_room_details"))(
+            missionDetailsService.data(), nullptr, &missionDetailsDialog, 0);
+    if (!Check(GetNative(*NativeAt(missionDetailsStatic.bytes.data(), 0x21C)) ==
+                   L"Full mission title for task rules",
+               "mission details full title") ||
+        !Check(missionDetailsStatic.bytes[0x288] == 1,
+               "mission details native hover expansion") ||
+        !Check(g_wordSkipCalls == 3,
+               "enable WordSkip once on each verified static label"))
+        return 1;
+
+    reinterpret_cast<DetailsDetour>(
+        g_detours.at("room_titles.ui_mission_room_details"))(
+            missionDetailsService.data(), nullptr, &missionDetailsDialog, 0);
+    if (!Check(g_wordSkipCalls == 3,
+               "do not reset WordSkip on an already-enabled static label"))
+        return 1;
+
+    SetNative(NativeAt(missionDetailsStatic.bytes.data(), 0x21C), L"guard");
+    reinterpret_cast<DetailsDetour>(
+        g_detours.at("room_titles.ui_mission_room_details"))(
+            missionDetailsService.data(), nullptr, &missionDetailsDialog, 1);
+    if (!Check(GetNative(*NativeAt(missionDetailsStatic.bytes.data(), 0x21C)) == L"Task",
+               "reject out-of-range mission details projection"))
         return 1;
 
     std::cout << "room_titles_native_ui_test passed\n";

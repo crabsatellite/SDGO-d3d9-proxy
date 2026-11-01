@@ -85,10 +85,11 @@ int __cdecl Dispatch(DWORD argument0, DWORD argument1, DWORD handle, void* packe
             return 0;
         const bool create = opcode == kCreateRoom && message.kind == metadata::MessageKind::SetTitle &&
                             !message.server_epoch && !message.room_id && !message.generation && !message.revision;
-        const bool hello = (opcode == kListRooms || opcode == 0x0A08) &&
+        const bool hello = (opcode == kListRooms || opcode == 0x0A08 || opcode == kCreateRoom) &&
                            message.kind == metadata::MessageKind::Hello;
         const bool titleChange = opcode == 0x050F || opcode == 0x09ED ||
-                                 (opcode == 0x089E && parsed.view.native_data[6] == 1);
+                                 (opcode == 0x089E && (parsed.view.native_data[6] == 1 ||
+                                                     parsed.view.native_data[6] == 2));
         const bool update = titleChange && message.kind == metadata::MessageKind::SetTitle &&
                             message.server_epoch && message.room_id && message.generation && message.revision;
         if (!create && !hello && !update)
@@ -151,6 +152,8 @@ int __fastcall Send(void* self, void*, DWORD destination, const void* packet, in
 size_t ResponseBytes(uint16_t opcode, const uint8_t* packet, size_t size)
 {
     switch (opcode) {
+    case 0x054E: case 0x09F4: case 0x07AC: case 0x08FB:
+    case 0x0709: case 0x0916: return 8; // native request failures
     case 0x0824:
         return size >= 0x13 && packet[0x12] <= 10 ?
                0x13 + static_cast<size_t>(packet[0x12]) * 0x123 : 0x13;
@@ -223,6 +226,6 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "room_titles.agent_send_client", reinterpret_cast<void*>(&SendClient),
                        reinterpret_cast<void**>(&g_sendClient)))
         return 0;
-    api->Log(mod, SDGO_LOG_INFO, "ready: preserve validated room-title metadata on native create-room forwarding");
+    api->Log(mod, SDGO_LOG_INFO, "ready: preserve validated room-title metadata on native request and response forwarding");
     return 1;
 }

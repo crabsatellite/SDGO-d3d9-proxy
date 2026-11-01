@@ -31,10 +31,15 @@ std::size_t ParseBattleListWireIds(const std::uint8_t* packet,
                                    std::size_t packetSize,
                                    std::uint32_t* wireIds,
                                    std::size_t capacity);
+std::size_t ParseTeamListWireIds(const std::uint8_t* packet,
+                                 std::size_t packetSize,
+                                 std::uint32_t* wireIds,
+                                 std::size_t capacity);
 
 struct CachedReply {
     std::vector<std::uint8_t> packet;
     std::uintptr_t sender = 0;
+    std::uint32_t destination = 0;
     std::uint32_t flags = 0;
 };
 
@@ -58,8 +63,12 @@ public:
 
     std::uint64_t server_epoch() const;
 
-    void ConfirmCapability(std::uint32_t pilot);
+    bool BeginCapabilityRound(std::uint32_t pilot,
+                              std::uintptr_t route);
     bool HasCapability(std::uint32_t pilot) const;
+    bool HasCapability(std::uint32_t pilot,
+                       std::uintptr_t route) const;
+    bool ForgetCapabilityIfDetached(std::uint32_t pilot, bool keepInFlight = false);
 
     RequestDecision BeginRequest(std::uint32_t pilot,
                                  std::uint32_t requestId,
@@ -208,7 +217,7 @@ private:
     metadata::RoomStore store_;
     std::unordered_map<std::uint32_t, Record> rooms_;
     std::unordered_map<std::uint32_t, PilotRooms> pilot_rooms_;
-    std::unordered_set<std::uint32_t> capabilities_;
+    std::unordered_map<std::uint32_t, std::uintptr_t> capabilities_;
     std::unordered_map<RequestKey, RequestEntry, RequestKeyHash> requests_;
     std::deque<RequestKey> request_order_;
 };

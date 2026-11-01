@@ -21,6 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+$expectedVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $repo 'mods\room_titles_agent\mod.ini') -Raw), '(?m)^version=([^\r\n]+)').Groups[1].Value
 $buildRoot = if ([string]::IsNullOrWhiteSpace($BuildDir)) {
     [IO.Path]::GetFullPath((Join-Path $repo "build"))
 } elseif ([IO.Path]::IsPathRooted($BuildDir)) {
@@ -115,7 +116,7 @@ function Invoke-TestCase(
     switch ($Name) {
         "enabled" {
             if (-not $log.Contains("ready: preserve validated room-title metadata") -or
-                -not $log.Contains("loaded Room titles transport (Agent) 0.1.0") -or
+                -not $log.Contains("loaded Room titles transport (Agent) $expectedVersion") -or
                 -not $log.Contains("4 code hooks switched on")) {
                 throw "enabled case did not activate all four real room-title hooks; see $logPath"
             }

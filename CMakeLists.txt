@@ -320,7 +320,7 @@ add_executable(room_metadata_common_test tests/room_metadata_common_test.cpp)
 target_link_libraries(room_metadata_common_test PRIVATE room_metadata_common)
 sdgo_strict(room_metadata_common_test)
 
-add_executable(room_metadata_allocation_test tests/room_metadata_allocation_test.cpp)
+add_executable(room_metadata_allocation_test tests/room_metadata_allocation_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
 target_link_libraries(room_metadata_allocation_test PRIVATE room_metadata_common)
 sdgo_strict(room_metadata_allocation_test)
 
@@ -345,6 +345,11 @@ target_include_directories(room_titles_server_test PRIVATE mods/room_titles_serv
 target_link_libraries(room_titles_server_test PRIVATE room_metadata_common)
 sdgo_strict(room_titles_server_test)
 
+add_executable(room_titles_server_native_test tests/room_titles_server_native_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
+target_include_directories(room_titles_server_native_test PRIVATE mods/room_titles_server)
+target_link_libraries(room_titles_server_native_test PRIVATE sdgo_api room_metadata_common bcrypt)
+sdgo_strict(room_titles_server_native_test)
+
 add_executable(room_title_native_test tests/room_title_native_test.cpp)
 target_link_libraries(room_title_native_test PRIVATE bcrypt)
 sdgo_strict(room_title_native_test)
@@ -360,7 +365,7 @@ sdgo_strict(room_titles_agent_conflict_mod)
 
 
 if(BUILD_TESTING)
-    foreach(test room_metadata_common room_metadata_allocation room_titles_client_state room_titles_transport room_titles_native_ui room_titles_client room_titles_server coop_title_rules pvp_title_rules)
+    foreach(test room_metadata_common room_metadata_allocation room_titles_client_state room_titles_transport room_titles_native_ui room_titles_client room_titles_server room_titles_server_native coop_title_rules pvp_title_rules)
         add_test(NAME ${test}_offline COMMAND ${test}_test)
         set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
     endforeach()

@@ -601,6 +601,40 @@ bool ClientState::IsReady(ConnectionId connection_id) const
     return connection && connection->ready;
 }
 
+bool ClientState::IsNegotiating(ConnectionId connection_id) const
+{
+    const Connection* connection = Find(connection_id);
+    return connection && connection->hello.has_value();
+}
+
+bool ClientState::RetryPending(ConnectionId connection_id,
+                               std::uint32_t request_id,
+                               std::uint64_t now_ms)
+{
+    Connection* connection = Find(connection_id);
+    if (!connection || !connection->ready || connection->hello ||
+        !connection->pending || connection->pending->request.request_id != request_id)
+        return false;
+    auto& pending = *connection->pending;
+    if (pending.request.room_id) {
+        const auto room = connection->rooms.find(pending.request.room_id);
+        if (room == connection->rooms.end() ||
+            room->second.key.server_epoch != pending.request.server_epoch ||
+            room->second.key.generation != pending.request.generation ||
+            room->second.revision != pending.request.revision)
+            return false;
+    }
+    if (pending.status == PendingStatus::Awaiting ||
+        (pending.error.code != ClientError::TransportError &&
+         pending.error.code != ClientError::Timeout))
+        return false;
+    pending.status = PendingStatus::Awaiting;
+    pending.started_at_ms = now_ms;
+    pending.error = ClientErrorInfo();
+    connection->last_error = ClientErrorInfo();
+    return true;
+}
+
 std::optional<SnapshotRecord> ClientState::Query(
     ConnectionId connection_id,
     std::uint32_t room_id) const

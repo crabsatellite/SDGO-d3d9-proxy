@@ -21,6 +21,14 @@ Existing category, feature and per-mod disable switches still apply.
 Owners can distribute the enabled client Mod with their ordinary client package;
 players start the game normally. No computer-specific configuration belongs in it.
 
+Open the room-title button in the waiting room to view the complete title in
+the native scrollable edit control; cancel after viewing if no change is needed.
+Lobby selected-room details and mission rows also expand overflowing static text
+on hover. Native edit availability and host authorization remain in force.
+Mode 10 creates its initial title automatically; after entering its waiting room,
+use the same title dialog. Its native auto-create can negotiate capability on
+the create ACK, so visiting another lobby first is unnecessary.
+
 The server confirms full titles before the client permits starting a battle with
 an unresolved title change. Failed text remains available for editing and retry.
 The original bounded title field remains a character-safe short projection.
@@ -47,6 +55,13 @@ matching truncated titles or room numbers.
 
 Disable the three Mods to return to native behavior. Metadata is in memory and
 does not survive a Battle process restart. No game EXE or save is patched.
+
+For developers, `mods/room_metadata/common` is a private protocol/state library,
+not another installed Mod or a core service. The Agent strips one validated RTMD
+trailer before native dispatch, lets the native path stamp the authenticated
+pilot, and restores it at forwarding. The Battle provider owns full titles;
+clients cache only confirmed snapshots. `include/sdgo/room_titles.h` is the
+bounded C ABI for optional gameplay consumers. No allocation crosses DLLs.
 
 Automatic verification covers protocol and Unicode boundaries, native adapters,
 permission and lifecycle logic, isolated real-core Agent forwarding, command

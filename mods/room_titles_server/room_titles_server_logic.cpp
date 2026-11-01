@@ -57,6 +57,28 @@ std::size_t ParseBattleListWireIds(const std::uint8_t* packet,
     return outputCount;
 }
 
+std::size_t ParseTeamListWireIds(const std::uint8_t* packet,
+                                 std::size_t packetSize,
+                                 std::uint32_t* wireIds,
+                                 std::size_t capacity)
+{
+    if (!packet || (!wireIds && capacity) || packetSize < 0x13)
+        return 0;
+    const std::size_t count =
+        std::min<std::size_t>(packet[0x12], 10);
+    const std::size_t available =
+        std::min(count, (packetSize - 0x13) / 0x123);
+    const std::size_t outputCount = std::min(available, capacity);
+    for (std::size_t index = 0; index < outputCount; ++index) {
+        std::uint32_t nativeId = 0;
+        std::memcpy(&nativeId, packet + 0x13 + index * 0x123,
+                    sizeof(nativeId));
+        wireIds[index] =
+            EncodeRoomId(RoomDomain::Team, nativeId);
+    }
+    return outputCount;
+}
+
 ServerState::ReadLock::ReadLock(SRWLOCK* value) : lock(value)
 {
     AcquireSRWLockShared(lock);
@@ -93,24 +115,82 @@ std::uint64_t ServerState::server_epoch() const
     return store_.server_epoch();
 }
 
-void ServerState::ConfirmCapability(std::uint32_t pilot)
+bool ServerState::BeginCapabilityRound(std::uint32_t pilot,
+                                       std::uintptr_t route)
 {
-    if (!pilot)
-        return;
+    if (!pilot || !route)
+        return false;
     WriteLock lock(&lock_);
+    for (const auto& request : requests_) {
+        if (request.first.pilot == pilot && !request.second.complete)
+            return false;
+    }
+    const auto capability = capabilities_.find(pilot);
+    if (capability == capabilities_.end())
+        capabilities_.emplace(pilot, route);
+    else
+        capability->second = route;
     for (auto request = requests_.begin(); request != requests_.end();) {
         if (request->first.pilot == pilot)
             request = requests_.erase(request);
         else
             ++request;
     }
-    capabilities_.insert(pilot);
+    request_order_.erase(
+        std::remove_if(
+            request_order_.begin(), request_order_.end(),
+            [pilot](const RequestKey& key) {
+                return key.pilot == pilot;
+            }),
+        request_order_.end());
+    return true;
 }
 
 bool ServerState::HasCapability(std::uint32_t pilot) const
 {
     ReadLock lock(&lock_);
     return capabilities_.find(pilot) != capabilities_.end();
+}
+
+bool ServerState::HasCapability(std::uint32_t pilot,
+                                std::uintptr_t route) const
+{
+    if (!pilot || !route)
+        return false;
+    ReadLock lock(&lock_);
+    const auto found = capabilities_.find(pilot);
+    return found != capabilities_.end() && found->second == route;
+}
+
+bool ServerState::ForgetCapabilityIfDetached(std::uint32_t pilot, bool keepInFlight)
+{
+    if (!pilot)
+        return false;
+    WriteLock lock(&lock_);
+    const auto rooms = pilot_rooms_.find(pilot);
+    if (rooms != pilot_rooms_.end() &&
+        (rooms->second.team || rooms->second.battle))
+        return false;
+    if (keepInFlight) {
+        for (const auto& request : requests_)
+            if (request.first.pilot == pilot && !request.second.complete)
+                return false;
+    }
+    capabilities_.erase(pilot);
+    for (auto request = requests_.begin(); request != requests_.end();) {
+        if (request->first.pilot == pilot)
+            request = requests_.erase(request);
+        else
+            ++request;
+    }
+    request_order_.erase(
+        std::remove_if(
+            request_order_.begin(), request_order_.end(),
+            [pilot](const RequestKey& key) {
+                return key.pilot == pilot;
+            }),
+        request_order_.end());
+    return true;
 }
 
 bool ServerState::SameRequest(const RequestEntry& entry,
@@ -179,17 +259,24 @@ void ServerState::CompleteRequest(std::uint32_t pilot,
 {
     if (!pilot || !requestId || (!body && bodySize))
         return;
+    CachedReply prepared;
+    if (reply)
+        prepared = *reply;
     WriteLock lock(&lock_);
     const auto found = requests_.find(RequestKey{pilot, requestId});
     if (found == requests_.end() ||
         !SameRequest(found->second, opcode, body, bodySize))
         return;
     if (!found->second.complete) {
-        found->second.complete = true;
         request_order_.push_back(RequestKey{pilot, requestId});
+        found->second.complete = true;
     }
-    if (reply)
-        found->second.reply = *reply;
+    if (reply) {
+        found->second.reply.packet.swap(prepared.packet);
+        found->second.reply.sender = prepared.sender;
+        found->second.reply.destination = prepared.destination;
+        found->second.reply.flags = prepared.flags;
+    }
     PruneRequests(kMaximumRememberedRequests);
 }
 

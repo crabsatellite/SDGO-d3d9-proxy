@@ -342,6 +342,11 @@ std::size_t ServerNativeSize(const void* packet, int size)
     const std::uint16_t opcode = Read16(packet);
     if (opcode == kRoomList)
         return kRoomListNativeBytes;
+    if (opcode == 0x0A33)
+        return 0x21FC;
+    if (opcode == 0x054E || opcode == 0x09F4 || opcode == 0x07AC ||
+        opcode == 0x08FB || opcode == 0x0709 || opcode == 0x0916)
+        return 8;
     if (opcode != kTeamListResponse ||
         size < static_cast<int>(kTeamListHeaderBytes))
         return 0;
@@ -387,7 +392,8 @@ extern "C" __declspec(noinline) int __cdecl AgentDispatch(
             ? kNativeBytes
             : ((opcode == kHello || opcode == kMissionHello)
                    ? kHelloNativeBytes
-                   : 0);
+                   : opcode == 0x089E ? 0x1D : opcode == 0x050F ? 0x37 :
+                     opcode == 0x09ED ? 0x3E : 0);
     if (!native_size || size < static_cast<int>(native_size))
         return -101;
 
@@ -905,13 +911,14 @@ void TestVanillaPacket()
 
 void TestHelloRequest()
 {
-    const std::uint16_t carriers[] = {kHello, kMissionHello};
+    const std::uint16_t carriers[] = {kHello, kMissionHello, kCreateRoom};
     for (std::size_t index = 0; index < std::size(carriers); ++index) {
         ResetCaptures(Scenario::Normal);
         const DWORD handle = static_cast<DWORD>(0x004F + index);
+        const size_t nativeBytes = carriers[index] == kCreateRoom ? kNativeBytes : kHelloNativeBytes;
         const auto native =
             NativePacket(static_cast<std::uint8_t>(0x3A + index),
-                         kHelloNativeBytes, carriers[index]);
+                         nativeBytes, carriers[index]);
         metadata::Message hello;
         hello.kind = metadata::MessageKind::Hello;
         hello.request_id = 0x11223344u + static_cast<std::uint32_t>(index);
@@ -925,11 +932,11 @@ void TestHelloRequest()
         Check(dispatches.size() == 1 &&
                   dispatches[0].path == DispatchPath::ClientToServer &&
                   dispatches[0].size ==
-                      static_cast<int>(kHelloNativeBytes) &&
+                      static_cast<int>(nativeBytes) &&
                   dispatches[0].pointer != packet.data(),
               carriers[index] == kHello
                   ? "Battle-list Hello bridge gives the native dispatcher a private 22-byte copy"
-                  : "mission Team-list Hello bridge gives the native dispatcher a private 22-byte copy");
+                  : "mission Hello bridge preserves its exact native request prefix");
         metadata::TrailerView trailer;
         metadata::Message decoded_message;
         const bool decoded =
@@ -937,14 +944,14 @@ void TestHelloRequest()
             sends[0].path == SendPath::ToServer &&
             DecodeExtended(sends[0], &trailer, &decoded_message);
         Check(decoded &&
-                  trailer.native_size == kHelloNativeBytes &&
+                  trailer.native_size == nativeBytes &&
                   decoded_message.kind == metadata::MessageKind::Hello &&
                   decoded_message.request_id == hello.request_id &&
                   decoded_message.title.empty() &&
                   result == SendResult(sends[0].size),
               carriers[index] == kHello
                   ? "Battle-list Hello metadata is restored after native fixed-size forwarding"
-                  : "mission Team-list Hello metadata is restored after native fixed-size forwarding");
+                  : "mission list or automatic-create Hello survives native fixed-size forwarding");
         const std::vector<std::uint8_t> forwarded_native =
             decoded ? std::vector<std::uint8_t>(
                           trailer.native_data,
@@ -1024,6 +1031,83 @@ void TestSnapshotBatchResponse()
               result == SendResult(sends[0].size) &&
               packet == original,
           "response bridge preserves native rebuild, destination, flags and caller buffer");
+}
+
+void TestAutoCreateHelloResponse()
+{
+    ResetCaptures(Scenario::Normal);
+    auto native = NativePacket(0x41, 0x21FC, 0x0A33);
+    Write32(native.data() + 6, 5);
+    metadata::SnapshotBatch batch;
+    batch.server_epoch = 778; batch.request_id = 1;
+    metadata::SnapshotRecord room;
+    room.key.server_epoch = 778; room.key.room_id = 5; room.key.generation = 1; room.revision = 1;
+    batch.rooms.push_back(room);
+    std::vector<uint8_t> packet;
+    Check(metadata::EncodeSnapshotBatchPacket(native.data(), native.size(), batch, &packet),
+          "automatic-create capability acknowledgement encodes");
+    const auto result = CallServerDispatch(0x81, 0x82, 73, &packet);
+    const auto sends = Sends();
+    metadata::TrailerView view;
+    metadata::SnapshotBatch decoded;
+    Check(result > 0 && sends.size() == 1 &&
+              metadata::DecodeSnapshotBatchPacket(sends[0].bytes.data(), sends[0].bytes.size(), &view, &decoded) &&
+              view.native_size == 0x21FC && decoded.request_id == 1 && decoded.rooms.size() == 1 &&
+              decoded.rooms[0].key.room_id == 5 && decoded.rooms[0].title.empty(),
+          "automatic mission-create identity and capability survive reverse Agent forwarding");
+}
+
+void TestTitleUpdateRequests()
+{
+    struct Case { uint16_t opcode; size_t bytes; uint8_t subtype; uint32_t room; };
+    const Case cases[] = {{0x089E,0x1D,1,0x80000005u}, {0x089E,0x1D,2,5},
+                          {0x050F,0x37,0,0x80000005u}, {0x09ED,0x3E,0,5}};
+    for (const auto& item : cases) {
+        ResetCaptures(Scenario::Normal);
+        auto native = NativePacket(0x41, item.bytes, item.opcode);
+        if (item.opcode == 0x089E) native[6] = item.subtype;
+        metadata::Message request;
+        request.kind = metadata::MessageKind::SetTitle;
+        request.server_epoch = 1234; request.room_id = item.room;
+        request.generation = 2; request.revision = 3; request.request_id = 73;
+        request.title = "complete title with rules beyond byte twenty !ai3";
+        auto packet = MessagePacket(native, request);
+        const int result = CallDispatch(0x81, 0x82, 73, &packet);
+        const auto sends = Sends();
+        metadata::TrailerView view;
+        metadata::Message decoded;
+        Check(result > 0 && sends.size() == 1 && DecodeExtended(sends[0], &view, &decoded) &&
+                  view.native_size == item.bytes && decoded.room_id == item.room &&
+                  decoded.request_id == request.request_id && decoded.title == request.title &&
+                  Read32(view.native_data + 2) == NativeUserId(73),
+              "mission and Battle renames/settings keep full metadata and authenticated native identity");
+    }
+}
+
+void TestMissionListErrorResponse()
+{
+    const uint16_t carriers[] = {0x054E, 0x09F4, 0x07AC, 0x08FB, 0x0709, 0x0916};
+    for (const auto opcode : carriers) {
+        ResetCaptures(Scenario::Normal);
+        auto native = NativePacket(0x51, 8, opcode);
+        metadata::Message error;
+        error.kind = metadata::MessageKind::Error;
+        error.server_epoch = 1234;
+        error.request_id = 73;
+        error.error = metadata::RemoteError::InvalidRequest;
+        std::vector<uint8_t> packet;
+        Check(metadata::EncodePacket(native.data(), native.size(), error, &packet),
+              "eight-byte native request error carrier encodes");
+        const int result = CallServerDispatch(0x83, 0x84, 73, &packet);
+        const auto sends = Sends();
+        metadata::TrailerView view;
+        metadata::Message decoded;
+        Check(result > 0 && sends.size() == 1 &&
+                  metadata::DecodePacket(sends[0].bytes.data(), sends[0].bytes.size(), &view, &decoded) &&
+                  view.native_size == 8 && decoded.kind == metadata::MessageKind::Error &&
+                  decoded.request_id == 73 && decoded.error == error.error,
+              "all request rejection carriers survive native Agent error forwarding");
+    }
 }
 
 void TestVariableMissionListResponse()
@@ -1349,6 +1433,9 @@ void RunEnabledCases()
     TestHelloRequest();
     TestSnapshotBatchResponse();
     TestVariableMissionListResponse();
+    TestMissionListErrorResponse();
+    TestTitleUpdateRequests();
+    TestAutoCreateHelloResponse();
     TestSendScopeGates();
     TestThreadLocalIsolation();
     TestNestedDispatch();

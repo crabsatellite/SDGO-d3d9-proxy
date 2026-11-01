@@ -161,16 +161,6 @@ uint32_t SafeRoomId(void** slot)
     }
 }
 
-uint32_t SafeTitleBarRoomId(void* titleBar)
-{
-    __try {
-        void* room = titleBar ? *reinterpret_cast<void**>(static_cast<uint8_t*>(titleBar) + 0x108) : nullptr;
-        const uint32_t id = room ? *static_cast<const uint32_t*>(room) : 0;
-        return id && id <= 400 ? id : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
-}
 
 bool Prepare(ui::Surface surface, const std::wstring& text)
 {
@@ -204,6 +194,8 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
         const auto pending = g_state.Pending(connection);
         if (pending && pending->status == titles::PendingStatus::Awaiting) {
             error = L"The previous room title is still waiting for server confirmation. Please wait before changing it again.";
+        } else if (g_state.IsReady(connection) && g_state.IsNegotiating(connection)) {
+            error = L"The room list is still synchronizing. Please try the title again after it finishes. Your text was kept.";
         } else if (!g_state.IsReady(connection)) {
             if (legacyExact) {
                 g_state.CancelPending(connection);
@@ -211,11 +203,29 @@ bool Prepare(ui::Surface surface, const std::wstring& text)
                 saved.valid = false;
                 return true;
             }
-            error = L"This server has not enabled extended room titles. Ask the server owner to install the matching Mod. Your text was kept.";
+            error = g_state.IsNegotiating(connection) ?
+                L"The server is still checking extended room titles. Please wait for the room list, then retry. Your text was kept." :
+                L"This server has not confirmed extended room title support. Ask the server owner to check the matching Mods. Your text was kept.";
         } else if (!creating && (!draft.room || !g_state.Query(connection, draft.room))) {
             error = L"The room identity has not been confirmed yet. Refresh or re-enter this room, then try again. Your text was kept.";
         } else {
-            if (pending)
+            const auto previousDraft = g_drafts.find(connection);
+            bool sameVersion = !draft.room;
+            if (pending && draft.room) {
+                const auto current = g_state.Query(connection, draft.room);
+                sameVersion = current && current->key.server_epoch == pending->request.server_epoch &&
+                    current->key.generation == pending->request.generation &&
+                    current->revision == pending->request.revision;
+            }
+            const bool retry = pending && previousDraft != g_drafts.end() &&
+                sameVersion &&
+                previousDraft->second.opcode == draft.opcode &&
+                pending->request.title == draft.utf8 && pending->request.room_id == draft.room &&
+                (pending->error.code == titles::ClientError::Timeout ||
+                 pending->error.code == titles::ClientError::TransportError);
+            if (retry)
+                draft.request = pending->request;
+            else if (pending)
                 g_state.CancelPending(connection);
             g_drafts[connection] = std::move(draft);
             return true;
@@ -258,14 +268,31 @@ int __fastcall TitleEvent(void* self, void*, void* event)
     if (!event || Word(static_cast<const uint8_t*>(event) + 4) != 0x0BDB)
         return g_titleEvent(self, event);
     try {
-        const uint32_t nativeId = SafeTitleBarRoomId(self);
-        if (nativeId) {
+        uint32_t nativeId = 0;
+        bool battleDomain = false;
+        std::wstring confirmed;
+        if (!ui::ReadTitleBarRoom(self, &battleDomain, &nativeId, &confirmed) || nativeId > 400) {
+            Explain(L"The room identity is no longer available. Your title was not submitted.");
+            return 1;
+        }
+        bool restoreCache = false;
+        {
             Lock lock;
-            g_activeRoom = nativeId | kBattleDomain;
+            g_activeRoom = nativeId | (battleDomain ? kBattleDomain : 0);
+            const auto pending = g_state.Pending(g_activeConnection);
+            restoreCache = pending && pending->status != titles::PendingStatus::Awaiting;
+            const auto record = g_state.Query(g_activeConnection, g_activeRoom);
+            if (restoreCache && record && !record->title.empty())
+                Wide(record->title, &confirmed);
         }
         std::wstring title;
-        if (!ui::ReadNativeString(static_cast<const uint8_t*>(event) + 0x2C, &title) ||
-            !Prepare(ui::Surface::PvpTitleEdit, title))
+        if (!ui::ReadNativeString(static_cast<const uint8_t*>(event) + 0x2C, &title))
+            return 1;
+        // The native handler compares its cache before sending. Restore the
+        // confirmed value so an identical failed draft can actually be retried.
+        if (restoreCache && !ui::SetTitleBarCachedTitle(self, confirmed))
+            return 1;
+        if (!Prepare(ui::Surface::PvpTitleEdit, title))
             return 1;
         const int result = g_titleEvent(self, event);
         // An unchanged title or native validation can consume the event without
@@ -317,7 +344,11 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     const auto parsed = metadata::ParseTrailer(packet, size);
     if (parsed.status == metadata::TrailerStatus::Valid)
         return transport::SendDecision::Pass; // a native deferred queue already owns this extension
-    if ((opcode == 0x07FB || opcode == 0x0A08) && size == 0x16) {
+    const bool bootstrapCreate = opcode == 0x0640 && size == 0x53 &&
+        packet[6] == 2 && packet[7] == 10 && // native single-mission automatic create
+        !g_state.IsReady(connection) && !g_state.IsNegotiating(connection) &&
+        !g_state.HasPending(connection) && !g_drafts.count(connection);
+    if (((opcode == 0x07FB || opcode == 0x0A08) && size == 0x16) || bootstrapCreate) {
         if (g_drafts.count(connection))
             return transport::SendDecision::Pass;
         const auto hello = g_state.BeginHello(connection, GetTickCount64());
@@ -333,7 +364,7 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     auto& draft = found->second;
     const auto field = Field(opcode);
     if (size != field.size || !field.size || packet[field.length] > 20 ||
-        (opcode == 0x089E && packet[6] != 1))
+        (opcode == 0x089E && packet[6] != ((draft.room & kBattleDomain) ? 1 : 2)))
         return transport::SendDecision::Reject;
     const size_t incoming = packet[field.length];
     const size_t directLength = std::min<size_t>(draft.native_full.size(), 20);
@@ -344,6 +375,12 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
     if (!draft.request.request_id) {
         draft.request = g_state.BeginSetTitle(connection, draft.room, draft.utf8, GetTickCount64());
         if (!draft.request.request_id)
+            return transport::SendDecision::Reject;
+    } else {
+        const auto pending = g_state.Pending(connection);
+        if (!pending || pending->request.request_id != draft.request.request_id ||
+            (pending->status != titles::PendingStatus::Awaiting &&
+             !g_state.RetryPending(connection, draft.request.request_id, GetTickCount64())))
             return transport::SendDecision::Reject;
     }
     std::vector<uint8_t> native(packet, packet + size);
@@ -376,6 +413,8 @@ void AfterSend(uint32_t connection, bool queued, const uint8_t* packet, size_t s
 size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size = 0)
 {
     switch (opcode) {
+    case 0x054E: case 0x09F4: case 0x07AC: case 0x08FB:
+    case 0x0709: case 0x0916: return 8; // native request failures
     case 0x0824:
         return packet && size >= 0x13 && packet[0x12] <= 10 ?
                0x13 + static_cast<size_t>(packet[0x12]) * 0x123 : 0x13;
@@ -391,6 +430,17 @@ size_t ReceiveSize(uint16_t opcode, const uint8_t* packet = nullptr, size_t size
     case 0x091F: return 0x13E;
     case 0x06BA: return 0x1C;
     case 0x087A: return 6;
+    default: return 0;
+    }
+}
+
+uint16_t ErrorOpcode(uint16_t request)
+{
+    switch (request) {
+    case 0x0640: return 0x054E;
+    case 0x050F: return 0x09F4;
+    case 0x089E: return 0x07AC;
+    case 0x09ED: return 0x08FB;
     default: return 0;
     }
 }
@@ -418,7 +468,7 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
                 g_drafts.erase(draft);
             }
         }
-    } else if ((opcode == 0x0617 || opcode == 0x0824) &&
+    } else if ((opcode == 0x0617 || opcode == 0x0824 || opcode == 0x0709 || opcode == 0x0916) &&
                !g_state.HasPending(connection) && !g_drafts.count(connection)) {
         // A bare list response proves this path did not negotiate the extension.
         g_state.DropConnection(connection);
@@ -426,6 +476,11 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
         const auto pending = g_state.Pending(connection);
         if (pending)
             g_state.FailPending(connection, pending->request.request_id, titles::ClientError::TransportError);
+    } else if (size == 8 && Word(packet + 6) != 0 && g_state.HasPending(connection)) {
+        const auto draft = g_drafts.find(connection);
+        if (draft != g_drafts.end() && draft->second.request.request_id &&
+            ErrorOpcode(draft->second.opcode) == opcode)
+            g_state.FailPending(connection, draft->second.request.request_id, titles::ClientError::NativeRejected);
     }
     const auto pending = g_state.Pending(connection);
     failed = previous && previous->status == titles::PendingStatus::Awaiting &&

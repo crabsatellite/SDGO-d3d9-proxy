@@ -24,6 +24,8 @@ constexpr std::size_t kMissionCreateDialogOffset = 0x4C;
 constexpr std::size_t kMissionSettingsDialogOffset = 0x5C;
 constexpr std::size_t kPvpTitleEditOffset = 0x50;
 constexpr std::size_t kTitleBarDialogOffset = 0x48;
+constexpr std::size_t kTitleBarPvpRoomOffset = 0x108;
+constexpr std::size_t kTitleBarMissionRoomOffset = 0x10C;
 constexpr std::size_t kTitleBarCachedTitleOffset = 0x110;
 constexpr std::size_t kPvpRoomTitleOffset = 0x7A;
 constexpr std::size_t kMissionRoomTitleOffset = 0x54;
@@ -39,10 +41,15 @@ constexpr std::size_t kPvpListControlStride = 0x0C;
 constexpr std::size_t kPvpListEntryStride = 0x90;
 constexpr std::size_t kPvpListTitleOffset = 0x7A;
 constexpr std::size_t kPvpListTitleItem = 1;
+constexpr std::size_t kPvpDetailsEntriesBeginOffset = 0x124;
+constexpr std::size_t kPvpDetailsEntriesEndOffset = 0x128;
 constexpr std::size_t kMissionListControlOffset = 0x9C;
 constexpr std::size_t kMissionListEntryStride = 0x123;
 constexpr std::size_t kMissionListRoomIdOffset = 0xC8;
 constexpr std::size_t kMissionListTitleOffset = 0x11C;
+constexpr std::size_t kMissionDetailsEntriesBeginOffset = 0x134;
+constexpr std::size_t kMissionDetailsEntriesEndOffset = 0x138;
+constexpr std::size_t kStaticTextWordSkipOffset = 0x288;
 constexpr std::size_t kMaximumVisibleRoomRows = 64;
 constexpr int kEditControlType = 8;
 constexpr int kButtonControlType = 4;
@@ -77,10 +84,12 @@ using NativeStringAssignFn =
     HostWString24* (__thiscall*)(HostWString24*, const HostWString24*, std::size_t, std::size_t);
 using ButtonTextItemFn = HostWString24* (__thiscall*)(void*, std::uint32_t);
 using StaticTextSetFn = void (__thiscall*)(void*, const HostWString24*);
+using StaticTextWordSkipFn = void (__thiscall*)(void*, std::uint8_t);
 using InitFn = void (__thiscall*)(void*, std::uint32_t);
 using TitleRenderFn = void (__thiscall*)(void*, const void*);
 using PvpRoomListFn = void (__thiscall*)(void*, const void*);
 using MissionRoomRowFn = void (__thiscall*)(void*, int);
+using RoomDetailsFn = void (__thiscall*)(void*, void*, int);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -92,6 +101,7 @@ NarrowToWideFn g_narrowToWide = nullptr;
 NativeStringAssignFn g_nativeStringAssign = nullptr;
 ButtonTextItemFn g_buttonTextItem = nullptr;
 StaticTextSetFn g_staticTextSet = nullptr;
+StaticTextWordSkipFn g_staticTextWordSkip = nullptr;
 const void* g_editVtable = nullptr;
 const void* g_buttonVtable = nullptr;
 const void* g_staticTextVtable = nullptr;
@@ -106,6 +116,8 @@ TitleRenderFn g_pvpTitleRender = nullptr;
 TitleRenderFn g_missionTitleRender = nullptr;
 PvpRoomListFn g_pvpRoomList = nullptr;
 MissionRoomRowFn g_missionRoomRow = nullptr;
+RoomDetailsFn g_pvpRoomDetails = nullptr;
+RoomDetailsFn g_missionRoomDetails = nullptr;
 bool g_bound = false;
 bool g_hooksInstalled = false;
 bool g_titleHooksInstalled = false;
@@ -355,6 +367,21 @@ bool LookupFullTitle(RoomKind kind, const void* roomIdAddress, std::wstring* ful
     return true;
 }
 
+bool SetReadableStaticTitle(void* control, const std::wstring& fullTitle)
+{
+    if (!IsObjectWithVtable(control, g_staticTextVtable))
+        return false;
+    auto* wordSkip = static_cast<std::uint8_t*>(control) +
+                     kStaticTextWordSkipOffset;
+    if (!IsAccessibleRange(wordSkip, sizeof(*wordSkip), false))
+        return false;
+    if (*wordSkip != 1)
+        g_staticTextWordSkip(control, 1);
+    const HostWString24 view = MakeStringView(fullTitle.c_str(), fullTitle.size());
+    g_staticTextSet(control, &view);
+    return true;
+}
+
 void ProjectTitleBar(void* titleBar, const void* room, RoomKind kind)
 {
     if (!room || !IsObjectWithVtable(titleBar, g_titleBarVtable))
@@ -470,10 +497,49 @@ void ProjectMissionRoomRow(void* service, int index)
     const HostWString24 name =
         MakeStringView(kRoomNameStatic, std::size(kRoomNameStatic) - 1);
     void* control = g_findControl(row, &name, kStaticTextControlType);
-    if (!IsObjectWithVtable(control, g_staticTextVtable))
+    SetReadableStaticTitle(control, fullTitle);
+}
+
+void ProjectRoomDetails(void* service, void* dialog, int index, RoomKind kind)
+{
+    if (!service || !dialog || index < 0 ||
+        static_cast<std::size_t>(index) >= kMaximumVisibleRoomRows)
         return;
-    const HostWString24 view = MakeStringView(fullTitle.c_str(), fullTitle.size());
-    g_staticTextSet(control, &view);
+
+    const std::size_t beginOffset =
+        kind == RoomKind::Pvp ? kPvpDetailsEntriesBeginOffset :
+                                kMissionDetailsEntriesBeginOffset;
+    const std::size_t endOffset =
+        kind == RoomKind::Pvp ? kPvpDetailsEntriesEndOffset :
+                                kMissionDetailsEntriesEndOffset;
+    const std::size_t stride =
+        kind == RoomKind::Pvp ? kPvpListEntryStride :
+                                kMissionListEntryStride;
+    void* beginPointer = nullptr;
+    void* endPointer = nullptr;
+    if (!ReadPointer(service, beginOffset, &beginPointer) ||
+        !ReadPointer(service, endOffset, &endPointer))
+        return;
+    const auto begin = reinterpret_cast<std::uintptr_t>(beginPointer);
+    const auto end = reinterpret_cast<std::uintptr_t>(endPointer);
+    if (!begin || end < begin || (end - begin) % stride != 0)
+        return;
+    const std::size_t count = static_cast<std::size_t>((end - begin) / stride);
+    if (count > kMaximumVisibleRoomRows ||
+        static_cast<std::size_t>(index) >= count)
+        return;
+    const auto entry = begin + static_cast<std::size_t>(index) * stride;
+    if (!IsAccessibleRange(reinterpret_cast<const void*>(entry), stride, false))
+        return;
+
+    std::wstring fullTitle;
+    if (!LookupFullTitle(kind, reinterpret_cast<const void*>(entry), &fullTitle))
+        return;
+    constexpr wchar_t kRoomNameStatic[] = L"RoomNameStatic";
+    const HostWString24 name =
+        MakeStringView(kRoomNameStatic, std::size(kRoomNameStatic) - 1);
+    void* control = g_findControl(dialog, &name, kStaticTextControlType);
+    SetReadableStaticTitle(control, fullTitle);
 }
 
 const char* SurfaceName(Surface surface)
@@ -560,6 +626,24 @@ void __fastcall MissionRoomRow(void* self, void*, int index)
     }
 }
 
+void __fastcall PvpRoomDetails(void* self, void*, void* dialog, int index)
+{
+    g_pvpRoomDetails(self, dialog, index);
+    try {
+        ProjectRoomDetails(self, dialog, index, RoomKind::Pvp);
+    } catch (...) {
+    }
+}
+
+void __fastcall MissionRoomDetails(void* self, void*, void* dialog, int index)
+{
+    g_missionRoomDetails(self, dialog, index);
+    try {
+        ProjectRoomDetails(self, dialog, index, RoomKind::Mission);
+    } catch (...) {
+    }
+}
+
 }  // namespace
 
 bool Bind(const SdgoApi* api, SdgoMod* mod)
@@ -582,13 +666,18 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
         reinterpret_cast<ButtonTextItemFn>(api->Symbol(mod, "room_titles.ui_button_text_item"));
     const auto staticTextSet =
         reinterpret_cast<StaticTextSetFn>(api->Symbol(mod, "room_titles.ui_static_text_set"));
+    const auto staticTextWordSkip =
+        reinterpret_cast<StaticTextWordSkipFn>(
+            api->Symbol(mod, "room_titles.ui_static_text_word_skip"));
     const void* editVtable = api->Symbol(mod, "room_titles.ui_edit_vtable");
     const void* buttonVtable = api->Symbol(mod, "room_titles.ui_button_vtable");
     const void* staticTextVtable = api->Symbol(mod, "room_titles.ui_static_text_vtable");
-    const void* titleBarVtable = api->Symbol(mod, "room_titles.ui_titlebar_vtable");
+    const void* titleBarVtable =
+        api->Symbol(mod, "room_titles.ui_titlebar_vtable");
     if (!findControl || !getText || !setText || !wideToNarrow || !narrowToWide ||
-        !nativeStringAssign || !buttonTextItem || !staticTextSet || !editVtable ||
-        !buttonVtable || !staticTextVtable || !titleBarVtable)
+        !nativeStringAssign || !buttonTextItem || !staticTextSet ||
+        !staticTextWordSkip || !editVtable || !buttonVtable ||
+        !staticTextVtable || !titleBarVtable)
         return false;
 
     g_api = api;
@@ -601,6 +690,7 @@ bool Bind(const SdgoApi* api, SdgoMod* mod)
     g_nativeStringAssign = nativeStringAssign;
     g_buttonTextItem = buttonTextItem;
     g_staticTextSet = staticTextSet;
+    g_staticTextWordSkip = staticTextWordSkip;
     g_editVtable = editVtable;
     g_buttonVtable = buttonVtable;
     g_staticTextVtable = staticTextVtable;
@@ -649,7 +739,13 @@ bool InstallTitleDisplayHooks(TitleLookupCallback callback)
                          reinterpret_cast<void**>(&g_pvpRoomList)) ||
         !g_api->HookCode(g_mod, "room_titles.ui_mission_room_row",
                          reinterpret_cast<void*>(&MissionRoomRow),
-                         reinterpret_cast<void**>(&g_missionRoomRow)))
+                         reinterpret_cast<void**>(&g_missionRoomRow)) ||
+        !g_api->HookCode(g_mod, "room_titles.ui_pvp_room_details",
+                         reinterpret_cast<void*>(&PvpRoomDetails),
+                         reinterpret_cast<void**>(&g_pvpRoomDetails)) ||
+        !g_api->HookCode(g_mod, "room_titles.ui_mission_room_details",
+                         reinterpret_cast<void*>(&MissionRoomDetails),
+                         reinterpret_cast<void**>(&g_missionRoomDetails)))
         return false;
     g_titleHooksInstalled = true;
     return true;
@@ -720,13 +816,45 @@ bool SetEditText(void* edit, const std::wstring& text, bool selection_flag)
 
 bool SetTitleBarCachedTitle(void* title_bar, const std::wstring& text)
 {
-    if (!g_bound || !IsObjectWithVtable(title_bar, g_titleBarVtable) ||
+    if (!g_bound ||
+        !IsObjectWithVtable(title_bar, g_titleBarVtable) ||
         text.empty() || text.size() > kMaximumTitleCodeUnits ||
         text.find(L'\0') != std::wstring::npos)
         return false;
     auto* cached = reinterpret_cast<HostWString24*>(
         static_cast<std::uint8_t*>(title_bar) + kTitleBarCachedTitleOffset);
     return AssignNativeString(cached, text);
+}
+
+bool ReadTitleBarRoom(void* title_bar,
+                      bool* battle_domain,
+                      std::uint32_t* native_room_id,
+                      std::wstring* legacy_title)
+{
+    if (!g_bound || !battle_domain || !native_room_id || !legacy_title ||
+        !IsObjectWithVtable(title_bar, g_titleBarVtable))
+        return false;
+
+    void* room = nullptr;
+    RoomKind kind = RoomKind::Pvp;
+    if (!ReadPointer(title_bar, kTitleBarPvpRoomOffset, &room)) {
+        kind = RoomKind::Mission;
+        if (!ReadPointer(title_bar, kTitleBarMissionRoomOffset, &room))
+            return false;
+    }
+    if (!IsAccessibleRange(room, sizeof(std::uint32_t), false))
+        return false;
+
+    std::uint32_t roomId = 0;
+    std::memcpy(&roomId, room, sizeof(roomId));
+    std::wstring title;
+    if (!roomId || !ReadLegacyRoomTitle(room, kind, &title))
+        return false;
+
+    *battle_domain = kind == RoomKind::Pvp;
+    *native_room_id = roomId;
+    legacy_title->swap(title);
+    return true;
 }
 
 bool LegacyTitleBytes(const std::wstring& text, std::string* copy)

@@ -21,6 +21,7 @@ struct FakeEdit
     std::wstring text;
     unsigned writes = 0;
 };
+std::wstring g_title_bar_cache;
 }  // namespace
 
 bool Bind(const SdgoApi*, SdgoMod*) { return true; }
@@ -55,7 +56,21 @@ bool SetEditText(void* edit, const std::wstring& text, bool)
     return true;
 }
 
-bool SetTitleBarCachedTitle(void*, const std::wstring&) { return true; }
+bool SetTitleBarCachedTitle(void*, const std::wstring& title) { g_title_bar_cache = title; return true; }
+
+bool ReadTitleBarRoom(void* self, bool* battle, uint32_t* id, std::wstring* legacy)
+{
+    if (!self || !battle || !id || !legacy) return false;
+    auto bytes = static_cast<uint8_t*>(self);
+    void* room = nullptr;
+    std::memcpy(&room, bytes + 0x108, sizeof(room));
+    *battle = room != nullptr;
+    if (!room) std::memcpy(&room, bytes + 0x10C, sizeof(room));
+    if (!room) return false;
+    std::memcpy(id, room, sizeof(*id));
+    *legacy = L"native title";
+    return *id != 0;
+}
 
 bool LegacyTitleBytes(const std::wstring& text, std::string* copy)
 {
@@ -104,10 +119,13 @@ uint32_t g_fake_mission_room = 0;
 void* g_fake_mission_room_object = &g_fake_mission_room;
 int g_title_event_calls = 0;
 int g_title_event_result = 0;
+int (*g_title_event_callback)(void*) = nullptr;
+metadata::Message g_title_event_message;
 
-int __fastcall FakeTitleEvent(void*, void*, void*)
+int __fastcall FakeTitleEvent(void*, void*, void* event)
 {
     ++g_title_event_calls;
+    if (g_title_event_callback) return g_title_event_callback(event);
     return g_title_event_result;
 }
 
@@ -231,6 +249,9 @@ void ResetRoot()
     g_missionRoom = &g_fake_mission_room_object;
     g_title_event_calls = 0;
     g_title_event_result = 0;
+    g_title_event_callback = nullptr;
+    g_title_event_message = {};
+    ui::g_title_bar_cache.clear();
     g_titleEvent = reinterpret_cast<EventFn>(&FakeTitleEvent);
 }
 
@@ -694,6 +715,15 @@ void TestQueueFailureAndAcknowledgement()
                   ui::Surface::PvpCreate)]
                   .valid,
           "matching transport failure preserves the exact draft for retry");
+    Check(Prepare(ui::Surface::PvpCreate, title), "identical failed title can be resubmitted");
+    const auto retry = SendDraft(50, kCreate, title);
+    Check(retry.message.request_id == first.message.request_id &&
+              g_state.Pending(50)->status == titles::PendingStatus::Awaiting,
+          "user retry preserves the mutation nonce so a lost server ACK can be replayed");
+    AckBatch(50, 33, 900, 1, 1, Utf8Bytes(title), retry.message.request_id);
+    Check(!g_state.HasPending(50) && g_drafts.empty() &&
+              StartDecision(50) == transport::SendDecision::Pass,
+          "replayed confirmation resolves the retained draft and start gate");
 
     ResetRoot();
     Check(Ready(51, 901), "bare ACK fixture negotiates capability");
@@ -786,6 +816,7 @@ void TestTitleEventNoSendAndServerError()
     {
         std::array<uint8_t, 0x108> prefix{};
         void* room = nullptr;
+        void* missionRoom = nullptr;
     };
     struct FakeBdbEvent
     {
@@ -857,6 +888,123 @@ void TestTitleEventNoSendAndServerError()
           "matching server rejection reports immediately while retaining the exact editable draft and blocking stale-rule start");
 }
 
+int NativeTitleApplyFixture(void* event)
+{
+    // Mirror only the verified host's compare/cache/send contract at A46380.
+    const auto& text = reinterpret_cast<ui::FakeEdit*>(static_cast<uint8_t*>(event) + 0x2C)->text;
+    if (ui::g_title_bar_cache == text) return 0;
+    ui::g_title_bar_cache = text;
+    auto packet = DraftPacket(kPvpTitleEdit, text);
+    packet[6] = (g_activeRoom & kBattleDomainForTest) ? 1 : 2;
+    std::vector<uint8_t> replacement;
+    const auto decision = BeforeSend(g_activeConnection, packet.data(), packet.size(), 0, &replacement);
+    metadata::TrailerView view;
+    if (decision != transport::SendDecision::Replace ||
+        !DecodeMessagePacket(replacement, &view, &g_title_event_message)) return 0;
+    return 1;
+}
+
+void TestMissionTitleEventRetry()
+{
+    struct TitleBar { std::array<uint8_t, 0x108> prefix{}; void* battle = nullptr; void* mission = nullptr; };
+    struct Event { std::array<uint8_t, 0x2C> prefix{}; ui::FakeEdit title; };
+    ResetRoot();
+    Check(Ready(91, 9001, {Record(9001, 5, 1, 1, "confirmed mission title"),
+              Record(9001, kBattleDomainForTest | 5, 2, 1, "unrelated battle title")}),
+          "shared titlebar fixture seeds both domains with the same native ID");
+    uint32_t id = 5;
+    TitleBar bar;
+    bar.mission = &id;
+    Event event;
+    Put16(event.prefix.data() + 4, 0x0BDB);
+    event.title.text = L"same mission draft after lost confirmation !ai3 lv4";
+    ui::g_title_bar_cache = L"confirmed mission title";
+    g_title_event_callback = &NativeTitleApplyFixture;
+    Check(TitleEvent(&bar, nullptr, &event) == 1 && g_activeRoom == 5 &&
+              g_title_event_message.room_id == 5 && g_state.HasPending(91),
+          "mission titlebar uses subtype two and the Team identity instead of the colliding Battle ID");
+    const auto originalRequest = g_title_event_message.request_id;
+    g_state.AdvanceTime(91, GetTickCount64() + titles::kSetTitleTimeoutMilliseconds);
+    Check(TitleEvent(&bar, nullptr, &event) == 1 &&
+              g_title_event_message.request_id == originalRequest &&
+              g_state.Pending(91)->status == titles::PendingStatus::Awaiting,
+          "identical timed-out title restores the confirmed cache and sends the original mutation nonce");
+    AckSnapshot(91, Record(9001, 5, 1, 2, Utf8Bytes(event.title.text)), originalRequest);
+    Check(!g_state.HasPending(91) && g_state.Query(91, 5)->title == Utf8Bytes(event.title.text) &&
+              g_state.Query(91, kBattleDomainForTest | 5)->title == "unrelated battle title",
+          "replayed mission confirmation completes without changing another room domain");
+}
+
+void TestAutoCreateCapability()
+{
+    ResetRoot();
+    auto native = NativePacket(0x53, 0x0640);
+    native[6] = 2; native[7] = 10; native[0x15] = 12;
+    std::memset(native.data() + 0x16, 0, 21);
+    std::memcpy(native.data() + 0x16, "native title", 12);
+    const auto original = native;
+    std::vector<uint8_t> replacement;
+    metadata::TrailerView view;
+    metadata::Message hello;
+    Check(BeforeSend(101, native.data(), native.size(), 0, &replacement) == transport::SendDecision::Replace &&
+              DecodeMessagePacket(replacement, &view, &hello) && hello.kind == metadata::MessageKind::Hello &&
+              std::equal(original.begin(), original.end(), view.native_data) && native == original,
+          "mode-10 direct automatic create negotiates without a lobby visit or a changed native title");
+    AckBatch(101, 5, 9876, 1, 1, "", hello.request_id);
+    Check(g_state.IsReady(101) && g_state.Query(101, 5).has_value() && g_activeRoom == 5,
+          "automatic create acknowledgement confirms capability and Team identity");
+    const std::wstring title = L"full title in mode ten without entering another lobby !ai3";
+    Check(Prepare(ui::Surface::PvpTitleEdit, title), "direct mode-10 room can edit a full title");
+    auto rename = DraftPacket(0x089E, title);
+    rename[6] = 2;
+    Check(BeforeSend(101, rename.data(), rename.size(), 0, &replacement) == transport::SendDecision::Replace &&
+              DecodeMessagePacket(replacement, &view, &hello) && hello.kind == metadata::MessageKind::SetTitle &&
+              hello.room_id == 5,
+          "direct mode-10 full rename uses the native mission subtype and confirmed identity");
+}
+
+void TestNegotiatingDraft()
+{
+    ResetRoot();
+    Check(Ready(81, 1234), "refresh race fixture starts with confirmed capability");
+    auto list = NativePacket(0x16, 0x0A08);
+    std::vector<uint8_t> replacement;
+    Check(BeforeSend(81, list.data(), list.size(), 0, &replacement) ==
+              transport::SendDecision::Replace && g_state.IsNegotiating(81),
+          "mission refresh tracks its outstanding capability offer");
+    const std::wstring text = L"a full room title waiting for a refreshed list !ai3";
+    Check(!Prepare(ui::Surface::PvpCreate, text) && !g_notices.empty() &&
+              g_saved[static_cast<size_t>(ui::Surface::PvpCreate)].text == text &&
+              g_drafts.empty() && !g_state.HasPending(81),
+          "title submitted during refresh reports the wait before native UI closes and keeps text");
+    metadata::TrailerView view;
+    metadata::Message hello;
+    Check(DecodeMessagePacket(replacement, &view, &hello), "refresh offer decodes");
+    metadata::Message error;
+    error.kind = metadata::MessageKind::Error;
+    error.request_id = hello.request_id;
+    error.server_epoch = 1234;
+    error.error = metadata::RemoteError::InvalidRequest;
+    std::vector<uint8_t> body;
+    Check(metadata::EncodeMessageBody(error, &body), "mission list error body encodes");
+    auto failedList = NativePacket(8, 0x0916);
+    Check(ReceiveSize(0x0916, failedList.data(), failedList.size()) == 8,
+          "native eight-byte mission list error is a supported carrier");
+    OnReceive(81, failedList.data(), failedList.size(), body.data(), body.size());
+    Check(!g_state.IsNegotiating(81) && !g_state.IsReady(81),
+          "matching mission list rejection resolves negotiation without stale readiness");
+    Check(Ready(81, 1234) && Prepare(ui::Surface::PvpCreate, text),
+          "title can be retried once a later list confirms support");
+    const auto sent = SendDraft(81, 0x0640, text);
+    auto nativeError = NativePacket(8, 0x054E);
+    Put16(nativeError.data() + 6, 0x101F);
+    OnReceive(81, nativeError.data(), nativeError.size(), nullptr, 0);
+    const auto pending = g_state.Pending(81);
+    Check(sent.message.request_id && pending && pending->status == titles::PendingStatus::Failed &&
+              pending->request.title == Utf8Bytes(text),
+          "bare native create rejection fails the matching title without losing its text");
+}
+
 void RunTests()
 {
     TestCapabilityAndLegacyFallback();
@@ -865,6 +1013,9 @@ void RunTests()
     TestQueueFailureAndAcknowledgement();
     TestSavedDraftAndDomains();
     TestTitleEventNoSendAndServerError();
+    TestNegotiatingDraft();
+    TestMissionTitleEventRetry();
+    TestAutoCreateCapability();
 }
 }  // namespace
 

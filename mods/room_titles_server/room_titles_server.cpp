@@ -69,6 +69,7 @@ bool g_active = false;
 
 constexpr std::uint16_t kCreateTeam = 0x0640;
 constexpr std::uint16_t kListBattle = 0x07FB;
+constexpr std::uint16_t kListTeam = 0x0A08;
 constexpr std::uint16_t kBattleSettings = 0x050F;
 constexpr std::uint16_t kRenameRoom = 0x089E;
 constexpr std::uint16_t kTeamSettings = 0x09ED;
@@ -106,6 +107,7 @@ struct DispatchContext {
     ContextKind kind = ContextKind::None;
     std::uint16_t opcode = 0;
     std::uint32_t pilot = 0;
+    std::uintptr_t route = 0;
     std::uint32_t wire_id = 0;
     const void* native_packet = nullptr;
     std::size_t native_size = 0;
@@ -117,6 +119,7 @@ struct DispatchContext {
     bool mutation = false;
     bool committed = false;
     bool request_completed = false;
+    metadata::RemoteError response_error = metadata::RemoteError::None;
 };
 
 struct SendGate {
@@ -330,6 +333,7 @@ std::size_t ExactRequestBytes(std::uint16_t opcode)
     switch (opcode) {
     case kCreateTeam: return 0x53;
     case kListBattle: return 0x16;
+    case kListTeam: return 0x16;
     case kBattleSettings: return 0x37;
     case kRenameRoom: return 0x1D;
     case kTeamSettings: return 0x3E;
@@ -388,6 +392,76 @@ bool SameKey(const metadata::RoomKey& left,
     return left.server_epoch == right.server_epoch &&
            left.room_id == right.room_id &&
            left.generation == right.generation;
+}
+
+metadata::RemoteError RemoteErrorForState(metadata::StateError error)
+{
+    switch (error) {
+    case metadata::StateError::None:
+        return metadata::RemoteError::None;
+    case metadata::StateError::NotFound:
+        return metadata::RemoteError::RoomNotFound;
+    case metadata::StateError::StaleGeneration:
+        return metadata::RemoteError::StaleGeneration;
+    case metadata::StateError::StaleRevision:
+        return metadata::RemoteError::StaleRevision;
+    case metadata::StateError::Unauthorized:
+        return metadata::RemoteError::Unauthorized;
+    case metadata::StateError::AlreadyExists:
+        return metadata::RemoteError::Conflict;
+    case metadata::StateError::InvalidArgument:
+    case metadata::StateError::InvalidTitle:
+    case metadata::StateError::StaleEpoch:
+        return metadata::RemoteError::InvalidRequest;
+    case metadata::StateError::RevisionExhausted:
+    case metadata::StateError::GenerationExhausted:
+        return metadata::RemoteError::Internal;
+    }
+    return metadata::RemoteError::Internal;
+}
+
+metadata::Message ErrorMessage(const DispatchContext& context,
+                               metadata::RemoteError error)
+{
+    metadata::Message message;
+    message.kind = metadata::MessageKind::Error;
+    message.error = error;
+    message.request_id = context.message.request_id;
+    if (context.message.server_epoch &&
+        context.message.room_id &&
+        context.message.generation) {
+        message.server_epoch = context.message.server_epoch;
+        message.room_id = context.message.room_id;
+        message.generation = context.message.generation;
+        message.revision = context.message.revision;
+    }
+    return message;
+}
+
+bool NativeFailureCarrier(const DispatchContext& context,
+                          const void* packet,
+                          int size)
+{
+    if (!context.extended || !packet || size != 8)
+        return false;
+    std::uint16_t expectedOpcode = 0;
+    switch (context.opcode) {
+    case kCreateTeam: expectedOpcode = 0x054E; break;
+    case kListBattle: expectedOpcode = 0x0709; break;
+    case kListTeam: expectedOpcode = 0x0916; break;
+    case kBattleSettings: expectedOpcode = 0x09F4; break;
+    case kRenameRoom: expectedOpcode = 0x07AC; break;
+    case kTeamSettings: expectedOpcode = 0x08FB; break;
+    default: return false;
+    }
+    if (Word(packet) != expectedOpcode)
+        return false;
+    std::uint32_t pilot = 0;
+    std::uint16_t error = 0;
+    const auto* bytes = static_cast<const std::uint8_t*>(packet);
+    return SafeDword(bytes + 2, &pilot) &&
+           pilot == context.pilot &&
+           (std::memcpy(&error, bytes + 6, sizeof(error)), error != 0);
 }
 
 int DispatchScoped(DispatchFn original,
@@ -472,13 +546,17 @@ bool CommitContext(DispatchContext* context,
                g_state->QueryRoom(context->wire_id, snapshot);
 
     const std::uint16_t response = Word(packet);
-    if (context->kind == ContextKind::Hello && response == 0x0617) {
+    if (context->kind == ContextKind::Hello &&
+        ((context->opcode == kListBattle && response == 0x0617) ||
+         (context->opcode == kListTeam && response == 0x0824))) {
         const auto* bytes = static_cast<const std::uint8_t*>(packet);
-        if (size < 0x15)
-            return false;
         std::array<std::uint32_t, 10> wireIds{};
         const std::size_t count =
+            context->opcode == kListBattle ?
             server::ParseBattleListWireIds(
+                bytes, static_cast<std::size_t>(size),
+                wireIds.data(), wireIds.size()) :
+            server::ParseTeamListWireIds(
                 bytes, static_cast<std::size_t>(size),
                 wireIds.data(), wireIds.size());
         for (std::size_t index = 0; index < count; ++index) {
@@ -516,8 +594,10 @@ bool CommitContext(DispatchContext* context,
                 g_state->CreateRoom(server::RoomDomain::Team, nativeId,
                                     owner, nativeTitle, full, true);
         }
-        if (!created.ok())
+        if (!created.ok()) {
+            context->response_error = RemoteErrorForState(created.error);
             return false;
+        }
         context->wire_id = created.snapshot.key.room_id;
         context->committed = true;
         SyncMembers(server::RoomDomain::Team, room);
@@ -543,8 +623,10 @@ bool CommitContext(DispatchContext* context,
             updated = g_state->ObserveNativeTitle(context->wire_id,
                                                   context->native_title);
         }
-        if (!updated.ok())
+        if (!updated.ok()) {
+            context->response_error = RemoteErrorForState(updated.error);
             return false;
+        }
         context->committed = true;
         *snapshot = updated.snapshot;
         return true;
@@ -567,7 +649,8 @@ bool CommitContext(DispatchContext* context,
 
     if (context->kind == ContextKind::Info && response == 0x091F) {
         if (!context->wire_id)
-            context->wire_id = g_state->QueryPilotWireId(context->pilot);
+            context->wire_id = g_state->QueryPilotWireId(
+                context->pilot, server::RoomDomain::Battle);
         if (!ObserveRoomByWire(context->wire_id, snapshot))
             return false;
         context->committed = true;
@@ -596,14 +679,29 @@ bool BuildHelloBatch(DispatchContext* context,
                      int size,
                      std::vector<std::uint8_t>* extended)
 {
-    if (!context || !packet || !extended || size < 0x15 || !g_state)
+    if (!context || !packet || !extended || size < 2 || !g_state)
         return false;
     const auto* bytes = static_cast<const std::uint8_t*>(packet);
     std::array<std::uint32_t, 10> wireIds{};
-    const std::size_t count =
+    std::size_t count = 0;
+    if (context->opcode == kCreateTeam) {
+        std::uint32_t nativeId = 0;
+        if (size < 10 || !SafeDword(bytes + 6, &nativeId))
+            return false;
+        wireIds[0] = server::EncodeRoomId(server::RoomDomain::Team, nativeId);
+        metadata::RoomSnapshot observed;
+        if (!wireIds[0] || !ObserveRoomByWire(wireIds[0], &observed))
+            return false;
+        count = 1;
+    } else {
+        count = context->opcode == kListBattle ?
         server::ParseBattleListWireIds(
             bytes, static_cast<std::size_t>(size),
+            wireIds.data(), wireIds.size()) :
+        server::ParseTeamListWireIds(
+            bytes, static_cast<std::size_t>(size),
             wireIds.data(), wireIds.size());
+    }
     const metadata::SnapshotBatch batch =
         g_state->SnapshotBatchForWireIds(context->message.request_id,
                                          wireIds.data(), count);
@@ -619,11 +717,30 @@ bool BuildContextResponse(DispatchContext* context,
 {
     if (!context || !packet || !extended || size < 2 || !g_state)
         return false;
+    if (NativeFailureCarrier(*context, packet, size)) {
+        return metadata::EncodePacket(
+            static_cast<const std::uint8_t*>(packet),
+            static_cast<std::size_t>(size),
+            ErrorMessage(*context, metadata::RemoteError::InvalidRequest),
+            extended);
+    }
     metadata::RoomSnapshot snapshot;
     const bool hasSnapshot = CommitContext(context, packet, size, &snapshot);
     if (context->kind == ContextKind::Hello &&
-        Word(packet) == 0x0617 && actorRecipient)
+        ((context->opcode == kListBattle && Word(packet) == 0x0617) ||
+         (context->opcode == kListTeam && Word(packet) == 0x0824) ||
+         (context->opcode == kCreateTeam && Word(packet) == 0x0A33 && size == 0x21FC)) &&
+        actorRecipient)
         return BuildHelloBatch(context, packet, size, extended);
+    if (!hasSnapshot &&
+        context->extended &&
+        context->response_error != metadata::RemoteError::None &&
+        actorRecipient) {
+        return metadata::EncodePacket(
+            static_cast<const std::uint8_t*>(packet),
+            static_cast<std::size_t>(size),
+            ErrorMessage(*context, context->response_error), extended);
+    }
     if (!hasSnapshot)
         return false;
     const std::uint32_t requestId =
@@ -730,10 +847,17 @@ int ForwardSend(void* self,
         return 0;
 
     try {
+        const std::uint32_t recipientPilot =
+            PacketPilot(destination, packet, size);
+        if (!g_state ||
+            !g_state->HasCapability(
+                recipientPilot,
+                static_cast<std::uintptr_t>(destination)))
+            return g_send(self, destination, packet, size, flags);
         std::vector<std::uint8_t> extended;
         bool recognized = false;
         const bool actorRecipient =
-            context && EmbeddedPilot(packet, size) == context->pilot;
+            context && recipientPilot == context->pilot;
         if (context)
             recognized =
                 BuildContextResponse(context, packet, size,
@@ -755,8 +879,6 @@ int ForwardSend(void* self,
             SendScoped(g_send, context, self, destination, extended.data(),
                        static_cast<int>(extended.size()), flags, opcode);
         if (result > 0 && context) {
-            if (context->kind == ContextKind::Hello)
-                g_state->ConfirmCapability(context->pilot);
             if (context->mutation) {
                 server::CachedReply reply;
                 server::CachedReply* replyPointer = nullptr;
@@ -764,6 +886,7 @@ int ForwardSend(void* self,
                     reply.packet = extended;
                     reply.sender =
                         reinterpret_cast<std::uintptr_t>(self);
+                    reply.destination = destination;
                     reply.flags = flags;
                     replyPointer = &reply;
                 }
@@ -814,9 +937,15 @@ bool PrepareContext(DispatchContext* context,
     if (bodySize)
         context->request_body.assign(body, body + bodySize);
 
-    if (opcode == kListBattle) {
+    if (opcode == kListBattle || opcode == kListTeam ||
+        (opcode == kCreateTeam && message && message->kind == metadata::MessageKind::Hello)) {
         if (!message || message->kind != metadata::MessageKind::Hello)
             return false;
+        if (opcode == kCreateTeam) {
+            server::NativeTitle nativeTitle;
+            if (!RequestTitle(opcode, nativePacket, nativeSize, &nativeTitle))
+                return false;
+        }
         context->kind = ContextKind::Hello;
         return true;
     }
@@ -846,21 +975,16 @@ bool PrepareContext(DispatchContext* context,
             return false;
         const server::RoomDomain domain =
             RequestDomain(opcode, nativePacket);
-        context->wire_id =
-            g_state->QueryPilotWireId(pilot, domain);
-        if (!context->wire_id)
-            return message == nullptr;
         if (message) {
-            metadata::RoomSnapshot current;
             if (message->kind != metadata::MessageKind::SetTitle ||
-                message->room_id != context->wire_id ||
-                !g_state->QueryRoom(context->wire_id, &current) ||
-                !SameKey(current.key, *message) ||
-                current.revision != message->revision ||
-                current.owner_session != pilot)
+                server::DecodeRoomDomain(message->room_id) != domain)
                 return false;
+            context->wire_id = message->room_id;
+        } else {
+            context->wire_id =
+                g_state->QueryPilotWireId(pilot, domain);
         }
-        return true;
+        return context->wire_id != 0 || message == nullptr;
     }
     if (message)
         return false;
@@ -879,12 +1003,32 @@ bool PrepareContext(DispatchContext* context,
     return false;
 }
 
-int Replay(const server::CachedReply& reply,
-           std::uint32_t pilot)
+bool ValidateMutationContext(const DispatchContext& context)
 {
-    if (!g_send || reply.packet.empty() || !reply.sender)
+    if (!context.mutation)
+        return true;
+    if (context.kind == ContextKind::Create)
+        return true;
+    if (context.kind != ContextKind::Update)
+        return false;
+    const server::RoomDomain domain =
+        RequestDomain(context.opcode, context.native_packet);
+    if (g_state->QueryPilotWireId(context.pilot, domain) !=
+        context.wire_id)
+        return false;
+    metadata::RoomSnapshot current;
+    return g_state->QueryRoom(context.wire_id, &current) &&
+           SameKey(current.key, context.message) &&
+           current.revision == context.message.revision &&
+           current.owner_session == context.pilot;
+}
+
+int Replay(const server::CachedReply& reply)
+{
+    if (!g_send || reply.packet.empty() || !reply.sender ||
+        !reply.destination)
         return 1;
-    g_send(reinterpret_cast<void*>(reply.sender), pilot,
+    g_send(reinterpret_cast<void*>(reply.sender), reply.destination,
            reply.packet.data(), static_cast<int>(reply.packet.size()),
            reply.flags);
     return 1;
@@ -902,6 +1046,7 @@ int __cdecl Dispatch(DWORD argument0,
     const std::size_t expected = ExactRequestBytes(opcode);
     const bool passiveVariable =
         opcode == kMissionConversion || opcode == kPvpConversion;
+    bool nativeDispatched = false;
     if (!expected && !passiveVariable)
         return g_dispatch(argument0, argument1, connection, packet, size);
 
@@ -915,6 +1060,13 @@ int __cdecl Dispatch(DWORD argument0,
                    g_dispatch(argument0, argument1, connection, packet, size) :
                    1;
 
+        // A legacy client entering a lobby must not inherit an earlier login's
+        // capability for the same pilot on a shared Agent route. Keep active
+        // rooms and in-flight creates intact while ordinary Mod traffic waits.
+        if ((opcode == kListBattle || opcode == kListTeam) &&
+            static_cast<std::size_t>(size) == expected)
+            g_state->ForgetCapabilityIfDetached(pilot, true);
+
         metadata::Message message;
         const metadata::Message* messagePointer = nullptr;
         metadata::TrailerView trailer;
@@ -924,11 +1076,14 @@ int __cdecl Dispatch(DWORD argument0,
         void* nativePacket = packet;
         std::size_t nativeSize = static_cast<std::size_t>(size);
 
-        if (expected && static_cast<std::size_t>(size) != expected) {
+        if (expected && static_cast<std::size_t>(size) > expected) {
             const metadata::TrailerParseResult parsed =
                 metadata::ParseTrailer(
                     static_cast<const std::uint8_t*>(packet),
                     static_cast<std::size_t>(size));
+            if (parsed.status == metadata::TrailerStatus::NoTrailer)
+                return g_dispatch(argument0, argument1, connection,
+                                  packet, size);
             if (parsed.status != metadata::TrailerStatus::Valid ||
                 parsed.view.native_size != expected ||
                 !metadata::DecodeMessageBody(parsed.view.body_data,
@@ -953,6 +1108,11 @@ int __cdecl Dispatch(DWORD argument0,
                 return 1;
             return g_dispatch(argument0, argument1, connection, packet, size);
         }
+        context.route = static_cast<std::uintptr_t>(connection);
+        if (context.kind == ContextKind::Hello &&
+            !g_state->BeginCapabilityRound(pilot, context.route) &&
+            !g_state->HasCapability(pilot, context.route))
+            return 1;
 
         if (context.mutation) {
             const server::RequestDecision decision =
@@ -962,12 +1122,20 @@ int __cdecl Dispatch(DWORD argument0,
             case server::RequestDisposition::Proceed:
                 break;
             case server::RequestDisposition::Replay:
-                return Replay(decision.reply, pilot);
+                return Replay(decision.reply);
             default:
+                return 1;
+            }
+            if (!ValidateMutationContext(context)) {
+                g_state->AbortRequest(
+                    pilot, message.request_id, opcode,
+                    context.request_body.data(),
+                    context.request_body.size());
                 return 1;
             }
         }
 
+        nativeDispatched = true;
         DispatchScoped(g_dispatch, argument0, argument1, connection,
                        nativePacket, static_cast<int>(nativeSize), &context);
         if (context.mutation && !context.request_completed) {
@@ -987,7 +1155,9 @@ int __cdecl Dispatch(DWORD argument0,
         return 1;
     } catch (const std::bad_alloc&) {
         // Extended packets fail closed; exact native packets keep native behavior.
-        return static_cast<std::size_t>(size) == expected ?
+        if (nativeDispatched)
+            return 1;
+        return expected && static_cast<std::size_t>(size) == expected ?
                g_dispatch(argument0, argument1, connection, packet, size) : 1;
     }
 }
@@ -1357,8 +1527,11 @@ int __fastcall TeamDeletePilot(void* self, void*, DWORD pilot)
     const bool hadKey = CaptureKey(wireId, &expectedKey);
     const int result = g_teamDeletePilot(self, pilot);
     try {
-        if (result > 0 && hadKey)
-            g_state->RemoveMember(expectedKey, pilot);
+        if (result > 0 && g_state) {
+            if (hadKey)
+                g_state->RemoveMember(expectedKey, pilot);
+            g_state->ForgetCapabilityIfDetached(pilot);
+        }
     } catch (const std::bad_alloc&) {
     }
     return result;
@@ -1373,8 +1546,11 @@ int __fastcall BattleDeletePilot(void* self, void*, DWORD pilot)
     const bool hadKey = CaptureKey(wireId, &expectedKey);
     const int result = g_battleDeletePilot(self, pilot);
     try {
-        if (result > 0 && hadKey)
-            g_state->RemoveMember(expectedKey, pilot);
+        if (result > 0 && g_state) {
+            if (hadKey)
+                g_state->RemoveMember(expectedKey, pilot);
+            g_state->ForgetCapabilityIfDetached(pilot);
+        }
     } catch (const std::bad_alloc&) {
     }
     return result;

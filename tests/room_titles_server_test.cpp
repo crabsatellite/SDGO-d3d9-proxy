@@ -82,6 +82,30 @@ void TestBattleListFixture()
           "0x617 fixture reads count at +0x14 and Battle rows at +0x15");
 }
 
+void TestTeamListFixture()
+{
+    std::vector<std::uint8_t> packet(0x13 + 2 * 0x123, 0);
+    packet[0] = 0x24;
+    packet[1] = 0x08;
+    packet[0x0C] = 9; // unrelated DWORD low byte
+    packet[0x12] = 2; // authoritative row count
+    const std::uint32_t first = 15;
+    const std::uint32_t second = 16;
+    std::memcpy(packet.data() + 0x13, &first, sizeof(first));
+    std::memcpy(packet.data() + 0x13 + 0x123, &second, sizeof(second));
+    std::uint32_t wireIds[10] = {};
+    const std::size_t count =
+        server::ParseTeamListWireIds(packet.data(), packet.size(),
+                                     wireIds, 10);
+    Check(count == 2 && wireIds[0] == 15 && wireIds[1] == 16,
+          "0x824 fixture reads count at +0x12 and Team rows at +0x13");
+
+    packet.resize(0x13 + 0x123);
+    Check(server::ParseTeamListWireIds(packet.data(), packet.size(),
+                                       wireIds, 10) == 1,
+          "0x824 variable native size bounds rows before parsing");
+}
+
 void TestCapabilityAndDedup()
 {
     server::ServerState state(100);
@@ -92,7 +116,11 @@ void TestCapabilityAndDedup()
                              sizeof(requestA)).disposition ==
               server::RequestDisposition::Unauthorized,
           "extended mutation is rejected before negotiated capability");
-    state.ConfirmCapability(11);
+    Check(state.BeginCapabilityRound(11, 0xA001) &&
+              state.HasCapability(11) &&
+              state.HasCapability(11, 0xA001) &&
+              !state.HasCapability(11, 0xA002),
+          "Hello binds one pilot capability to its authenticated Agent route");
     Check(state.BeginRequest(11, 9, 0x640, requestA,
                              sizeof(requestA)).disposition ==
               server::RequestDisposition::Proceed,
@@ -101,6 +129,11 @@ void TestCapabilityAndDedup()
                              sizeof(requestA)).disposition ==
               server::RequestDisposition::DuplicateInFlight,
           "concurrent exact duplicate is blocked before native dispatch");
+    Check(!state.BeginCapabilityRound(11, 0xA001) &&
+              state.BeginRequest(11, 9, 0x640, requestA,
+                                 sizeof(requestA)).disposition ==
+                  server::RequestDisposition::DuplicateInFlight,
+          "repeated Hello cannot erase an in-flight mutation");
     Check(state.BeginRequest(11, 9, 0x640, requestB,
                              sizeof(requestB)).disposition ==
               server::RequestDisposition::Conflict,
@@ -109,6 +142,7 @@ void TestCapabilityAndDedup()
     server::CachedReply reply;
     reply.packet = {0x33, 0x0A, 0x01};
     reply.sender = 0x1234;
+    reply.destination = 0xA001;
     reply.flags = 7;
     state.CompleteRequest(11, 9, 0x640, requestA, sizeof(requestA),
                           &reply);
@@ -117,8 +151,18 @@ void TestCapabilityAndDedup()
     Check(replay.disposition == server::RequestDisposition::Replay &&
               replay.reply.packet == reply.packet &&
               replay.reply.sender == reply.sender &&
+              replay.reply.destination == reply.destination &&
               replay.reply.flags == reply.flags,
-          "completed exact duplicate replays the cached native success carrier");
+          "completed exact duplicate preserves the original native send route");
+
+    Check(state.BeginCapabilityRound(11, 0xA002) &&
+              !state.HasCapability(11, 0xA001) &&
+              state.HasCapability(11, 0xA002) &&
+              state.BeginRequest(11, 9, 0x640, requestA,
+                                 sizeof(requestA)).disposition ==
+                  server::RequestDisposition::Proceed,
+          "a completed capability round may rebind the pilot and clear old dedup state");
+    state.AbortRequest(11, 9, 0x640, requestA, sizeof(requestA));
 
     Check(state.BeginRequest(11, 10, 0x50F, requestA,
                              sizeof(requestA)).disposition ==
@@ -129,6 +173,30 @@ void TestCapabilityAndDedup()
                              sizeof(requestA)).disposition ==
               server::RequestDisposition::Proceed,
           "native rejection removes an uncommitted request for retry");
+}
+
+void TestCapabilityDisconnectLifecycle()
+{
+    server::ServerState state(150);
+    const std::string title = "capability lifecycle";
+    const metadata::StateResult team =
+        state.CreateRoom(server::RoomDomain::Team, 2, 22,
+                         Native("capability"), &title, true);
+    Check(team.ok() && state.BeginCapabilityRound(22, 0xB001),
+          "connected room owner negotiates capability");
+    Check(!state.ForgetCapabilityIfDetached(22) &&
+              state.HasCapability(22, 0xB001),
+          "domain-local cleanup cannot revoke a pilot still in another room");
+    state.RemoveMember(team.snapshot.key, 22);
+    Check(state.ForgetCapabilityIfDetached(22) &&
+              !state.HasCapability(22),
+          "final native detach revokes capability before a legacy reconnect");
+
+    const std::uint8_t body[] = {7};
+    Check(state.BeginRequest(22, 1, 0x640, body,
+                             sizeof(body)).disposition ==
+              server::RequestDisposition::Unauthorized,
+          "same-pilot legacy reconnect cannot inherit stale Mod authorization");
 }
 
 void TestLegacyAndNativeTitleRules()
@@ -350,7 +418,9 @@ int main()
 {
     TestDomainCodec();
     TestBattleListFixture();
+    TestTeamListFixture();
     TestCapabilityAndDedup();
+    TestCapabilityDisconnectLifecycle();
     TestLegacyAndNativeTitleRules();
     TestMissionAndPvpAliases();
     TestMembershipProviderAndHost();

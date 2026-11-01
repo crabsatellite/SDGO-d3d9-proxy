@@ -1,4 +1,5 @@
 #include "room_metadata_common.h"
+#include "../mods/room_titles_server/room_titles_server_logic.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -259,6 +260,68 @@ void TestTransferHostAllocationFailures()
           "TransferHost fail-at sweep covers every observed allocation");
 }
 
+void TestServerCacheAllocationFailures()
+{
+    namespace server = sdgo::room_titles_server;
+    const std::string oldTitle = LongTitle('O');
+    const std::string newTitle = LongTitle('N');
+    server::NativeTitle oldNative;
+    oldNative.size = 20;
+    oldNative.bytes.fill('O');
+    auto newNative = oldNative;
+    newNative.bytes.fill('N');
+    for (int updating = 0; updating != 2; ++updating) {
+        std::size_t failed = 0;
+        bool succeeded = false;
+        for (std::size_t failAt = 0; failAt < kMaximumAttempts; ++failAt) {
+            server::ServerState state(kEpoch);
+            rm::StateResult before;
+            if (updating)
+                before = state.CreateRoom(server::RoomDomain::Team, kRoomId, kOwner,
+                                           oldNative, &oldTitle, false);
+            rm::StateResult result;
+            bool threw = false;
+            ArmAllocationFailure(failAt);
+            try {
+                result = updating ? state.SetExtendedTitle(before.snapshot.key, kOwner,
+                    before.snapshot.revision, newTitle, newNative) :
+                    state.CreateRoom(server::RoomDomain::Team, kRoomId, kOwner,
+                                     newNative, &newTitle, false);
+            } catch (const std::bad_alloc&) {
+                threw = true;
+            }
+            const auto allocations = DisarmAllocationFailure();
+            if (threw) {
+                ++failed;
+                rm::RoomSnapshot snapshot;
+                server::NativeTitle native;
+                if (updating) {
+                    Check(state.QueryRoom(kRoomId, &snapshot) &&
+                          SameSnapshot(snapshot, before.snapshot) &&
+                          state.QueryNativeTitle(kRoomId, &native) && native == oldNative &&
+                          state.SetExtendedTitle(before.snapshot.key, kOwner,
+                              before.snapshot.revision, newTitle, newNative).ok(),
+                          "server cache/store update allocation failure preserves both copies and retries");
+                } else {
+                    Check(!state.QueryRoom(kRoomId, &snapshot) && !state.QueryPilotWireId(kOwner) &&
+                          state.CreateRoom(server::RoomDomain::Team, kRoomId, kOwner,
+                              newNative, &newTitle, false).ok(),
+                          "server cache/store create allocation failure leaves no ghost room or membership");
+                }
+                continue;
+            }
+            rm::RoomSnapshot snapshot;
+            Check(result.ok() && state.QueryRoom(kRoomId, &snapshot) &&
+                  SameSnapshot(snapshot, result.snapshot) && snapshot.title == newTitle &&
+                  failed == allocations && failed != 0,
+                  "server cache/store allocation sweep reaches a single consistent commit");
+            succeeded = true;
+            break;
+        }
+        Check(succeeded, "server allocation sweep covered all observed failure points");
+    }
+}
+
 }  // namespace
 
 void* operator new(std::size_t size)
@@ -296,6 +359,7 @@ int main()
     TestCreateRoomAllocationFailures();
     TestUpdateTitleAllocationFailures();
     TestTransferHostAllocationFailures();
+    TestServerCacheAllocationFailures();
     std::printf("%s: %d failure(s)\n",
                 g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

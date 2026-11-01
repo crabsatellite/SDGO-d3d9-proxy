@@ -46,7 +46,8 @@ enum class ClientError {
     EpochChanged,
     ServerRejected,
     TransportError,
-    Timeout
+    Timeout,
+    NativeRejected
 };
 
 struct ClientErrorInfo {
@@ -79,6 +80,11 @@ public:
 
     void AdvanceTime(ConnectionId connection, std::uint64_t now_ms);
     bool IsReady(ConnectionId connection) const;
+    bool IsNegotiating(ConnectionId connection) const;
+    // Retry an uncertain transport outcome with the original nonce/body so
+    // the server can replay a committed mutation after its ACK was lost.
+    bool RetryPending(ConnectionId connection, std::uint32_t request_id,
+                      std::uint64_t now_ms);
     std::optional<SnapshotRecord> Query(ConnectionId connection,
                                          std::uint32_t room_id) const;
     std::optional<PendingDraft> Pending(ConnectionId connection) const;
