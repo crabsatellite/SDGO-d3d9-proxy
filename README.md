@@ -21,25 +21,11 @@ Each fix can be disabled separately.
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
-| New-account starter profile | Start with 5,000 GP, zero cash and Corporal rank; cap automatic first-profile unit gifts at one; keep existing progress | `new_account_profile` | World server | [Guide](docs/new-account-profile.md) |
+| New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
 Mod-owned procedures while preserving the original procedures. Players need no client update.
-
-**New-account defaults are enabled in Base and Full packages built from current master; only the owner installs them on WorldServer.**
-New players start with **5,000 GP, zero cash and Corporal 1**. Automatic unit gifts from
-the first-profile call are capped at one instead of granting an entire catalog.
-Existing ownership and progress are preserved. Normal starter selection, later purchases,
-capsule draws and rewards continue under the native rules.
-
-Owner settings live in `sdgo/mods/new_account_profile/config.ini`. `InitialUnitLimit=1`
-caps those automatic gifts; use `0` to remove them. To disable the Mod, set
-`new_account_profile=0` under `[mods]` in `sdgo/sdgo.ini` and restart World. Future
-creations return to native rules; existing accounts keep their data.
-See the [new-account installation, configuration and acceptance guide](docs/new-account-profile.md).
-This new Mod is on master. If your downloaded release lacks
-`server/sdgo/mods/new_account_profile/`, [build a package from current source](docs/setup.md#building-from-source).
 
 <details>
 <summary>Input method example</summary>
