@@ -22,6 +22,7 @@ Each fix can be disabled separately.
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
+| Shop rental and Unicode labels | Explicit rental/permanent labels in hover, buy and gift options, with guarded Unicode captions; also distributed separately | `shop_labels` | clients | [Guide](docs/shop-labels.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
@@ -116,7 +117,12 @@ gameplay. The package's feature directory lists the tools actually included.
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
+| Shop catalog manager (Beta) | Windows owner UI for product CRUD, pricing, listing and portable configuration; uses native shop billing | `shop_catalog` | World server + owner window | [Guide](docs/shop-catalog.md) |
 <!-- /mod-category:network -->
+Double-click `SdgoShopManager.exe` to manage offers in a Windows owner window. Save edits as drafts,
+then use “Apply to shop”; players keep using the native shop. [Manual checks (中文)](docs/shop-testing.zh-CN.md).
+The label patch and catalog manager also have separate packages; exports contain no database credentials.
+
 
 ## Reward rules and verification
 

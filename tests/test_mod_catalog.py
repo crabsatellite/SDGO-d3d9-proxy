@@ -43,6 +43,21 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
 
+    def test_shop_components_are_classified_and_generated_helper_is_declared(self):
+        c = catalog.read_catalog(self.root)
+        label = next(m for m in c["mods"] if m["id"] == "shop_labels")
+        host = next(m for m in c["mods"] if m["id"] == "shop_catalog")
+        self.assertEqual(label["category"], "fixes")
+        self.assertEqual(host["category"], "network")
+        self.assertFalse(host["enabled_by_default"])
+        self.assertEqual(host["runtime_files"], ["shop_catalog_apply.exe"])
+        self.assertIn("catalog.ini", host["config_files"])
+
+    def test_generated_tools_must_have_safe_executable_paths(self):
+        self.replace("mods/shop_catalog/mod.ini", "runtime_files=shop_catalog_apply.exe", "runtime_files=../outside.exe")
+        with self.assertRaises(ValueError):
+            catalog.read_catalog(self.root)
+
     def test_starter_policy_is_a_default_server_fix(self):
         c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
         mod = next(m for m in c["mods"] if m["id"] == "new_account_profile")
