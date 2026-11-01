@@ -190,6 +190,20 @@ Edit-Settings $serverModIni $serverSdgoIni
 Install "install_server.ps1" @("-ServerRoot", $serverRoot, "-Source", $server2)
 Check-Update "server" $serverModIni $serverSdgoIni
 
+# World uses the same updater, including owner-config preservation.
+foreach ($version in 1,2) {
+    $packageRoot = Join-Path $work "package$version\world"
+    New-Package $packageRoot "winmm.dll" "WorldServer" $(if ($version -eq 1) { $modIni1 } else { $modIni2 })
+}
+$world = Join-Path $work "WorldServer"
+New-FakeExe (Join-Path $world "WorldServer.exe")
+$worldModIni = Join-Path $world "sdgo\mods\demo\mod.ini"
+$worldSdgoIni = Join-Path $world "sdgo\sdgo.ini"
+Install "install_server.ps1" @("-ServerRoot", $world, "-Role", "World", "-Source", (Join-Path $work "package1\world"))
+Edit-Settings $worldModIni $worldSdgoIni
+Install "install_server.ps1" @("-ServerRoot", $world, "-Role", "World", "-Source", (Join-Path $work "package2\world"))
+Check-Update "world" $worldModIni $worldSdgoIni
+
 Remove-Item $work -Recurse -Force
 if ($failures) { throw "$failures install check(s) failed" }
 Write-Host "ALL INSTALL CHECKS PASSED"

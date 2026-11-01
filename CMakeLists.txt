@@ -131,6 +131,8 @@ sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf f
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
 
+sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -362,7 +364,8 @@ if(BUILD_TESTING)
         add_test(NAME installer_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_test.ps1"
             -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(installer_offline PROPERTIES TIMEOUT 60)
+        # Exercises repeated client/Battle/World updates in child PowerShell processes.
+        set_tests_properties(installer_offline PROPERTIES TIMEOUT 180)
         add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
@@ -390,4 +393,15 @@ if(BUILD_TESTING)
     else()
         message(STATUS "Lua simulation disabled; set SDGO_LUA50_SOURCE to include it")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
+    sdgo_strict(new_account_policy_test)
+    add_test(NAME new_account_policy COMMAND new_account_policy_test)
+    set_tests_properties(new_account_policy PROPERTIES TIMEOUT 30)
+    # Opt-in SQL fixture: needs an isolated container and local credentials.
+    add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
+    target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(new_account_sql_test)
 endif()

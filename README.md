@@ -20,6 +20,7 @@ Recommended defaults for startup, input method and compatibility problems.
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
 | Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
+| New-account starter profile | Start with 5,000 GP, zero cash and Corporal rank; cap automatic first-profile unit gifts at one; keep existing progress | `new_account_profile` | World server | [Guide](docs/new-account-profile.md) |
 <!-- /mod-category:fixes -->
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
