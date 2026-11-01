@@ -19,6 +19,7 @@ For people who build the framework or write mods. Installing is covered in the
 ```
 GOnline.exe      ── static import ──> d3d9.dll   (loader/d3d9)
 BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
+AgentServer.exe / WorldServer.exe ──> winmm.dll (same server loader)
         │  DllMain: redirect the exe's kernel32!GetSystemTimeAsFileTime import
         │  first CRT call (__security_init_cookie): restore it, then boot      (loader/common)
         ▼
@@ -29,7 +30,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
   sdgo/mods/<id>/<id>.dll
 ```
 
-* Both host executables import a DLL from their own folder at start-up (`d3d9.dll`, and
+* The supported hosts import a DLL from their own folder at start-up (`d3d9.dll`, and
   `winmm.dll` for `timeGetTime`), so a DLL of that name next to the exe is loaded before
   any of the program's own code runs. Neither name is a Windows KnownDLL.
 * The loader does two things. It forwards its exports to the real DLL (system32, or the DLL
@@ -195,8 +196,9 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `HookImport(mod, dll, function, detour, &original)` | replace an entry of the exe's import table |
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
+| `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
-| `HookSite(mod, name, detour, &original)` | optional API 1 extension in core 1.1.4: inline detour at a verified `kind=site` boundary; the Mod owns full native-context preservation |
 
 An instruction site has no function-call ABI. Before using `HookSite`, check
 `api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite)` and a non-null pointer.
@@ -216,6 +218,15 @@ replacing unrelated definitions; conflicts are rejected. Core 1.1.3 supports exa
 ordinal imports in HookImport for the Agent bind. See [distribution](frp-distribution.zh-CN.md).
 Build, regression and installer commands are in [FRP verification](frp-testing.md).
 
+The `new_account_profile` World Mod uses the same per-mod settings helper for
+owner-controlled currency, rank and automatic unit-gift limits. It wraps only
+registration and first-profile creation in a transaction on the native authenticated
+OLE DB session. A locked inventory snapshot protects pre-existing unit identities;
+only newly inserted profile gifts are limited, with counters and selected-unit
+references repaired before commit. Existing profiles bypass initialization, and
+normal starter selection and later gains remain native. The Mod does not replace
+original SQL procedures. See its [owner guide](new-account-profile.md).
+
 Before reading `HookSystemExport`, check
 `api->size >= offsetof(SdgoApi, HookSystemExport) + sizeof(api->HookSystemExport)`
 and then that the pointer is non-null. Older API 1 mods keep their existing ABI.
@@ -228,6 +239,19 @@ Rules: one owner per hook site (a second hook on the same site fails); install h
 `SdgoModLoad`, so a failed load can roll them back; detours run on whatever thread the host
 calls them on, so guard shared state; keep detours exception-safe (the bundled mods wrap
 game calls in `__try`/`__except`).
+
+Room-title commands use the shared grammar in `include/sdgo/room_commands.h`.
+Check the optional `FindRoomCommand` field's size before use, or call the SDK's
+`sdgo::room_commands::Find`, which supplies the same parser on older cores. Each
+whitespace-separated `!command` has its own argument span, ending before the next
+`!` token, including unknown commands. Names are case-insensitive; numeric suffixes
+such as `!ai3` require `SDGO_ROOM_COMMAND_ALLOW_COUNT`. The first valid matching
+command wins. The parser does not modify titles or install hooks. This lets mods
+compose `!rand !ai3 lv4` in either order without consuming each other's options.
+AI options must stay inside the `!ai` span. Native room fields remain 20 bytes; optional
+[extended titles](room-titles.md) provide the confirmed full UTF-8 title to updated consumers
+through `sdgo/room_titles.h`. The command parser itself does not enlarge native fields.
+See [the composition guide](room-commands.md) for examples.
 
 `HookCode` hooks made while the mods load are switched on together right after the last mod
 has loaded (`core: N code hooks switched on`), before the host's own code runs; `original`
@@ -372,6 +396,11 @@ cmake --build build --config Release
 * `mods/mission_ai/test/sim_mission.lua`: drives `mission_ai.lua` against a mock of the game's
   script API under real Lua 5.0 (`tools/lua50_host.c`, built against Lua 5.0.3 sources).
 * `tools/verify_symbols.py <exe>`: offline check of a symbol file.
+* `new_account_policy_test`: new/existing-account policy, gift limits and rollback.
+  `tests/run_new_account_sql_test.py` is an opt-in actual-core/OLE DB fixture against
+  owned test databases in an isolated SQL container; it checks enabled/configured/
+  disabled behavior, preserved ownership and 64-bit unit identities. Native client
+  login remains manual acceptance; see the [test instructions](new-account-profile.md#verification).
 * `tools/package.ps1`: a full package by default; `-Edition Base` selects core fixes,
   and `-Features pvp-ai` selects the fixes plus that complete client/server feature.
   `-BuildDir` chooses the staged build and `-OutputDir` chooses a fresh destination.

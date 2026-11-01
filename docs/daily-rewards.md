@@ -26,6 +26,13 @@ Native caps still apply; the 16-bit per-settlement words saturate at 65535. Ener
 costs, match statistics/rating, random drops, separate quests/achievements, purchases,
 top-ups, transfers and GM grants are outside this battle-settlement feature.
 
+When [battle contribution rewards](battle-rewards.md) are also enabled, that Mod
+runs later and replaces G using its contribution policy. It applies the daily
+window factor once to G and MB; pilot/unit EXP remain owned by `daily_rewards`.
+The contribution Mod freezes its factor for the match's shared settlement snapshot,
+so its documented snapshot rules govern boundary cases. Installing only
+`daily_rewards` does not add MB payouts or require a contribution-reward worker.
+
 ## Native boundary
 
 Supported host: `BattleServer-548A891D-0046C000`, SHA-256

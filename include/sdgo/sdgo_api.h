@@ -4,6 +4,7 @@
  * Loading chain:
  *   GOnline.exe      --static import--> d3d9.dll  (loader shim, next to the exe)
  *   BattleServer.exe --static import--> winmm.dll (loader shim, next to the exe)
+ *   AgentServer.exe / WorldServer.exe -> winmm.dll (same server loader)
  *     --early CRT hook--> sdgo/core.dll  (this API)
  *       --mod.ini manifests--> sdgo/mods/<id>/<id>.dll
  * Reference: docs/framework.md.
@@ -39,6 +40,17 @@ enum SdgoLogLevel {
     SDGO_LOG_WARN = 2,
     SDGO_LOG_ERROR = 3
 };
+
+enum SdgoRoomCommandFlags {
+    SDGO_ROOM_COMMAND_ALLOW_COUNT = 1 /* !ai3 also matches the name "ai" */
+};
+
+/* Offsets into the caller's title, measured in bytes. No pointers are retained. */
+typedef struct SdgoRoomCommand {
+    uint32_t token_offset, token_length;
+    uint32_t arguments_offset, arguments_length;
+    uint32_t has_count, count; /* optional decimal suffix, saturated at UINT32_MAX */
+} SdgoRoomCommand;
 
 typedef struct SdgoApi {
     uint32_t size;    /* sizeof(SdgoApi) as compiled into the running core */
@@ -82,12 +94,23 @@ typedef struct SdgoApi {
     int (*HookSystemExport)(SdgoMod* mod, const wchar_t* dll, const char* function,
                             void* detour, void** original);
 
-    /* Inline detour at a verified kind=site instruction boundary. There is no
-     * function-call ABI at a site: the detour must preserve all live registers,
-     * flags, stack and floating-point/SIMD state, then jump to the trampoline.
-     * Same queued activation, ownership and rollback as HookCode. Optional API
-     * 1 extension: check size before reading this field. */
+    /* Retain the slot already deployed by settlement mods before the room-title
+     * preview. Inline detour at a verified kind=site instruction boundary.
+     * The detour preserves live registers, flags, stack and FP/SIMD state, then
+     * jumps to the trampoline. Same queued activation/ownership/rollback as
+     * HookCode. Optional API 1 extension: check size before reading. */
     int (*HookSite)(SdgoMod* mod, const char* name, void* detour, void** original);
+
+    /* Find the first standalone !name command (ASCII case-insensitive).
+     * title_length is a byte bound; an earlier NUL ends the title. Arguments
+     * end at the next whitespace-separated token starting with '!'. Unknown
+     * commands also form a boundary. name excludes '!'; flags may allow a
+     * decimal count suffix. Returns nonzero if found, otherwise clears out.
+     * Pure, thread-safe, no hooks or title mutation. Optional API 1 extension:
+     * check size before reading; sdgo/room_commands.h supplies the same parser
+     * as a fallback for older cores. */
+    int (*FindRoomCommand)(const char* title, uint32_t title_length, const char* name,
+                           uint32_t flags, SdgoRoomCommand* out);
 } SdgoApi;
 
 /* Every mod DLL exports this. Return nonzero when the mod is active. */

@@ -29,6 +29,9 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_titles_lookup.h"
+#include "sdgo/room_commands.h"
+#include "sdgo/ai_catalog_provider.h"
 
 namespace
 {
@@ -68,10 +71,11 @@ namespace
     constexpr size_t kLobbyMapLock = 0x38;      // CRITICAL_SECTION in the lobby proc
     constexpr size_t kLobbyMap = 0x14;          // user id -> room index
     constexpr size_t kLobbyTitleLength = 0x53;  // u8
-    constexpr size_t kLobbyTitle = 0x54;        // up to 20 bytes, CP949
+    constexpr size_t kLobbyTitle = 0x54;        // up to 20 bytes in the native encoding
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
+    const SdgoRoomTitleApi* g_titleApi = nullptr;
     StartNotifyFn g_startNotify = nullptr;
     uint8_t** g_aiNpcList = nullptr;
     void* g_waitRoomProc = nullptr;
@@ -180,35 +184,21 @@ namespace
         Plan plan;
         plan.count = g_settings.defaultCount;
         plan.level = g_settings.defaultLevel;
-        char lower[kRoomTitleMax + 1];
-        size_t n = 0;
-        for (; n < kRoomTitleMax && title[n]; ++n)
-            lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
-        lower[n] = '\0';
-        const char* command = strstr(lower, "!ai");
-        if (!command) {
+        namespace commands=sdgo::room_commands;
+        SdgoRoomCommand command{};
+        if (!commands::Find(g_api,title,SDGO_ROOM_TITLE_MAX_UTF8_BYTES,"ai",
+                            SDGO_ROOM_COMMAND_ALLOW_COUNT,&command)) {
             plan.enabled = g_settings.requireRoomCommand == 0;
             return plan;
         }
         plan.enabled = true;
-        const char* p = command + 3;
-        if (*p >= '0' && *p <= '9') {
-            plan.count = 0;
-            while (*p >= '0' && *p <= '9') {
-                int digit = *p++ - '0';
-                if (plan.count < kSlots)
-                    plan.count = plan.count * 10 + digit;
-                if (plan.count > kSlots)
-                    plan.count = kSlots;
-            }
-        }
-        while (*p) {
-            while (*p == ' ')
-                ++p;
-            if (p[0] == 'l' && p[1] == 'v' && p[2] >= '1' && p[2] <= '5' && (p[3] == ' ' || p[3] == '\0'))
-                plan.level = p[2] - '0';
-            while (*p && *p != ' ')
-                ++p;
+        if(command.has_count) plan.count=static_cast<int>((std::min)(command.count,uint32_t{kSlots}));
+        uint32_t cursor=command.arguments_offset;
+        commands::Token argument;
+        while(commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
+            const char* token=title+argument.offset;
+            if(argument.length==3 && commands::Lower(token[0])=='l' && commands::Lower(token[1])=='v'
+               && token[2]>='1' && token[2]<='5') plan.level=token[2]-'0';
         }
         return plan;
     }
@@ -311,6 +301,8 @@ namespace
         LeaveCriticalSection(lock);
         if (*index == 0)
             return false;
+        char extended[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+        const uint32_t extendedLength = g_titleApi ? g_titleApi->QueryForPilot(userId, extended, sizeof(extended)) : 0;
         uint8_t* lobby = g_lobbyRoom(g_lobbyProc, *index, 0);
         if (!lobby)
             return false;
@@ -320,6 +312,8 @@ namespace
         memcpy(title, lobby + kLobbyTitle, length);
         title[length] = '\0';
         title[strnlen(title, length)] = '\0';
+        if (extendedLength && extendedLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES && extended[extendedLength] == '\0')
+            memcpy(title, extended, extendedLength + 1);
         g_lobbyRelease(g_lobbyProc, *index);
         return true;
     }
@@ -330,7 +324,7 @@ namespace
             return;
         int humans = 0;
         int ai = 0;
-        char title[kRoomTitleMax + 1] = {};
+        char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         bool titled = false;
         uint32_t titleOwner = 0;
         int lobbyIndex = 0;
@@ -368,10 +362,16 @@ namespace
 
         std::vector<uint32_t> available = AiNpcIds();
         std::vector<uint32_t> pool;
-        for (uint32_t id : g_settings.levels[plan.level])
-            if (Contains(available, id))
-                pool.push_back(id);
+        const bool catalog = sdgo::AiCatalogPool(g_api, g_mod, plan.level, pool);
+        if (!catalog)
+            for (uint32_t id : g_settings.levels[plan.level])
+                if (Contains(available, id))
+                    pool.push_back(id);
         if (pool.empty()) {
+            if (catalog) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
+                return;
+            }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
             return;
@@ -439,6 +439,7 @@ SDGO_MOD_ENTRY
 {
     g_api = api;
     g_mod = mod;
+    g_titleApi = sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     bool bound = Bind(g_aiNpcList, "battle.ai_npc_list") && Bind(g_waitRoomProc, "battle.waitroom_proc") &&
                  Bind(g_buildAiPilot, "battle.build_ai_pilot") && Bind(g_pilotReset, "battle.pilot_reset") &&
                  Bind(g_pilotStateId, "battle.pilot_state_id") && Bind(g_pilotStateRoom, "battle.pilot_state_room") &&
