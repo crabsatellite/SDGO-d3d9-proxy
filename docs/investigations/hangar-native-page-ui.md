@@ -53,7 +53,7 @@ pass. The adapter fixture exercises production page events through synthetic
 detail replies, both confirmations, exchange and sorting replies. It also checks
 that a changed snapshot or closed page cannot execute a stale plan. Page fixtures
 check host ownership, bounds, pagination, visibility restoration, reinitialization
-and unsupported-layout rejection. All 146 current client symbols match the image.
+and unsupported-layout rejection. All 203 client symbols in the integrated master match the image.
 
 Real-client typography, input placement, full-screen/resolution behavior, reward
 delivery and persistence still require manual acceptance. No real unit is sorted

@@ -45,7 +45,7 @@ public:
     void BeforeNativeRefresh();
     void AfterNativeRefresh();
 private:
-    struct Control {void* pointer; Action action; int width; bool body; std::wstring text;};
+    struct Control {void* pointer; Action action; int width; bool body; std::wstring text; uint32_t color=0; bool textSet=false;};
     struct Hidden {void* pointer; uint8_t visible;};
     Bindings bindings_;
     void* service_=nullptr;

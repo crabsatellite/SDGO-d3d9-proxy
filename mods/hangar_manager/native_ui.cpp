@@ -99,10 +99,10 @@ bool PageUi::Attach(void* service) {
     status_=L"先选择奖励并预览；预览不会兑换机体。";Render();return true;
 }
 void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
-    if(control.text==value && !control.text.empty())return;
+    if(control.textSet && control.text==value && control.color==color)return;
     const auto native=View(value);
     bindings_.text(control.pointer,0,&native,2,3,control.width-4,14,color,0xFF000000,0,font_,1);
-    control.text=value;
+    control.text=value;control.color=color;control.textSet=true;
 }
 bool PageUi::Connected() {
     if(!Ready())return false;
