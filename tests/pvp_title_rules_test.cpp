@@ -37,11 +37,14 @@ int main()
     plan = ParseTitle(longTitle.c_str());
     Check(plan.enabled && plan.enemies == 3 && plan.allies == 1 && plan.level == 5,
           "all PvP options past byte 20 are parsed");
+    plan = ParseTitle((std::string(32, 'x') + " !ai e2 !rand a5 lv5").c_str());
+    Check(plan.enabled && plan.enemies == 2 && plan.allies == 0 && plan.level == 2,
+          "full title does not consume options owned by another command");
     plan = ParseTitle(u8"一起练习对战，一起练习对战 !ai e2 a2 lv4");
     Check(plan.enabled && plan.enemies == 2 && plan.allies == 2 && plan.level == 4,
           "UTF-8 title retains ASCII rule suffix");
     plan = ParseTitle((std::string("!ai e") + std::string(100, '9') + " a0 lv3").c_str());
-    Check(plan.enabled && plan.enemies == 12 && plan.allies == 0 && plan.level == 3,
+    Check(plan.enabled && plan.enemies == kSlotsPerTeam && plan.allies == 0 && plan.level == 3,
           "long numeric fields saturate without integer overflow");
     for (uint8_t mode : {uint8_t{1}, uint8_t{2}, uint8_t{3}, uint8_t{4}, uint8_t{6}, uint8_t{7}, uint8_t{9}})
         Check(IsPvpMode(mode), "all normal PvP modes retain handling");

@@ -1,0 +1,96 @@
+{
+  "scope": "static pinned-file disassembly; not runtime or gameplay proof",
+  "file": "BattleServer.exe",
+  "sha256": "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4",
+  "observations": [
+    {
+      "name": "A08 dispatch to Team list handler",
+      "va": "0x449443",
+      "hex": "8b 4d ec 89 8d 2c a7 fc ff 8b 95 2c a7 fc ff 52 8b 45 10 50 b9 98 5d 83 00 e8 17 8b fb ff",
+      "disassembly": [
+        "00449443 mov ecx, dword ptr [ebp - 0x14]",
+        "00449446 mov dword ptr [ebp - 0x358d4], ecx",
+        "0044944c mov edx, dword ptr [ebp - 0x358d4]",
+        "00449452 push edx",
+        "00449453 mov eax, dword ptr [ebp + 0x10]",
+        "00449456 push eax",
+        "00449457 mov ecx, 0x835d98",
+        "0044945c call 0x401f78"
+      ]
+    },
+    {
+      "name": "Team list handler",
+      "va": "0x4fab40",
+      "hex": "55 8b ec 81 ec 18 0c 00 00 a1 e0 88 82 00 33 c5 89 45 ec 89 8d e8 f3 ff ff",
+      "disassembly": [
+        "004fab40 push ebp",
+        "004fab41 mov ebp, esp",
+        "004fab43 sub esp, 0xc18",
+        "004fab49 mov eax, dword ptr [0x8288e0]",
+        "004fab4e xor eax, ebp",
+        "004fab50 mov dword ptr [ebp - 0x14], eax",
+        "004fab53 mov dword ptr [ebp - 0xc18], ecx"
+      ]
+    },
+    {
+      "name": "824 header and count at +12h",
+      "va": "0x4fac19",
+      "hex": "ba 24 08 00 00 66 89 95 70 f4 ff ff 8b 85 60 f4 ff ff 89 85 72 f4 ff ff 8b 8d 5c f4 ff ff 89 8d 76 f4 ff ff c7 85 7a f4 ff ff e7 03 00 00 c7 85 7e f4 ff ff 01 00 00 00 c6 85 82 f4 ff ff 00 68 5e 0b 00 00",
+      "disassembly": [
+        "004fac19 mov edx, 0x824",
+        "004fac1e mov word ptr [ebp - 0xb90], dx",
+        "004fac25 mov eax, dword ptr [ebp - 0xba0]",
+        "004fac2b mov dword ptr [ebp - 0xb8e], eax",
+        "004fac31 mov ecx, dword ptr [ebp - 0xba4]",
+        "004fac37 mov dword ptr [ebp - 0xb8a], ecx",
+        "004fac3d mov dword ptr [ebp - 0xb86], 0x3e7",
+        "004fac47 mov dword ptr [ebp - 0xb82], 1",
+        "004fac51 mov byte ptr [ebp - 0xb7e], 0",
+        "004fac58 push 0xb5e"
+      ]
+    },
+    {
+      "name": "variable list size 13h + count*123h",
+      "va": "0x4fb36e",
+      "hex": "6a 00 0f b6 8d 82 f4 ff ff ba 0a 00 00 00 2b d1 69 d2 23 01 00 00 b8 71 0b 00 00 2b c2 50 8d 8d 70 f4 ff ff 51 8b 55 08 52 8b 0d a0 6d 83 00 e8 7e 8c 22 00",
+      "disassembly": [
+        "004fb36e push 0",
+        "004fb370 movzx ecx, byte ptr [ebp - 0xb7e]",
+        "004fb377 mov edx, 0xa",
+        "004fb37c sub edx, ecx",
+        "004fb37e imul edx, edx, 0x123",
+        "004fb384 mov eax, 0xb71",
+        "004fb389 sub eax, edx",
+        "004fb38b push eax",
+        "004fb38c lea ecx, [ebp - 0xb90]",
+        "004fb392 push ecx",
+        "004fb393 mov edx, dword ptr [ebp + 8]",
+        "004fb396 push edx",
+        "004fb397 mov ecx, dword ptr [0x836da0]",
+        "004fb39d call 0x724020"
+      ]
+    },
+    {
+      "name": "916 list error is native 8 bytes",
+      "va": "0x449479",
+      "hex": "b8 16 09 00 00 66 89 85 24 a7 fc ff 8b 8d 68 80 fc ff 89 8d 26 a7 fc ff 66 8b 55 e8 66 89 95 2a a7 fc ff 6a 00 6a 08 8d 85 24 a7 fc ff 50 8b 4d 10 51 8b 0d a0 6d 83 00 e8 6a ab 2d 00",
+      "disassembly": [
+        "00449479 mov eax, 0x916",
+        "0044947e mov word ptr [ebp - 0x358dc], ax",
+        "00449485 mov ecx, dword ptr [ebp - 0x37f98]",
+        "0044948b mov dword ptr [ebp - 0x358da], ecx",
+        "00449491 mov dx, word ptr [ebp - 0x18]",
+        "00449495 mov word ptr [ebp - 0x358d6], dx",
+        "0044949c push 0",
+        "0044949e push 8",
+        "004494a0 lea eax, [ebp - 0x358dc]",
+        "004494a6 push eax",
+        "004494a7 mov ecx, dword ptr [ebp + 0x10]",
+        "004494aa push ecx",
+        "004494ab mov ecx, dword ptr [0x836da0]",
+        "004494b1 call 0x724020"
+      ]
+    }
+  ],
+  "conclusion": "Mission list request A08h is 16h bytes; success824h length13h+count*123h, count at12h, max10. Do not force Battle617h fixedsize or alias6C1h."
+}

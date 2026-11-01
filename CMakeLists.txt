@@ -127,6 +127,28 @@ sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES 
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
 
+
+# Private feature libraries; no room metadata or gameplay state enters the core.
+add_library(room_metadata_common STATIC mods/room_metadata/common/room_metadata_common.cpp)
+target_include_directories(room_metadata_common PUBLIC mods/room_metadata/common)
+sdgo_strict(room_metadata_common)
+add_library(room_titles_client_state STATIC mods/room_titles/client_state.cpp)
+target_include_directories(room_titles_client_state PUBLIC mods/room_titles)
+target_link_libraries(room_titles_client_state PUBLIC room_metadata_common)
+sdgo_strict(room_titles_client_state)
+add_library(room_titles_native_transport STATIC mods/room_titles/native_transport.cpp)
+target_link_libraries(room_titles_native_transport PUBLIC sdgo_api room_metadata_common)
+sdgo_strict(room_titles_native_transport)
+
+sdgo_add_mod(room_titles_agent SERVER DESCRIPTION "room title transport (Agent)"
+             SOURCES mods/room_titles_agent/room_titles_agent.cpp LIBS room_metadata_common)
+sdgo_add_mod(room_titles DESCRIPTION "extended room titles (client)"
+             SOURCES mods/room_titles/room_titles.cpp mods/room_titles/native_ui.cpp
+             LIBS room_titles_native_transport room_titles_client_state user32)
+sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle)"
+             SOURCES mods/room_titles_server/room_titles_server.cpp mods/room_titles_server/room_titles_server_logic.cpp
+             LIBS room_metadata_common bcrypt)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -282,3 +304,65 @@ foreach(mode coop pvp)
     target_link_libraries(${mode}_title_rules_test PRIVATE sdgo_api)
     sdgo_strict(${mode}_title_rules_test)
 endforeach()
+
+# Offline room-title tests and real-core isolated Agent bridge.
+add_executable(room_metadata_common_test tests/room_metadata_common_test.cpp)
+target_link_libraries(room_metadata_common_test PRIVATE room_metadata_common)
+sdgo_strict(room_metadata_common_test)
+
+add_executable(room_metadata_allocation_test tests/room_metadata_allocation_test.cpp)
+target_link_libraries(room_metadata_allocation_test PRIVATE room_metadata_common)
+sdgo_strict(room_metadata_allocation_test)
+
+add_executable(room_titles_client_state_test tests/room_titles_client_state_test.cpp)
+target_link_libraries(room_titles_client_state_test PRIVATE room_titles_client_state)
+sdgo_strict(room_titles_client_state_test)
+
+add_executable(room_titles_transport_test tests/room_titles_transport_test.cpp)
+target_link_libraries(room_titles_transport_test PRIVATE sdgo_api room_metadata_common)
+sdgo_strict(room_titles_transport_test)
+
+add_executable(room_titles_native_ui_test tests/room_titles_native_ui_test.cpp mods/room_titles/native_ui.cpp)
+target_link_libraries(room_titles_native_ui_test PRIVATE sdgo_api user32)
+sdgo_strict(room_titles_native_ui_test)
+
+add_executable(room_titles_client_test tests/room_titles_client_test.cpp)
+target_link_libraries(room_titles_client_test PRIVATE room_titles_client_state room_titles_native_transport user32)
+sdgo_strict(room_titles_client_test)
+
+add_executable(room_titles_server_test tests/room_titles_server_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
+target_include_directories(room_titles_server_test PRIVATE mods/room_titles_server)
+target_link_libraries(room_titles_server_test PRIVATE room_metadata_common)
+sdgo_strict(room_titles_server_test)
+
+add_executable(room_title_native_test tests/room_title_native_test.cpp)
+target_link_libraries(room_title_native_test PRIVATE bcrypt)
+sdgo_strict(room_title_native_test)
+
+add_executable(room_titles_agent_test tests/room_titles_agent_test.cpp)
+target_link_libraries(room_titles_agent_test PRIVATE sdgo_api room_metadata_common)
+sdgo_strict(room_titles_agent_test)
+
+add_library(room_titles_agent_conflict_mod SHARED tests/room_titles_agent_test.cpp)
+target_compile_definitions(room_titles_agent_conflict_mod PRIVATE ROOM_TITLES_AGENT_CONFLICT_MOD=1)
+target_link_libraries(room_titles_agent_conflict_mod PRIVATE sdgo_api)
+sdgo_strict(room_titles_agent_conflict_mod)
+
+
+if(BUILD_TESTING)
+    foreach(test room_metadata_common room_metadata_allocation room_titles_client_state room_titles_transport room_titles_native_ui room_titles_client room_titles_server coop_title_rules pvp_title_rules)
+        add_test(NAME ${test}_offline COMMAND ${test}_test)
+        set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    if(SDGO_POWERSHELL)
+        add_test(NAME room_titles_agent_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/room_titles_agent_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(room_titles_agent_offline PROPERTIES TIMEOUT 90)
+    endif()
+    set(SDGO_ROOM_TITLE_NATIVE_HOST "" CACHE FILEPATH "Optional known BattleServer for bounded constructor fixture")
+    if(SDGO_ROOM_TITLE_NATIVE_HOST)
+        add_test(NAME room_title_native_offline COMMAND room_title_native_test "${SDGO_ROOM_TITLE_NATIVE_HOST}")
+        set_tests_properties(room_title_native_offline PROPERTIES TIMEOUT 30)
+    endif()
+endif()

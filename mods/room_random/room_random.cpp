@@ -1,6 +1,7 @@
 // Per-round, room-title-controlled random HUMAN loadouts. The native battle
 // constructors and start packets remain responsible for stats and replication.
 #include <windows.h>
+#include "sdgo/room_titles_lookup.h"
 #include <bcrypt.h>
 #include <array>
 #include <atomic>
@@ -36,6 +37,7 @@ using InventoryFn=bool(*)(const room_random_inventory::Settings&,const std::vect
 
 const SdgoApi* g_api=nullptr;
 SdgoMod* g_mod=nullptr;
+const SdgoRoomTitleApi* g_titleApi=nullptr;
 DispatchFn g_dispatch=nullptr;
 SpecialFn g_special=nullptr;
 ValidateFn g_validate=nullptr;
@@ -112,6 +114,15 @@ bool LobbyTitle(uint32_t owner,char* text) {
     return ok;
 }
 bool Requested(uint8_t* room,const Signature& signature) {
+    // The full confirmed title is authoritative, including when it omits !rand.
+    // The provider owns no allocation in this caller and is optional.
+    for(uint32_t owner:signature.owners) {
+        if(!owner || (owner&kAiBit) || !g_titleApi) continue;
+        char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]{};
+        const uint32_t n=g_titleApi->QueryForPilot(owner,full,sizeof(full));
+        if(n && n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES && full[n]==0)
+            return policy::Command(full,n,g_api);
+    }
     char title[kTitleMax+1]{};
     if(RawTitle(room,title) && policy::Command(title,std::strlen(title),g_api)) return true;
     // Use the authoritative lobby title as a fallback on every native path;
@@ -419,6 +430,7 @@ bool LoadSettings() {
 
 SDGO_MOD_ENTRY {
     g_api=api; g_mod=mod;
+    g_titleApi=sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     if(!LoadSettings()) { api->Log(mod,SDGO_LOG_ERROR,"invalid room_random configuration"); return 0; }
     if(!Bind(g_lookup,"battle.unit_lookup") || !Bind(g_unitTable,"battle.unit_table")
        || !Bind(g_lobby,"battle.lobby_proc") || !Bind(g_lobbyFind,"battle.lobby_map_find")

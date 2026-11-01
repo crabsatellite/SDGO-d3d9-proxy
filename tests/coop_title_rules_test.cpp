@@ -51,6 +51,9 @@ int main()
     const std::string longTitle = std::string(32, 'x') + " !ai3 lv4";
     plan = ParseTitle(longTitle.c_str());
     Check(plan.enabled && plan.count == 3 && plan.level == 4, "rules past byte 20 are parsed");
+    plan = ParseTitle((std::string(32, 'x') + " !ai3 !rand lv5").c_str());
+    Check(plan.enabled && plan.count == 3 && plan.level == 2,
+          "full title preserves current shared command argument boundaries");
     const std::string unicodeTitle = u8"一起完成任务，一起完成任务 !ai2 lv5";
     plan = ParseTitle(unicodeTitle.c_str());
     Check(plan.enabled && plan.count == 2 && plan.level == 5, "UTF-8 title with ASCII rule suffix");

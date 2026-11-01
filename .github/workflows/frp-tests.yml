@@ -28,6 +28,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|mod_staging_offline)$"
       - name: Room commands and owned random loadouts
         run: ctest --test-dir build -C Release --output-on-failure -R "(room_(random|commands)|ai_catalog_provider)_offline"
+      - name: Full room title feature
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(metadata|titles)|title_rules)"
       - name: FRP runtime and installer
         shell: powershell
         run: |
