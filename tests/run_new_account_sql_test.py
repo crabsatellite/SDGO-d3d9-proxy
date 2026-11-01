@@ -4,7 +4,7 @@ Never touches the container's existing databases and never executes a game.
 Pass a local JSON credential file containing sa_password; no secret enters logs or argv.
 """
 from __future__ import annotations
-import argparse,contextlib,json,os,secrets,socket,socketserver,subprocess,threading,uuid
+import argparse,contextlib,json,os,re,secrets,shutil,socket,socketserver,subprocess,threading,uuid
 from pathlib import Path
 
 class Bridge(socketserver.ThreadingTCPServer):
@@ -45,7 +45,7 @@ def run(container:str,credentials:Path,work:Path):
     common,game,billing=('StarterC_'+tag,'StarterG_'+tag,'StarterB_'+tag)
     login='StarterL_'+tag;password='Test_'+secrets.token_hex(10)+'!7'
     environment=dict(os.environ,SQLCMDPASSWORD=private['sa_password'],STARTER_TEST_PASSWORD=password)
-    def sql(text:str,quiet=False):
+    def sql(text:str):
         result=subprocess.run(['docker','exec','-i','-e','SQLCMDPASSWORD','-e','STARTER_TEST_PASSWORD',container,
             '/opt/mssql-tools18/bin/sqlcmd','-S','localhost','-U','sa','-C','-b','-h','-1','-W'],
             input=text,text=True,capture_output=True,env=environment)
@@ -98,10 +98,8 @@ GO
             target=work/mode;mod=target/'sdgo/mods/new_account_profile';mod.mkdir(parents=True)
             (target/'sdgo/symbols').mkdir()
             for name,destination in (('new_account_sql_test.exe',target),('core.dll',target/'sdgo'),('new_account_profile.dll',mod)):
-                import shutil
                 shutil.copy2(repo/'build/Release'/name,destination/name)
             manifest=(repo/'mods/new_account_profile/mod.ini').read_text(encoding='utf-8-sig')
-            import re
             manifest=re.sub(r'(?m)^hosts=.*$','hosts=*',manifest)
             (mod/'mod.ini').write_text(manifest,encoding='ascii')
             if mode=='configured':
@@ -127,8 +125,6 @@ GO
                 assert sql(f'SET NOCOUNT ON;SELECT COUNT(*) FROM [{game}].dbo.starter_grants;\nGO\n').strip()=='1'
             cases.append(dict(mode=mode,passed=True,rows=len(lines)))
         receipt=dict(cases=cases,isolated_databases=list(databases),no_original_database_changes=True,no_game_execution=True)
-        (work/'result.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8')
-        print(json.dumps(receipt,indent=2))
     finally:
         if bridge:bridge.shutdown();bridge.server_close()
         if created:
@@ -139,6 +135,9 @@ GO
                 if marker.strip()!=token:raise RuntimeError('Fixture ownership changed; database retained')
                 sql(f'USE master;ALTER DATABASE [{db}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;DROP DATABASE [{db}];\nGO\n')
             sql(f'USE master;DROP LOGIN [{login}];\nGO\n')
+    receipt['cleanup_completed']=True
+    (work/'result.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8')
+    print(json.dumps(receipt,indent=2))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)

@@ -97,6 +97,17 @@ until their hooks/layouts are verified. No original game executable is patched o
 Real account login, client presentation and gameplay remain manual acceptance.
 SQL/ABI fixtures are not evidence that a live game session has been exercised.
 
+For manual acceptance on a test World instance:
+
+1. Install, start World and confirm `new-account defaults active` in its log.
+2. Register a fresh test account (the native auto-registration may require a login
+   retry), create a pilot, and check 5,000 GP, 0 cash and Corporal 1. Try the Expert channel.
+3. Earn some GP/experience, log out and back in, and confirm that progress persists.
+   An existing pilot must keep its previous progress too.
+4. To check restoration, disable this Mod on the test instance, restart and create
+   another fresh account. It should use native defaults. Re-enable and restart to
+   apply the configured defaults to future creations again.
+
 To repeat the isolated SQL check after building Win32 Release:
 
 ```powershell
