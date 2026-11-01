@@ -29,6 +29,15 @@ an installation. Applying checks the target, creates backups, installs client
 files and commits server configuration; failures restore client files and roll
 back SQL. Existing Mods and player history are preserved. Close the target game
 before installation. The tool does not restart unrelated servers.
+Applying a complete capsule package enables this feature's own switches, including
+a disabled stub from an earlier framework installation; other Mod switches are retained.
+
+For an A/B/C portrait, upload a finished PNG, drag the fixed-aspect crop frame,
+resize its corners or use the zoom slider, and preview the native card. Save
+either pose separately or share one image across both. Reset restores a pose's
+original artwork. PNG bytes, hashes and crop coordinates travel inside the
+catalog, so they do not reference a path on the owner's computer. AI restoration
+is a separate offline task and is not part of the editor or player runtime.
 
 Give players the complete generated `player` directory, including its manifest
 and `Install-Client.cmd`. Check first, then install:

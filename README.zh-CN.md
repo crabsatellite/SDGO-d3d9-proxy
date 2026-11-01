@@ -49,12 +49,14 @@
 | 战斗 AI 难度（Beta） | 默认 Medium（Lv12），房名选择三档；Hard EX、协同战术、盾面防御及玩家同规则 SP/部件/道具。需配套 PvP 组件。 | `battle_ai`、`battle_ai_server` | 对战服务器 + 所有玩家 | [使用说明](docs/battle-ai.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
-| 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格与权重，生成配套客户端和服务端配置 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
+| 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格、权重、PNG 头像与互动取景，两端配置配套生成 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
 生成玩家安装包分发；玩家安装一次后照常启动游戏。其他 Mod 可复用
 [目录、编译和安装接口](docs/capsule-integration.md)，共同生成同一份目录，避免各自覆盖客户端表或重复挂接文件读取。
+上传处理好的 PNG 后可拖动、拉角和缩放取景框，预览原生扭蛋卡。AI 恢复单独离线处理；
+编辑器与玩家运行时都不包含 AI 模型或显卡依赖。
 
 进入机库后点击「**整理机库**」「**重复兑换…**」，也可按 **F8** 打开管理窗口。
 相同状态的未培养机体默认保留两台，已培养机体不参与兑换；锁定、出击、舰队、租赁和未知状态机体均受保护。

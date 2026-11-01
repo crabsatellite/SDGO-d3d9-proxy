@@ -9,6 +9,7 @@ from collections import Counter
 import functools
 import io
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -88,21 +89,28 @@ class Assets:
     # same unit's unobstructed shipped pose with a separately anchored crop.
     HEAD_SOURCE_VARIANTS = {
         (10202, 1): 0,
+        (10208, 1): 0,
         (10210, 1): 0,
         (20032, 1): 0,
         (24722, 1): 0,
     }
     HEAD_ANCHORS = _normalized_head_anchors({
-        (10086, 0): (128, 94, 90),
-        (10086, 1): (125, 95, 95),
+        (10065, 0): (132, 125, 115),
+        (10065, 1): (132, 125, 115),
+        (10086, 0): (128, 101, 95),
+        (10086, 1): (128, 101, 95),
+        (10100, 0): (127, 100, 155),
+        (10100, 1): (127, 100, 155),
         (10101, 0): (138, 88, 90),
         (10101, 1): (122, 90, 90),
         (10113, 0): (128, 98, 85),
         (10113, 1): (126, 98, 85),
+        (10126, 0): (128, 106, 85),
+        (10126, 1): (132, 108, 85),
         (10202, 0): (127, 96, 95),
         (10202, 1): (136, 96, 95),
-        (10208, 0): (128, 128, 150),
-        (10208, 1): (118, 128, 150),
+        (10208, 0): (128, 106, 145),
+        (10208, 1): (128, 104, 135),
         (10210, 0): (127, 96, 100),
         (10210, 1): (136, 96, 100),
         (10219, 0): (126, 105, 112),
@@ -125,6 +133,8 @@ class Assets:
         (13036, 1): (122, 78, 95),
         (14016, 0): (128, 108, 112),
         (14016, 1): (129, 108, 118),
+        (14031, 0): (128, 96, 110),
+        (14031, 1): (128, 96, 110),
         (15066, 0): (130, 90, 100),
         (15066, 1): (128, 90, 100),
         (15086, 0): (128, 94, 95),
@@ -137,8 +147,12 @@ class Assets:
         (15114, 1): (134, 104, 100),
         (17081, 0): (130, 96, 90),
         (17081, 1): (130, 96, 90),
+        (18013, 0): (128, 94, 125),
+        (18013, 1): (128, 94, 125),
         (18018, 0): (132, 88, 110),
         (18018, 1): (128, 88, 110),
+        (18019, 0): (128, 100, 120),
+        (18019, 1): (130, 100, 120),
         (18027, 0): (133, 92, 105),
         (18027, 1): (128, 92, 105),
         (18028, 0): (128, 106, 100),
@@ -171,6 +185,8 @@ class Assets:
 
     def __init__(self, client, lookup, catalog, capsule_lookup=None):
         self.reader = ClientData(client)
+        self.catalog = catalog
+        self.portrait_overrides = catalog.get("portrait_overrides", {})
         source = read_json(lookup)
         if "units" in source:
             if source.get("zdx_sha256") != self.reader.index_hash:
@@ -188,6 +204,75 @@ class Assets:
             capsule_source = capsule_source["capsules"]
         self.capsule_lookup = capsule_source
         self.units = {u["id"]: u for u in catalog["units"]}
+
+    def _portrait_override_catalog(self):
+        catalog = getattr(self, "catalog", None)
+        if isinstance(catalog, dict):
+            return catalog
+        overrides = getattr(self, "portrait_overrides", None)
+        if isinstance(overrides, dict) and overrides:
+            return {"portrait_overrides": overrides}
+        return {}
+
+    def has_portrait_override(self, uid, variant=None):
+        """Report whether uploaded art replaces either or one card pose."""
+        if variant is not None and variant not in (0, 1):
+            raise ValueError("Portrait override variant must be 0 or 1")
+        catalog = self._portrait_override_catalog()
+        overrides = catalog.get("portrait_overrides")
+        if not overrides:
+            return False
+        from capsule_portraits import get_override
+        if variant is None:
+            return any(
+                get_override(catalog, uid, candidate) is not None
+                for candidate in (0, 1))
+        return get_override(catalog, uid, variant) is not None
+
+    def _portrait_override_entry(self, uid, variant):
+        if not self.has_portrait_override(uid, variant):
+            return None
+        from capsule_portraits import get_override
+        return get_override(self._portrait_override_catalog(), uid, variant)
+
+    def _override_head_crop(self, uid, variant):
+        entry = self._portrait_override_entry(uid, variant)
+        if entry is None:
+            return None
+        from PIL import Image
+        from capsule_portraits import decode_override
+        source, crop = decode_override(entry)
+        if source.mode != "RGBA":
+            source = source.convert("RGBA")
+        if (not isinstance(crop, (list, tuple)) or len(crop) != 4
+                or any(not isinstance(value, (int, float))
+                       or not math.isfinite(value) for value in crop)):
+            raise ValueError(
+                f"Portrait override crop is invalid for unit {uid} variant {variant}")
+        crop_x, crop_y, crop_width, crop_height = map(float, crop)
+        if (crop_x < 0 or crop_y < 0 or crop_width <= 0 or crop_height <= 0
+                or crop_x + crop_width > source.width + 1e-6
+                or crop_y + crop_height > source.height + 1e-6):
+            raise ValueError(
+                f"Portrait override crop exceeds PNG bounds for unit {uid} "
+                f"variant {variant}")
+        target_width = self.CARD_PICTURE_BOX[2] - self.CARD_PICTURE_BOX[0]
+        target_height = self.CARD_PICTURE_BOX[3] - self.CARD_PICTURE_BOX[1]
+        target_aspect = target_width / target_height
+        if abs(crop_width - crop_height * target_aspect) > 1:
+            raise ValueError(
+                f"Portrait override crop must use the {target_width}:{target_height} "
+                f"card-picture aspect ratio")
+
+        # Resize premultiplied color and alpha together. Straight-alpha
+        # LANCZOS interpolation otherwise mixes transparent black into the
+        # uploaded subject and leaves a dark fringe around transparent edges.
+        premultiplied = source.convert("RGBa")
+        resized = premultiplied.resize(
+            (target_width, target_height),
+            Image.Resampling.LANCZOS,
+            box=(crop_x, crop_y, crop_x + crop_width, crop_y + crop_height))
+        return resized.convert("RGBA")
 
     @staticmethod
     def _sprite_pair(source, uid, field):
@@ -568,6 +653,9 @@ class Assets:
     def _head_crop(self, uid, variant):
         """Create a head/upper-chest close-up from the same unit and pose."""
         from PIL import Image
+        override = self._override_head_crop(uid, min(variant, 1))
+        if override is not None:
+            return override
         source_variant = self.HEAD_SOURCE_VARIANTS.get(
             (uid, min(variant, 1)), variant)
         source = self._source_art(uid, source_variant)
@@ -647,8 +735,8 @@ class Assets:
         base_grade = unit["grade"][:1]
         if base_grade not in ("A", "B", "C"):
             raise ValueError(
-                f"No native capsule frame policy for grade {unit['grade']} "
-                f"(unit {uid})")
+                f"Portrait overrides require a verified native A/B/C capsule "
+                f"frame; grade {unit['grade']} is unsupported (unit {uid})")
         card = self._native_frame(base_grade).copy()
         head = self._head_crop(uid, variant)
         if unit.get("subgrade") == 4:
@@ -668,12 +756,15 @@ class Assets:
         return card
 
     def card(self, uid, variant=0):
+        variant = min(variant, 1)
+        if self.has_portrait_override(uid, variant):
+            return self._reconstructed_card(uid, variant)
         unit = self.units[uid]
         native = self._sprite_pair(
             {str(uid): unit.get("capsule_sprites")}, uid, "capsule_sprites")
         if native:
-            return self.sprite(native[min(variant, 1)])
-        return self._reconstructed_card(uid, min(variant, 1))
+            return self.sprite(native[variant])
+        return self._reconstructed_card(uid, variant)
 
 
 def build_previews(client, lookup, catalog_path, output):

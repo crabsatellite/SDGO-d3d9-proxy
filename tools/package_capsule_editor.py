@@ -13,7 +13,7 @@ from capsule_deployment import _build_package_symbols
 
 TOOL_FILES = (
     "start_capsule_editor.py", "capsule_ui.py", "capsule_catalog.py",
-    "capsule_assets.py", "capsule_client_compile.py", "capsule_server_runtime.py",
+    "capsule_assets.py", "capsule_portraits.py", "capsule_client_compile.py", "capsule_server_runtime.py",
     "capsule_ui_layout.py",
     "capsule_deployment.py", "init_capsules.py", "export_capsule_snapshot.py",
     "install_capsule_client.ps1",

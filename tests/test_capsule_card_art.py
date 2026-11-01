@@ -1,14 +1,19 @@
+import base64
+import io
 from pathlib import Path
 import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from capsule_assets import Assets, sprite_frame, standalone_sprite
+from capsule_portraits import make_override
 
 
 class CapsuleCardArtTests(unittest.TestCase):
     def assets(self, unit_sprites=None, capsule_sprites=None, native_sprites=None):
         assets = Assets.__new__(Assets)
+        assets.catalog = {"portrait_overrides": {}}
+        assets.portrait_overrides = assets.catalog["portrait_overrides"]
         assets.lookup = {"42": unit_sprites or ["sprs\\unit-a.spr", "sprs\\unit-b.spr"]}
         assets.capsule_lookup = (
             {"42": capsule_sprites} if capsule_sprites is not None else {})
@@ -86,6 +91,8 @@ class ReconstructedCapsuleCardTests(unittest.TestCase):
     def assets(self, grade="AR", subgrade=4):
         from PIL import Image, ImageDraw
         assets = Assets.__new__(Assets)
+        assets.catalog = {"portrait_overrides": {}}
+        assets.portrait_overrides = assets.catalog["portrait_overrides"]
         assets.lookup = {
             "42": ["sprs\\unit-0.spr", "sprs\\unit-1.spr"],
         }
@@ -162,6 +169,21 @@ class ReconstructedCapsuleCardTests(unittest.TestCase):
         assets._native_legal_overlay = lambda _grade: legal
         return assets
 
+    @staticmethod
+    def portrait_override(image, crop):
+        stream = io.BytesIO()
+        image.save(stream, format="PNG", optimize=False)
+        raw = stream.getvalue()
+        return make_override(
+            base64.b64encode(raw).decode("ascii"), list(crop))
+
+    def set_portrait_override(self, assets, variant, image, crop):
+        entry = self.portrait_override(image, crop)
+        assets.catalog["portrait_overrides"] = {
+            "42": {str(variant): entry}}
+        assets.portrait_overrides = assets.catalog["portrait_overrides"]
+        return entry
+
     def test_generated_card_uses_real_frame_and_a_head_crop(self):
         assets = self.assets(grade="A", subgrade=2)
         card = assets.card(42, 0)
@@ -198,6 +220,72 @@ class ReconstructedCapsuleCardTests(unittest.TestCase):
         assets = self.assets(grade="A", subgrade=2)
         self.assertNotEqual(assets.card(42, 0).tobytes(),
                             assets.card(42, 1).tobytes())
+
+    def test_uploaded_png_uses_its_pixel_crop_and_premultiplied_alpha(self):
+        from PIL import Image, ImageDraw
+
+        assets = self.assets(grade="B", subgrade=2)
+        uploaded = Image.new("RGBA", (326, 128), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(uploaded)
+        draw.rectangle((82, 16, 243, 111), fill=(255, 24, 8, 255))
+        self.set_portrait_override(
+            assets, 0, uploaded, (0.0, 0.0, 326.0, 128.0))
+        assets._source_art = lambda *_args: self.fail(
+            "uploaded art must bypass the shipped source portrait")
+
+        head = assets._head_crop(42, 0)
+
+        self.assertEqual(head.size, (163, 64))
+        self.assertEqual(head.getpixel((81, 32)), (255, 24, 8, 255))
+        translucent_edges = [
+            pixel for pixel in head.getdata() if 0 < pixel[3] < 255]
+        self.assertTrue(translucent_edges)
+        self.assertTrue(all(
+            red >= 245
+            for red, green, blue, _alpha in translucent_edges),
+            "transparent-edge interpolation must not introduce a black fringe")
+        self.assertTrue(all(
+            green >= 15 and blue <= 16
+            for _red, green, blue, alpha in translucent_edges if alpha >= 16))
+
+    def test_uploaded_png_overrides_a_native_card_for_only_that_variant(self):
+        from PIL import Image, ImageDraw
+
+        assets = self.assets(grade="B", subgrade=2)
+        assets.units[42]["capsule_sprites"] = [
+            "sprs\\native-0.spr", "sprs\\native-1.spr"]
+        native_variant_one = assets.sprite("sprs\\native-1.spr").copy()
+        uploaded = Image.new("RGBA", (326, 128), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(uploaded)
+        draw.rectangle((0, 0, 162, 127), fill=(220, 20, 20, 255))
+        draw.rectangle((163, 0, 325, 127), fill=(12, 245, 38, 255))
+        self.set_portrait_override(
+            assets, 0, uploaded, (163.0, 0.0, 163.0, 64.0))
+
+        overridden = assets.card(42, 0)
+        untouched = assets.card(42, 1)
+
+        self.assertTrue(assets.has_portrait_override(42))
+        self.assertTrue(assets.has_portrait_override(42, 0))
+        self.assertFalse(assets.has_portrait_override(42, 1))
+        override_colors = set(
+            overridden.crop(assets.CARD_PICTURE_BOX).getdata())
+        self.assertTrue(any(
+            green > 200 and red < 80
+            for red, green, _blue, alpha in override_colors if alpha))
+        self.assertEqual(untouched.tobytes(), native_variant_one.tobytes(),
+                         "the other native pose must remain byte-for-byte unchanged")
+
+    def test_portrait_override_rejects_unverified_s_rank_frame(self):
+        from PIL import Image
+
+        assets = self.assets(grade="SR", subgrade=2)
+        self.set_portrait_override(
+            assets, 0, Image.new("RGBA", (163, 64), (1, 2, 3, 255)),
+            (0.0, 0.0, 163.0, 64.0))
+        with self.assertRaisesRegex(
+                ValueError, "verified native A/B/C capsule frame"):
+            assets.card(42, 0)
 
     def test_obstructed_action_pose_can_reuse_same_unit_clear_pose(self):
         assets = self.assets(grade="A", subgrade=2)

@@ -53,7 +53,7 @@ and random-unit gameplay belong in this category.
 | Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
-| Capsule catalog editor (Beta) | Owner UI for fixed/custom machine CRUD, native templates, prices and weights; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
+| Capsule catalog editor (Beta) | Fixed/custom machine CRUD, native templates, prices, weights and PNG portrait framing; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
 <!-- /mod-category:gameplay -->
 
 The [capsule editor](docs/capsule-catalog.md) is part of master. Owners configure their own
@@ -61,6 +61,9 @@ paths and database connection locally, then distribute a generated player packag
 Players install it once and use the normal game launcher. Other Mods can reuse the
 [catalog, compiler and deployment interfaces](docs/capsule-integration.md) rather than
 writing separate client tables or overlapping native file hooks.
+Upload a finished PNG and drag or resize its crop frame to preview the native
+card. Image restoration is performed separately; the editor and player runtime
+have no AI model or GPU dependency.
 
 In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
 Identical untrained copies default to two kept. Exchange excludes trained units;

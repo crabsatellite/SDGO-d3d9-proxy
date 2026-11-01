@@ -91,6 +91,15 @@ def initialize(catalog, price=None):
 
 
 class InitializationPricingTests(unittest.TestCase):
+    def test_largest_remainder_matches_native_price_distribution(self):
+        self.assertEqual(
+            c._largest_remainder_quotas(
+                {1200: 17, 1400: 4, 1600: 40, 7500: 5, 14800: 12},
+                35,
+            ),
+            {1200: 8, 1400: 2, 1600: 18, 7500: 2, 14800: 5},
+        )
+
     def test_all_a_and_all_b_inherit_selected_native_template_price(self):
         all_a, _ = initialize(catalog_for(3, 3601, 14800, [100]))
         new_a = next(m for m in all_a["fixed_machines"]
@@ -145,6 +154,54 @@ class InitializationPricingTests(unittest.TestCase):
 
 
 class InitializationDiversityTests(unittest.TestCase):
+    def test_strict_mix_uses_five_non_old_units_and_reports_all_usage(self):
+        base = catalog_for(3, 3601, 14800, range(100, 110))
+        for row in base["units"]:
+            row["has_inventory_category"] = True
+            row["collection"] = True
+            row["review_placeholder"] = False
+        base["custom_candidate_policy"] = {
+            "version": 1,
+            "native_candidate_unit_ids": [],
+            "new_candidate_grades": [
+                "SR",
+                "SS-without-blueprint-recipe",
+            ],
+        }
+
+        result, report = initialize(base)
+        generated = [
+            machine for machine in result["fixed_machines"]
+            if machine["owner"] == "initialization"
+        ]
+        self.assertEqual(len(generated), 2)
+        native_ids = set(range(1, 7))
+        for machine in generated:
+            ids = [slot["unit_id"] for slot in machine["slots"]]
+            self.assertEqual(len(set(ids)), 6)
+            self.assertEqual(sum(uid in native_ids for uid in ids), 1)
+            self.assertEqual(
+                Counter(slot["initialization_role"]
+                        for slot in machine["slots"]),
+                Counter({"new_root": 5, "filler_native_overlap": 1}),
+            )
+
+        plan = report["fixed_initialization_plan"]
+        self.assertEqual(plan["machine_count"], 2)
+        self.assertEqual(plan["price_quotas"], {14800: 2})
+        self.assertEqual(plan["actual_template_price_counts"], {14800: 2})
+        self.assertEqual(plan["native_overlap_slot_count"], 2)
+        self.assertEqual(plan["native_overlap_rate"], 1 / 6)
+        self.assertEqual(plan["distinct_template_count"], 1)
+        self.assertEqual(plan["maximum_template_reuse"], 2)
+        self.assertEqual(
+            {row["unit_id"]: row["uses"]
+             for row in report["fixed_non_native_usage"]},
+            {uid: 1 for uid in range(100, 110)},
+        )
+        self.assertTrue(all(
+            row["passes"] for row in report["new_fixed_rarity_audit"]))
+
     def test_repeated_pattern_rotates_fillers_and_never_uses_blocked_root(self):
         base = catalog_for(
             3, 3601, 14800, range(100, 120), blocked_id=999)

@@ -144,6 +144,41 @@ class NativeFormatTests(unittest.TestCase):
             self.assertEqual(result["generated_cards"], 0)
             self.assertFalse((out / "assets").exists())
 
+            # Replacing one pose must retain the other pose's authored SPR.
+            import base64
+            import json
+            from PIL import Image
+            from capsule_portraits import make_override
+            png = io.BytesIO()
+            Image.new("RGBA", (163, 64), (22, 88, 144, 255)).save(png, "PNG")
+            catalog["units"][0]["grade"] = "AR"
+            catalog["portrait_overrides"] = {"1": {"0": make_override(
+                base64.b64encode(png.getvalue()).decode("ascii"), [0, 0, 163, 64])}}
+
+            class UploadedAssets(NativeAssets):
+                def has_portrait_override(self, uid, variant=None):
+                    return uid == 1 and variant in (None, 0)
+                def card(self, uid, variant):
+                    if (uid, variant) != (1, 0):
+                        raise AssertionError("Unedited native poses must retain their SPR")
+                    return Image.new("RGBA", (183, 107), (22, 88, 144, 255))
+
+            uploaded_out = Path(temporary) / "uploaded"
+            with patch("capsule_client_compile.Assets", UploadedAssets), patch(
+                "capsule_client_compile.patch_capsule_price_defaults",
+                return_value=(b"patched-ui-fixture", {"test_fixture": True}),
+            ):
+                uploaded_result = compile_catalog(catalog, "client", "lookup.json", uploaded_out)
+            uploaded_row = gdt_records((uploaded_out / "data/0033.gdt").read_bytes())[1][0]
+            uploaded_pair = [uploaded_row[59+j*60:119+j*60].decode("utf-16-le").split("\0")[0]
+                             for j in range(2)]
+            self.assertEqual(uploaded_pair, ["sprs\\60000.spr", "sprs\\103.spr"])
+            self.assertEqual(uploaded_result["generated_cards"], 1)
+            manifest = json.loads((uploaded_out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["generated_cards"][0]["source"], "native_frame_and_uploaded_png")
+            self.assertEqual(manifest["generated_cards"][0]["uploaded_png_sha256"],
+                             catalog["portrait_overrides"]["1"]["0"]["sha256"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,3 +101,24 @@ Keep tests focused on public behavior: CRUD and retirement, source-bound policy,
 revision conflicts, compile round trips, overlay scope, SQL persistence and
 installation rollback. Actual account charging, delivery and gameplay remain
 manual acceptance steps.
+
+## Uploaded PNG portraits
+
+Optional `portrait_overrides` is keyed by decimal unit ID, then `"0"` / `"1"` pose.
+Each entry contains `png_base64`, `sha256` and `crop: [x, y, width, height]` in source
+PNG pixels. The PNG is embedded so a catalog remains portable. Upload normalizes
+RGBA and removes metadata; reading verifies the original byte hash without
+requiring identical PNG compression across machines or Pillow versions.
+
+`capsule_portraits` owns validation and decoding. Limits are 2048 pixels per side,
+4 MiB per PNG, 32 MiB total, finite in-bounds crops with the native 163:64 aspect.
+Only verified A/B/C frame families accept overrides. `Assets.card` composes the
+uploaded crop with native chrome and rarity treatment; unedited native poses keep
+their original SPR references. Compiler version 7 records upload hashes/crops.
+
+The editor exposes `GET /api/portraits?unit_id=...&variant=...` and revision-checked
+`POST /api/portraits/preview`, `/save`, `/reset`. Preview does not persist. Save
+accepts `apply_to_both`; reset removes only the selected pose. These routes use
+the same loopback, origin and CSRF protections as machine edits. There is no AI
+engine, model download or GPU dependency in this workflow; external image tools
+supply an ordinary PNG.

@@ -418,6 +418,7 @@ class DeploymentTests(unittest.TestCase):
             self.root, own_loader=True, own_core=True, old_mod=True
         )
         original_ini = (client / "sdgo/sdgo.ini").read_bytes()
+        (client / "sdgo/sdgo.ini").write_bytes(original_ini + b"capsule_catalog=0\n")
         result = self.apply(client)
         self.assertTrue(result["applied"])
         self.assertFalse(result["server_applied"])
@@ -427,7 +428,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(
             (client / "sdgo/mods/unrelated/keep.bin").read_bytes(), b"KEEP"
         )
-        self.assertEqual((client / "sdgo/sdgo.ini").read_bytes(), original_ini)
+        installed_ini = (client / "sdgo/sdgo.ini").read_bytes()
+        self.assertTrue(installed_ini.startswith(original_ini))
+        self.assertIn(b"capsule_catalog=1", installed_ini)
+        self.assertNotIn(b"capsule_catalog=0", installed_ini)
         symbols = (
             client / "sdgo/symbols" / deployment.HOST_SYMBOL_NAME
         ).read_text(encoding="utf-8")
@@ -436,7 +440,7 @@ class DeploymentTests(unittest.TestCase):
         mod_ini = (client / "sdgo/mods/capsule_catalog/mod.ini").read_text(
             encoding="utf-8"
         )
-        self.assertIn("enabled=0", mod_ini)
+        self.assertIn("enabled=1", mod_ini)
         self.assertIn("[settings]", mod_ini)
         self.assertIn("preview=1", mod_ini)
         backup = Path(result["backup_path"])

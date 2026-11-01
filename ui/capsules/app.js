@@ -14,6 +14,7 @@ const state = {
   unitTarget: null,
   unitMap: new Map(),
   newTemplates: [],
+  portrait: null,
 };
 
 function escapeHtml(value) {
@@ -255,11 +256,12 @@ function unitButton(unit, targetType, index) {
     ? `ID ${unit.id} · ${unit.grade || "?"}`
     : "尚未选择";
   return `
-    <button class="unit-select-button" type="button"
+    <div class="unit-choice"><button class="unit-select-button" type="button"
             data-pick-unit="${targetType}" data-entry-index="${index}">
       <strong>${escapeHtml(name)}</strong>
       <small>${escapeHtml(subtitle)}</small>
-    </button>`;
+    </button>${unit ? `<button class="portrait-open" type="button" data-edit-portrait="${unit.id}"
+      ${Number(unit.rank) > 3 ? 'disabled title="此等级暂无已验证的原生卡框"' : ''}>头像 PNG / 取景</button>` : ''}</div>`;
 }
 
 function renderFixedSlots(machine) {
@@ -987,7 +989,260 @@ function removeCandidate(index) {
   setDirty(true);
 }
 
+function portraitError(message = "") {
+  $("#portrait-error").textContent = message;
+  $("#portrait-error").classList.toggle("hidden", !message);
+}
+
+function portraitChanged() {
+  const p = state.portrait;
+  if (!p) return;
+  p.dirty = true;
+  drawPortrait();
+  clearTimeout(p.timer);
+  p.timer = setTimeout(previewPortrait, 400);
+}
+
+function portraitFit(reset = false) {
+  const p = state.portrait;
+  if (!p?.image) return;
+  const width = Math.min(p.image.width, p.image.height * 163 / 64);
+  p.baseWidth = width;
+  if (reset || !p.crop) {
+    p.crop = [(p.image.width - width) / 2,
+      (p.image.height - width * 64 / 163) / 2, width, width * 64 / 163];
+  }
+  $("#portrait-zoom").value = String(Math.max(100, Math.min(800, width / p.crop[2] * 100)));
+  drawPortrait();
+}
+
+function clampPortraitCrop() {
+  const p = state.portrait;
+  if (!p?.image || !p.crop) return;
+  p.crop[0] = Math.max(0, Math.min(p.image.width - p.crop[2], p.crop[0]));
+  p.crop[1] = Math.max(0, Math.min(p.image.height - p.crop[3], p.crop[1]));
+}
+
+function drawPortrait() {
+  const canvas = $("#portrait-canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < canvas.height; y += 16) {
+    for (let x = 0; x < canvas.width; x += 16) {
+      ctx.fillStyle = ((x + y) / 16) % 2 ? "#26323e" : "#1d2833";
+      ctx.fillRect(x, y, 16, 16);
+    }
+  }
+  const p = state.portrait;
+  if (!p?.image || !p.crop) {
+    ctx.fillStyle = "#b3c5d5";
+    ctx.font = "18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("上传 PNG，然后拖动取景框", canvas.width / 2, canvas.height / 2);
+    return;
+  }
+  const scale = Math.min((canvas.width - 40) / p.image.width, (canvas.height - 40) / p.image.height);
+  const ox = (canvas.width - p.image.width * scale) / 2;
+  const oy = (canvas.height - p.image.height * scale) / 2;
+  p.transform = { scale, ox, oy };
+  ctx.drawImage(p.image, ox, oy, p.image.width * scale, p.image.height * scale);
+  const [cx, cy, cw, ch] = p.crop;
+  const x = ox + cx * scale, y = oy + cy * scale, w = cw * scale, h = ch * scale;
+  ctx.fillStyle = "rgba(0, 0, 0, .56)";
+  ctx.fillRect(0, 0, canvas.width, y);
+  ctx.fillRect(0, y + h, canvas.width, canvas.height - y - h);
+  ctx.fillRect(0, y, x, h);
+  ctx.fillRect(x + w, y, canvas.width - x - w, h);
+  ctx.strokeStyle = "#68e8ec";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = "#efffff";
+  for (const [px, py] of [[x,y],[x+w,y],[x,y+h],[x+w,y+h]]) ctx.fillRect(px-4, py-4, 8, 8);
+  $("#portrait-source-info").textContent = `${p.image.width} × ${p.image.height} PNG · 取景 ${cw.toFixed(1)} × ${ch.toFixed(1)} · 拖动框，滚轮或滑杆缩放`;
+  $("#portrait-zoom-value").textContent = `${(p.baseWidth / cw).toFixed(2)}×`;
+}
+
+async function setPortraitImage(dataUrl, crop = null) {
+  const p = state.portrait;
+  const image = new Image();
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error("无法读取 PNG"));
+    image.src = dataUrl;
+  });
+  if (state.portrait !== p) return;
+  if (image.width > 2048 || image.height > 2048) throw new Error("PNG 最大为 2048 × 2048");
+  p.image = image;
+  p.png_base64 = dataUrl.split(",")[1];
+  p.crop = crop ? [...crop] : null;
+  portraitFit();
+}
+
+async function loadPortraitVariant() {
+  const p = state.portrait;
+  if (!p) return;
+  const variant = Number($("#portrait-variant").value);
+  p.variant = variant;
+  p.image = null; p.crop = null; p.png_base64 = null; p.dirty = false;
+  $("#portrait-file").value = "";
+  clearTimeout(p.timer);
+  p.previewSequence = (p.previewSequence || 0) + 1;
+  portraitError(); drawPortrait();
+  $("#portrait-source-info").textContent = "正在读取图片与取景…";
+  $("#portrait-preview-status").textContent = "正在读取…";
+  const result = await apiGet(`/api/portraits?unit_id=${p.unit.id}&variant=${variant}`);
+  if (state.portrait !== p || p.variant !== variant) return;
+  if (p.dirty) return;
+  if (result.catalog_revision !== state.revision) throw new Error("配置已变化，请刷新页面后再编辑头像");
+  if (result.image_data_url) await setPortraitImage(result.image_data_url, result.crop);
+  const preview = $("#portrait-preview");
+  preview.classList.toggle("hidden", !result.card_data_url);
+  if (result.card_data_url) preview.src = result.card_data_url;
+  $("#portrait-preview-status").textContent = result.overridden ? "已保存的头像与取景" : "当前原图；上传 PNG 后可调整取景";
+}
+
+async function openPortrait(unitId) {
+  const unit = state.unitMap.get(unitId);
+  if (!unit) return;
+  state.portrait = { unit, variant: 0, dirty: false, previewSequence: 0 };
+  $("#portrait-title").textContent = `${unit.name} · ${unit.grade} · 头像取景`;
+  $("#portrait-variant").value = "0";
+  $("#portrait-both").checked = false;
+  $("#portrait-dialog").showModal();
+  try { await loadPortraitVariant(); } catch (error) { portraitError(error.message); }
+}
+
+async function previewPortrait() {
+  const p = state.portrait;
+  if (!p?.png_base64 || !p.crop) return;
+  const sequence = ++p.previewSequence;
+  $("#portrait-preview-status").textContent = "正在合成原生卡片…";
+  try {
+    const result = await apiPost("/api/portraits/preview", {
+      expected_revision: state.revision, unit_id: p.unit.id, variant: p.variant,
+      png_base64: p.png_base64, crop: p.crop,
+    });
+    if (state.portrait !== p || sequence !== p.previewSequence) return;
+    if (result.card_data_url) {
+      $("#portrait-preview").src = result.card_data_url;
+      $("#portrait-preview").classList.remove("hidden");
+      $("#portrait-preview-status").textContent = "原生卡框、等级条和稀有剪影已合成；取景尚未保存";
+    }
+    portraitError();
+  } catch (error) {
+    if (state.portrait === p && sequence === p.previewSequence) {
+      $("#portrait-preview-status").textContent = "预览不可用；可保存 PNG 与取景，配置客户端素材后编译。";
+      portraitError(error.message);
+    }
+  }
+}
+
+async function savePortrait(reset = false) {
+  const p = state.portrait;
+  if (!p) return;
+  if (!reset && (!p.png_base64 || !p.crop)) { portraitError("请先上传 PNG"); return; }
+  const button = $(reset ? "#portrait-reset" : "#portrait-save");
+  button.disabled = true;
+  clearTimeout(p.timer);
+  try {
+    const payload = { expected_revision: state.revision, unit_id: p.unit.id, variant: p.variant };
+    if (!reset) Object.assign(payload, { png_base64: p.png_base64, crop: p.crop, apply_to_both: $("#portrait-both").checked });
+    const result = await apiPost(`/api/portraits/${reset ? 'reset' : 'save'}`, payload);
+    state.revision = result.catalog_revision;
+    state.bootstrap.catalog_revision = result.catalog_revision;
+    $("#revision").textContent = `revision ${result.catalog_revision.slice(0,12)}`;
+    p.dirty = false;
+    await loadPortraitVariant();
+    showToast(reset ? "已恢复当前姿态原图" : "头像与取景已保存，导入游戏后生效");
+  } catch (error) { portraitError(error.message); }
+  finally { button.disabled = false; }
+}
+
+function closePortrait() {
+  const p = state.portrait;
+  if (p?.dirty && !window.confirm("取景尚未保存，关闭并放弃本次修改？")) return;
+  if (p) clearTimeout(p.timer);
+  state.portrait = null;
+  $("#portrait-dialog").close();
+}
+
+function bindPortraitEvents() {
+  $("#portrait-close").addEventListener("click", closePortrait);
+  $("#portrait-dialog").addEventListener("cancel", event => { event.preventDefault(); closePortrait(); });
+  $("#portrait-file").addEventListener("change", async event => {
+    const file = event.target.files[0]; if (!file) return;
+    try {
+      if (file.size > 4*1024*1024) throw new Error("PNG 最大为 4 MiB");
+      if (file.type && file.type !== "image/png") throw new Error("只接受 PNG 图片");
+      const dataUrl = await new Promise((resolve,reject) => {
+        const reader = new FileReader(); reader.onload = () => resolve(reader.result);
+        reader.onerror = reject; reader.readAsDataURL(file);
+      });
+      await setPortraitImage(dataUrl); portraitChanged();
+    } catch (error) { portraitError(error.message || "PNG 读取失败"); }
+  });
+  $("#portrait-variant").addEventListener("change", async () => {
+    const p = state.portrait;
+    if (p?.dirty && !window.confirm("当前取景尚未保存，切换姿态并放弃修改？")) {
+      $("#portrait-variant").value = String(p.variant); return;
+    }
+    try { await loadPortraitVariant(); } catch (error) { portraitError(error.message); }
+  });
+  $("#portrait-fit").addEventListener("click", () => { portraitFit(true); portraitChanged(); });
+  const zoom = () => {
+    const p = state.portrait; if (!p?.crop) return;
+    const cx = p.crop[0]+p.crop[2]/2, cy = p.crop[1]+p.crop[3]/2;
+    const w = p.baseWidth * 100 / Number($("#portrait-zoom").value), h = w*64/163;
+    p.crop = [cx-w/2,cy-h/2,w,h]; clampPortraitCrop(); portraitChanged();
+  };
+  $("#portrait-zoom").addEventListener("input", zoom);
+  const canvas = $("#portrait-canvas");
+  canvas.addEventListener("wheel", event => {
+    if (!state.portrait?.image) return; event.preventDefault();
+    const slider = $("#portrait-zoom"); slider.value = String(Math.max(100,Math.min(800,Number(slider.value)+(event.deltaY<0?10:-10)))); zoom();
+  }, {passive:false});
+  const point = event => { const r=canvas.getBoundingClientRect(); return [(event.clientX-r.left)*canvas.width/r.width,(event.clientY-r.top)*canvas.height/r.height]; };
+  canvas.addEventListener("pointerdown", event => {
+    const p=state.portrait; if(!p?.image || !p.transform) return;
+    const [x,y]=point(event), t=p.transform;
+    const ix=(x-t.ox)/t.scale, iy=(y-t.oy)/t.scale;
+    if(ix<0||iy<0||ix>p.image.width||iy>p.image.height) return;
+    const corners = [[0,0],[1,0],[0,1],[1,1]];
+    const corner = corners.find(([right,bottom]) => Math.hypot(
+      x-(t.ox+(p.crop[0]+right*p.crop[2])*t.scale),
+      y-(t.oy+(p.crop[1]+bottom*p.crop[3])*t.scale)) <= 12);
+    if(!corner && (ix<p.crop[0]||ix>p.crop[0]+p.crop[2]||iy<p.crop[1]||iy>p.crop[1]+p.crop[3])) {
+      p.crop[0]=ix-p.crop[2]/2; p.crop[1]=iy-p.crop[3]/2; clampPortraitCrop();
+    }
+    p.drag={x,y,crop:[...p.crop],corner}; canvas.setPointerCapture(event.pointerId); drawPortrait();
+  });
+  canvas.addEventListener("pointermove", event => {
+    const p=state.portrait; if(!p?.drag) return;
+    const [x,y]=point(event); p.crop=[...p.drag.crop];
+    if (p.drag.corner) {
+      const [right,bottom]=p.drag.corner, t=p.transform;
+      const ax=p.drag.crop[0]+(1-right)*p.drag.crop[2];
+      const ay=p.drag.crop[1]+(1-bottom)*p.drag.crop[3];
+      const ix=(x-t.ox)/t.scale, iy=(y-t.oy)/t.scale;
+      const maximum=Math.min(right?p.image.width-ax:ax,(bottom?p.image.height-ay:ay)*163/64,p.baseWidth);
+      const width=Math.max(Math.min(p.baseWidth/8,maximum),Math.min(maximum,Math.max(Math.abs(ix-ax),Math.abs(iy-ay)*163/64)));
+      const height=width*64/163;
+      p.crop=[right?ax:ax-width,bottom?ay:ay-height,width,height];
+      $("#portrait-zoom").value=String(Math.max(100,Math.min(800,p.baseWidth/width*100)));
+    } else {
+      p.crop[0]+=(x-p.drag.x)/p.transform.scale; p.crop[1]+=(y-p.drag.y)/p.transform.scale;
+    }
+    clampPortraitCrop(); portraitChanged();
+  });
+  const endDrag=()=>{const p=state.portrait;if(p?.drag){p.drag=null;portraitChanged();}};
+  canvas.addEventListener("pointerup",endDrag); canvas.addEventListener("pointercancel",endDrag);
+  $("#portrait-save").addEventListener("click",()=>savePortrait());
+  $("#portrait-reset").addEventListener("click",()=>savePortrait(true));
+  document.addEventListener("click",event=>{const b=event.target.closest("[data-edit-portrait]");if(b&&!b.disabled)openPortrait(Number(b.dataset.editPortrait));});
+}
+
 function bindEvents() {
+  bindPortraitEvents();
   $$(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       if (tab.dataset.kind === state.kind) return;

@@ -818,6 +818,29 @@ dialog::backdrop {
   line-height: 1.65;
 }
 
+.unit-choice { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.unit-choice .unit-select-button { width: 100%; }
+.portrait-open { align-self: flex-start; padding: 4px 8px; font-size: 11px; color: #8ae6e8; }
+.portrait-dialog-card { width: 100%; }
+#portrait-dialog { width: min(1160px, calc(100vw - 48px)); max-width: 98vw; }
+#portrait-dialog .dialog-heading, #portrait-dialog .dialog-actions { flex-shrink: 0; }
+.portrait-toolbar { display: flex; gap: 16px; align-items: flex-end; margin: 16px 0; flex-wrap: wrap; }
+.portrait-toolbar label { display: flex; gap: 8px; align-items: center; }
+.portrait-upload-label input { width: 240px; }
+.portrait-workspace { display: grid; grid-template-columns: minmax(360px, 1fr) 366px; gap: 24px; }
+#portrait-canvas { display: block; width: 100%; height: auto; border: 1px solid #405264; border-radius: 7px; cursor: move; touch-action: none; }
+.portrait-zoom-label { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; }
+#portrait-zoom { flex: 1; }
+#portrait-zoom-value { min-width: 50px; }
+.portrait-preview-panel h3 { margin-top: 0; font-size: 14px; }
+#portrait-preview { width: 366px; height: 214px; max-width: 100%; object-fit: contain; image-rendering: auto; background: #17232c; }
+.portrait-preview-panel .inline-check { margin-top: 20px; }
+#portrait-error { margin-top: 14px; color: #ffbdb5; border-color: #a64f43; }
+@media (max-width: 900px) {
+  .portrait-workspace { grid-template-columns: 1fr; }
+  #portrait-dialog { width: 94vw; }
+}
+
 .toast {
   position: fixed;
   right: 20px;
