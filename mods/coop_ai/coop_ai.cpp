@@ -29,6 +29,8 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_commands.h"
+#include "sdgo/ai_catalog_provider.h"
 
 namespace
 {
@@ -180,35 +182,21 @@ namespace
         Plan plan;
         plan.count = g_settings.defaultCount;
         plan.level = g_settings.defaultLevel;
-        char lower[kRoomTitleMax + 1];
-        size_t n = 0;
-        for (; n < kRoomTitleMax && title[n]; ++n)
-            lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
-        lower[n] = '\0';
-        const char* command = strstr(lower, "!ai");
-        if (!command) {
+        namespace commands=sdgo::room_commands;
+        SdgoRoomCommand command{};
+        if (!commands::Find(g_api,title,static_cast<uint32_t>(kRoomTitleMax),"ai",
+                            SDGO_ROOM_COMMAND_ALLOW_COUNT,&command)) {
             plan.enabled = g_settings.requireRoomCommand == 0;
             return plan;
         }
         plan.enabled = true;
-        const char* p = command + 3;
-        if (*p >= '0' && *p <= '9') {
-            plan.count = 0;
-            while (*p >= '0' && *p <= '9') {
-                int digit = *p++ - '0';
-                if (plan.count < kSlots)
-                    plan.count = plan.count * 10 + digit;
-                if (plan.count > kSlots)
-                    plan.count = kSlots;
-            }
-        }
-        while (*p) {
-            while (*p == ' ')
-                ++p;
-            if (p[0] == 'l' && p[1] == 'v' && p[2] >= '1' && p[2] <= '5' && (p[3] == ' ' || p[3] == '\0'))
-                plan.level = p[2] - '0';
-            while (*p && *p != ' ')
-                ++p;
+        if(command.has_count) plan.count=static_cast<int>((std::min)(command.count,uint32_t{kSlots}));
+        uint32_t cursor=command.arguments_offset;
+        commands::Token argument;
+        while(commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
+            const char* token=title+argument.offset;
+            if(argument.length==3 && commands::Lower(token[0])=='l' && commands::Lower(token[1])=='v'
+               && token[2]>='1' && token[2]<='5') plan.level=token[2]-'0';
         }
         return plan;
     }
@@ -368,10 +356,16 @@ namespace
 
         std::vector<uint32_t> available = AiNpcIds();
         std::vector<uint32_t> pool;
-        for (uint32_t id : g_settings.levels[plan.level])
-            if (Contains(available, id))
-                pool.push_back(id);
+        const bool catalog = sdgo::AiCatalogPool(g_api, g_mod, plan.level, pool);
+        if (!catalog)
+            for (uint32_t id : g_settings.levels[plan.level])
+                if (Contains(available, id))
+                    pool.push_back(id);
         if (pool.empty()) {
+            if (catalog) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
+                return;
+            }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
             return;

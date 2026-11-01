@@ -105,6 +105,9 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 | `[mods] <id>=0` | 关闭某个 mod |
 
 各 mod 的设置在其 `mod.ini` 的 `[settings]`，每项都有注释，功能说明里也有列表。
+每局随机机体由服主在 `room_random/config.ini` 配置现有 WorldServer INI 的路径后启用，
+玩家使用原客户端，在房名加入 `!rand`；可与 `!ai` 组合。
+见[每局随机机体](room-random.zh-CN.md)及[房名组合指令](room-commands.zh-CN.md)。
 
 ## 排错
 
