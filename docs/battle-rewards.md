@@ -23,7 +23,12 @@ real native/worker health; saving a file does not imply a live connection. See t
 ## Delivery and recovery
 
 G is replaced at the verified native final amount and continues through the normal
-World/wallet path. MB uses durable jobs and a database receipt keyed by match/account
+World/wallet path. The native result animation adds its base and bonus rows, while
+skipping uses the total directly. Both paths now receive the complete policy GB
+in the base row, with superseded legacy GB bonuses cleared. This base row includes
+contribution, MVP, multipliers and time scaling; it is not the old table's outcome
+minimum. Pilot/unit EXP details and separately awarded system rewards are preserved.
+MB uses durable jobs and a database receipt keyed by match/account
 and bound to the plan. A lost post-commit response can be retried without another
 credit. The worker queries fresh current MB and sends the normal `0x064B` absolute
 balance update through the existing Agent route. Recycled/offline sessions are not
