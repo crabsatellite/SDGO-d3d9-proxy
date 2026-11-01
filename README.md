@@ -45,6 +45,9 @@ and random-unit gameplay belong in this category.
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
+Daily double rewards need only a BattleServer update; players keep their current clients.
+See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-acceptance).
+
 <details>
 <summary>Short AI gameplay examples</summary>
 

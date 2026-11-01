@@ -12,6 +12,13 @@ equal endpoints and invalid values reject the Mod before any hook is installed.
 Restart the affected BattleServer after editing configuration. Daily transitions use the
 actual settlement clock, not server-start time or the client's clock.
 
+Back up the existing framework, symbols and settings before updating. The installer
+keeps other Mod directories but replaces same-named package files. Before restarting,
+merge any extra symbols required by custom Mods back into the matching host file,
+keeping this version's ten `battle.reward.final.*` and ten `battle.reward.layout.*`
+entries. Resolve conflicting entries against the actual EXE, and retain other Mod
+DLLs, data and settings.
+
 Native bonuses are calculated first. The Mod doubles each final reward once and adds the
 difference to its event-bonus bucket, keeping base/other bonuses plus event rewards equal
 to the same totals consumed by the native unit update, database request and client packet.
@@ -64,3 +71,22 @@ and reconnect persistence remain manual acceptance. No automatic test executes a
 or mutates a live account/database. Disable `[features] daily-rewards=0` or
 `[mods] daily_rewards=0`; remove only this Mod directory with the server closed to
 uninstall it. Other framework components remain installed.
+
+## Manual acceptance
+
+1. Check `sdgo/logs/sdgo.log` for this Mod, existing Mods and the configured window;
+   confirm the server's timezone.
+2. To test outside the default window, back up `config.ini`, temporarily choose a
+   window containing the current server time, and restart the test BattleServer.
+   Keep all BattleServers serving test matches consistent; leave the OS clock alone.
+3. With `Trace=1`, the first 32 active settlements log before/after values for all
+   three rewards. Compare those values and the native event-bonus breakdown for
+   that same settlement, rather than comparing totals from different matches.
+4. Check the actual G balance, pilot rank stars and unit EXP, then reconnect and
+   check persistence. Include PvP, missions, failed missions, native bonuses,
+   capped units and both time boundaries. Native no-reward cases must stay so.
+5. Restore `18:00` to `22:00`, optionally set `Trace=0`, and restart the affected
+   BattleServers after the edits.
+
+Startup and offline checks confirm installation and hook behavior. Actual account
+rewards, client presentation and reconnect persistence still require this manual check.

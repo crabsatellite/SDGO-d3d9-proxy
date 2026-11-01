@@ -42,6 +42,9 @@
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
+每日双倍仅需服主更新对战服务器，玩家沿用现有客户端。配置、关闭和实测步骤见
+[每日双倍教程](docs/daily-rewards.zh-CN.md#手动验收)。
+
 <details>
 <summary>查看 AI 僚机与对战短片</summary>
 
