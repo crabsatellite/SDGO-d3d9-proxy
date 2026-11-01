@@ -22,6 +22,7 @@ English: [README.md](README.md)
 |---|---|---|---|---|
 | 任务模式 AI 僚机 | 任务模式里 AI 驾驶员加入你的队伍，使用游戏原生的 AI 对战机器人 AI，击破正常计算，也会被击落。在房间标题写 `!ai`。 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [中文](docs/coop-wingmen.zh-CN.md) · [English](docs/coop-wingmen.md) |
 | 对战模式 AI 玩家（Beta） | 在 PvP 房名里用 `!ai` 加入对手和队友，接入原有计分、复活、卡组与死亡后观战。 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [中文](docs/pvp-ai.zh-CN.md) · [English](docs/pvp-ai.md) |
+| 副官管理（预览） | 服主 UI 配置名称、头像、物品掉落概率和数量，选择全员免费或商品登记。上架和定价交给商城模块。 | `operator_catalog`、宿主助手与 SQL 适配器 | 客户端 + 服主宿主；实际游戏验收待完成 | [中文](docs/operator-assistant.zh-CN.md) · [English](docs/operator-assistant.md) |
 | 输入法修复 | 修复一处把输入法（中/日/韩）提交的字节数当成字符数的问题。 | `ime_fix` | 客户端 | [中文](docs/ime-fix.zh-CN.md) · [English](docs/ime-fix.md) |
 | 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
 | 开游戏随机崩溃修复 | 修复开游戏时随机崩溃（读取界面闪退，`0x008FE610`）：读取界面随机挑一组，其机体在客户端数据里不存在时会闪退；现在这种组会换成最近的一组机体存在的读取界面。 | `startup_crash_fix` | 客户端 | [中文](docs/startup-crash-fix.zh-CN.md) · [English](docs/startup-crash-fix.md) |

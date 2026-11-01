@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "operator_catalog",
+  "name": "副官",
+  "audience": "host",
+  "assistant_route": "/operators",
+  "client_mod": "operator_catalog",
+  "server_adapter": "native_operator_sql",
+  "item_provider": "operator_catalog",
+  "registration_export": "operator-registrations.json",
+  "delivery_modes": ["all_players", "product"],
+  "manages_storefront": false,
+  "manages_prices": false
+}

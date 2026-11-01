@@ -113,6 +113,8 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
+             SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -149,6 +151,13 @@ endforeach()
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(operator_catalog_test tests/operator_catalog_test.cpp)
+    target_link_libraries(operator_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(operator_catalog_test)
+    foreach(case RANGE 0 2)
+        add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
+                 "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
+    endforeach()
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
