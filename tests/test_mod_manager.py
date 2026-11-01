@@ -116,7 +116,7 @@ class ManagerTests(unittest.TestCase):
     def test_user_can_copy_ai_support_for_archived_fixes(self):
         host=self.workspace.settings['hosts'][0]['id']
         status,result=self.call('POST','/api/ai-context',{'host':host,'mod':'findwindow_fix'})
-        self.assertEqual(status,200);self.assertIn(str(self.mod),result['text'])
+        self.assertEqual(status,200);self.assertIn(str(self.mod.resolve()),result['text'])
 
     def test_csrf_and_dns_rebinding_are_rejected(self):
         for headers in ({'Origin':'http://evil.invalid'},{'X-ModManager-Token':'bad'},{'Host':'evil.invalid:'+str(self.port)}):
