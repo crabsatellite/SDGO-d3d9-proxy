@@ -219,7 +219,7 @@ void HandleButton(void* self,void* control) {
         if(action==ui::Action::GB || action==ui::Action::Item) {g_ui.Arm(false);BeginScan(action==ui::Action::GB?Kind::GB:Kind::Item);}
         if(action==ui::Action::Confirm && g_hasPreview) {
             Snapshot s;
-            if(!GetSnapshot(s) || !SameLayout(g_preview.before,s)) {g_hasPreview=false;Status(L"机库已变化，请重新预览。");}
+            if(!GetSnapshot(s) || !SamePreview(g_preview.before,s)) {g_hasPreview=false;Status(L"机库或机体状态已变化，请重新预览。");}
             else if(!g_ui.Armed())g_ui.Arm(true);
             else StartPlan(g_preview,s);
         }
