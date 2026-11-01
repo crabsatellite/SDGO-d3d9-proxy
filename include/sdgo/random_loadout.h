@@ -7,6 +7,7 @@
 #include <random>
 #include <set>
 #include <vector>
+#include "room_commands.h"
 
 namespace sdgo::random_loadout {
 constexpr int kBudget = 10;
@@ -36,28 +37,11 @@ struct Selection {
     bool alternativeToPrevious = false;
 };
 
-inline bool Command(const char* title, size_t length) {
-    if (!title) return false;
-    for (size_t pos = 0; pos < length;) {
-        while (pos < length && (title[pos] == ' ' || title[pos] == '\t')) ++pos;
-        size_t end = pos;
-        while (end < length && title[end] != ' ' && title[end] != '\t' && title[end] != '\0') ++end;
-        for (const char* word : {"!rand", "!random"}) {
-            size_t n = 0;
-            while (word[n]) ++n;
-            if (end - pos != n) continue;
-            bool same = true;
-            for (size_t i = 0; i < n; ++i) {
-                char ch = title[pos + i];
-                if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch + ('a' - 'A'));
-                if (ch != word[i]) { same = false; break; }
-            }
-            if (same) return true;
-        }
-        if (end >= length || title[end] == '\0') break;
-        pos = end + 1;
-    }
-    return false;
+inline bool Command(const char* title, size_t length, const SdgoApi* api=nullptr) {
+    SdgoRoomCommand command{};
+    const auto bound=static_cast<uint32_t>((std::min)(length,size_t{UINT32_MAX}));
+    return sdgo::room_commands::Find(api,title,bound,"rand",0,&command)
+        || sdgo::room_commands::Find(api,title,bound,"random",0,&command);
 }
 
 inline std::vector<uint32_t> Identity(const std::vector<Candidate>& units) {

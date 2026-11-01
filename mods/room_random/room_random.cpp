@@ -113,12 +113,12 @@ bool LobbyTitle(uint32_t owner,char* text) {
 }
 bool Requested(uint8_t* room,const Signature& signature) {
     char title[kTitleMax+1]{};
-    if(RawTitle(room,title) && policy::Command(title,std::strlen(title))) return true;
+    if(RawTitle(room,title) && policy::Command(title,std::strlen(title),g_api)) return true;
     // Use the authoritative lobby title as a fallback on every native path;
     // special starts need not retain the PvP room's inline title.
     for(uint32_t owner:signature.owners)
         if(owner && !(owner&kAiBit) && LobbyTitle(owner,title))
-            return policy::Command(title,std::strlen(title));
+            return policy::Command(title,std::strlen(title),g_api);
     return false;
 }
 bool UsesDeck(uint8_t mode) { return mode==6 || mode==7; }

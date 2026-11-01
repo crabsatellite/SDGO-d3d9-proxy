@@ -11,6 +11,11 @@ New-Item -ItemType Directory -Force -Path (Join-Path $target 'sdgo\symbols'),(Jo
 Copy-Item -LiteralPath $NativeExe -Destination (Join-Path $target 'BattleServer.exe')
 [IO.File]::WriteAllText((Join-Path $target 'sdgo\core.dll'),'file-only fixture')
 [IO.File]::WriteAllText((Join-Path $target 'winmm.dll'),'file-only fixture')
+$ai=Join-Path $target 'sdgo\mods\pvp_ai'
+New-Item -ItemType Directory -Path $ai|Out-Null
+[IO.File]::WriteAllText((Join-Path $ai 'pvp_ai.dll'),'old file-only AI fixture')
+[IO.File]::WriteAllText((Join-Path $ai 'mod.ini'),"[mod]`r`nid=pvp_ai`r`ndll=pvp_ai.dll`r`n[settings]`r`nDefaultLevel=4`r`n; owner settings`r`n")
+$aiManifestHash=(Get-FileHash -LiteralPath (Join-Path $ai 'mod.ini')).Hash
 $other=Join-Path $target 'sdgo\mods\other_agent\config.ini'
 [IO.File]::WriteAllText($other,'preserve this unrelated mod')
 [IO.File]::WriteAllText($nativeIni,"[DB Game]`r`nDBServerName=example.invalid`r`nDBName=fixture`r`nID=fixture`r`nPWD=fixture-only`r`n",[Text.Encoding]::Unicode)
@@ -27,6 +32,10 @@ function Value($file,$section,$key){
 & (Join-Path $repo 'tools\install_room_random.ps1') -ServerRoot $target -DatabaseIni $nativeIni -Source $source
 Assert ((Get-FileHash -LiteralPath (Join-Path $target 'BattleServer.exe')).Hash -eq $beforeExe) 'native executable not changed'
 Assert ((Get-FileHash -LiteralPath $other).Hash -eq $beforeOther) 'unrelated mod preserved'
+Assert ((Get-FileHash -LiteralPath (Join-Path $target 'sdgo\core.dll')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $source 'sdgo\core.dll')).Hash) 'core updated with shared command API'
+Assert ((Get-FileHash -LiteralPath (Join-Path $ai 'pvp_ai.dll')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $source 'sdgo\mods\pvp_ai\pvp_ai.dll')).Hash) 'installed PvP AI updated'
+Assert ((Get-FileHash -LiteralPath (Join-Path $ai 'mod.ini')).Hash -eq $aiManifestHash) 'AI manifest and owner settings preserved'
+Assert (-not (Test-Path -LiteralPath (Join-Path $target 'sdgo\mods\coop_ai'))) 'absent AI mod not installed'
 Assert ([IO.File]::ReadAllText($symbol).Contains('[other_agent.fixture]')) 'unrelated symbol preserved'
 Assert ([IO.File]::ReadAllText($symbol).Contains('原有注释')) 'Unicode symbol comments preserved'
 Assert ([IO.File]::ReadAllText($symbol).Contains('[battle.build_human_unit]')) 'new symbols added'
@@ -38,4 +47,11 @@ Assert (-not [IO.File]::ReadAllText($config).Contains('fixture-only')) 'database
 Assert ((Value $config 'settings' 'QueryTimeoutSeconds') -eq '5') 'owner settings preserved on upgrade'
 Assert ((Get-FileHash -LiteralPath $other).Hash -eq $beforeOther) 'repeat install still preserves other mods'
 Assert ((Get-ChildItem -LiteralPath (Join-Path $target 'sdgo\backups\room_random') -Directory).Count -eq 2) 'both installations retain backups'
+$locked=[IO.File]::Open((Join-Path $target 'sdgo\core.dll'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+$refused=$false
+try{& (Join-Path $repo 'tools\install_room_random.ps1') -ServerRoot $target -DatabaseIni $nativeIni -Source $source}
+catch{$refused=$_.Exception.Message.Contains('is in use')}
+finally{$locked.Close()}
+Assert $refused 'in-use core refused without stopping any process'
+Assert ((Get-ChildItem -LiteralPath (Join-Path $target 'sdgo\backups\room_random') -Directory).Count -eq 2) 'refused install did not start writes'
 Write-Host 'ROOM RANDOM INSTALLATION CHECKS PASSED'

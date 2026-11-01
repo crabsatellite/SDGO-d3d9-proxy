@@ -175,6 +175,12 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(room_commands_test tests/room_commands_test.cpp)
+    target_link_libraries(room_commands_test PRIVATE sdgo_api)
+    sdgo_strict(room_commands_test)
+    add_test(NAME room_commands_offline COMMAND room_commands_test)
+    set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
+
     add_executable(room_random_test tests/room_random_test.cpp)
     target_link_libraries(room_random_test PRIVATE sdgo_api bcrypt)
     sdgo_strict(room_random_test)

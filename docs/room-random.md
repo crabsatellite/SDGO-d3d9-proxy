@@ -10,6 +10,13 @@ the whole start; they never borrow another account's units or silently use eight
 This is a server-only mod using native constructors and start packets. It does not
 update `GoUserUnitNum`, inventory or saved decks. No process is restarted by the
 installer. AI mods retain their own pools and use different hook sites.
+The core's shared room-command service scopes arguments to each command. Both
+`!rand !ai3 lv4` and `!ai3 lv4 !rand` work; keep AI options immediately after
+`!ai`, before the next `!command`. The title still holds at most 20 bytes.
+
+The incremental installer updates core and already installed `pvp_ai` / `coop_ai`
+DLLs together, preserving their manifests and settings. It does not install missing
+AI mods. Updated mods also share the same SDK parser when run under an older core.
 
 See [the Chinese guide](room-random.zh-CN.md) for host configuration, installation,
 the exact supported executable, source evidence, limits and manual acceptance.

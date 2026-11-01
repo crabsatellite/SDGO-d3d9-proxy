@@ -270,6 +270,17 @@ int main() {
     }
     CHECK(reads==20);
 
+    SCENARIO("combined AI titles randomize only humans in either order on all start paths");
+    for(uint8_t mode=1;mode<=14;++mode) for(const char* title:{"!rand !ai3 lv4","!ai3 lv4 !rand"}) {
+        Reset(mode,title);
+        Put<uint32_t>(Info(2),kOwner,kAiBit|99);
+        Put<uint32_t>(Info(2),kActive,777);
+        CHECK(Start()==0);CHECK(builds==2);CHECK(requestedOwners==std::vector<uint32_t>({1001,1002}));
+        CHECK(Get<uint32_t>(Info(2),kActive)==777);
+        Release(room.data(),nullptr);
+        CHECK(Get<uint32_t>(Info(2),kOwner)==(kAiBit|99));CHECK(Get<uint32_t>(Info(2),kActive)==777);
+    }
+
     SCENARIO("no command means no inventory access and no bypass of native validation");
     Reset(1,"normal room");const auto plain=Sources();
     CHECK(Start()==0xFB4);CHECK(reads==0);CHECK(builds==0);CHECK(Sources()==plain);
