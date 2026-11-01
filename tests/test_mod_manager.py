@@ -82,6 +82,14 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(self.call('POST','/api/settings',{'host':host,'mod':'findwindow_fix','values':{'trace':True},'revisions':{}})[0],400)
         self.assertEqual(self.call('GET','/api/developer?host='+host+'&mod=findwindow_fix')[0],403)
 
+    def test_ui_library_is_served_and_art_needs_a_client_texture(self):
+        for path in ('/ui.css','/ui.js','/ui-kit.html','/style.css','/app.js'):
+            self.assertEqual(self.call('GET',path)[0],200,path)
+        self.assertIn(b"from '/ui.js'",self.call('GET','/app.js')[1])
+        # The fixture client has no GPackData, and unknown keys are never read.
+        self.assertEqual(self.call('GET','/api/art/hangar')[0],404)
+        self.assertEqual(self.call('GET','/api/art/..%2Fmods')[0],404)
+
     def test_mode_downgrade_hides_developer_info_but_keeps_owner_tools(self):
         self.advanced();host=self.workspace.settings['hosts'][0]['id']
         url='/api/developer?host='+host+'&mod=findwindow_fix'
