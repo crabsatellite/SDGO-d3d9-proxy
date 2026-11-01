@@ -12,7 +12,10 @@ Ordinary rank/channel restrictions, starter selection and later earnings remain 
 
 ## Install and configure
 
-Stop the World server you intend to update, then use the latest framework package:
+The feature is included in Base and Full packages built from current master. If
+a release lacks `server/sdgo/mods/new_account_profile/`, first
+[build a current package](setup.md#building-from-source).
+Stop the World server you intend to update, then use the framework package:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot D:\SDGO\WorldServer -Role World
@@ -38,13 +41,27 @@ Without `config.ini`, the legacy `[settings]` in `mod.ini` is used. Restart the
 World server after edits. `RankNumber` is 0..20, `RankStep` is 1..5, and the selected
 rank/step must have exactly one non-negative experience row in `tbl_Levelname`.
 Currency settings and `InitialUnitLimit` must be non-negative 32-bit integers.
-The unit limit applies only to rows newly inserted by the native first-profile call.
+### Initial automatic unit grants
+
+`InitialUnitLimit` determines how many automatically granted units to keep when a
+pilot is first created. **It does not limit how many units a player can own.**
+
+| Setting | First-profile behavior |
+|---|---|
+| `InitialUnitLimit=1` (default) | If the server automatically grants 100 units, retain one |
+| `InitialUnitLimit=3` | Retain three from the same automatic grant |
+| `InitialUnitLimit=0` | Remove those extra automatic gifts; normal starter selection follows the native flow |
+
+This applies only to rows newly inserted by the native first-profile call.
 It keeps the earliest hangar slots (then unit identity), preserves units already owned
 before that call, and updates unit counters and any dangling selected-unit reference
 in the same transaction. A value of 0 removes those automatic gifts entirely; normal
 starter selection and later purchases, capsule draws and rewards are not capped.
 This is a ceiling, not a guaranteed extra unit: if the native profile call grants
-no units, the Mod does not create one.
+no units, the Mod does not create one. Keeping one is this Mod's current default
+starting policy, which the owner can change.
+
+### Database access
 
 The Mod reads only `[DB StoreBilling] DBName` from the host's own INI. It borrows
 the already authenticated OLE DB session and its local transactions; it does not
