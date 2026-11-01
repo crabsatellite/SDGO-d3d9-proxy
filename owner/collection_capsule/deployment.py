@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from .metadata import imported_roots, validate_source
 
 
-def connection(server_ini: Path):
+def connection(server_ini: Path, section: str = "DB Game"):
     import pyodbc
     raw = server_ini.read_bytes()
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
@@ -25,8 +25,11 @@ def connection(server_ini: Path):
                 raise ValueError("Server INI must be UTF-8/UTF-16 on this platform") from None
             text = raw.decode("mbcs")
     cfg = configparser.ConfigParser(interpolation=None)
-    cfg.read_string(text)
-    db = cfg["DB Game"]
+    try:
+        cfg.read_string(text)
+        db = cfg[section]
+    except (configparser.Error, KeyError):
+        raise ValueError("Unable to parse host database configuration") from None
 
     def escaped(value):
         return "{" + str(value).replace("}", "}}") + "}"
@@ -40,6 +43,15 @@ def connection(server_ini: Path):
         return result
     except pyodbc.Error as error:
         raise RuntimeError(f"Owner SQL connection failed (SQLSTATE {str(error.args[0])[:5]})") from None
+
+
+def registration_baseline(server_ini: Path) -> int:
+    """Read only the existing account-ID high water mark; never export accounts."""
+    with contextlib.closing(connection(server_ini, section="DB Member")) as member:
+        value = member.cursor().execute("SELECT ISNULL(MAX(f_idx),0) FROM dbo.tbl_Account").fetchone()[0]
+    if type(value) is not int or not 0 <= value <= 2147483647:
+        raise ValueError("Account registration baseline is invalid")
+    return value
 
 
 def import_history(db, payload: dict) -> dict:

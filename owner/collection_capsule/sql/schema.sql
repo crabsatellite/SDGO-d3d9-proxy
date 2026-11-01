@@ -16,6 +16,8 @@ IF OBJECT_ID(N'sdgo_collection_capsule.State',N'U') IS NULL
         PriceGP int NOT NULL CHECK(PriceGP=100000),
         PoolHash char(64) NOT NULL,
         Enabled bit NOT NULL,
+        LegacyAccountMax int NOT NULL DEFAULT 2147483647,
+        RegistrationBaseline bit NOT NULL DEFAULT 0,
         InstalledAt datetime NOT NULL DEFAULT GETUTCDATE()
     );
 IF OBJECT_ID(N'sdgo_collection_capsule.Roots',N'U') IS NULL

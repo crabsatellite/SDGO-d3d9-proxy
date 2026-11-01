@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from owner.collection_capsule.deployment import connection, import_history, register_unit_family, export_configuration
+from owner.collection_capsule.deployment import connection, import_history, register_unit_family, export_configuration, registration_baseline
 from owner.collection_capsule.metadata import imported_roots, registered_imports
 from owner.collection_capsule.pool import build_pool, load_units
 from owner.collection_capsule.sql import installation, disable, pool_hash
@@ -250,6 +250,7 @@ def install_server(package, server_ini, *, check_only=False):
         actual = db.cursor().execute("SELECT DB_NAME()").fetchone()[0]
         if check_only:
             return {"checked": True, "database": actual, "machine_id": model["machine_id"], "applied": False}
+        legacy_max = registration_baseline(server_ini)
         with tempfile.TemporaryDirectory(prefix="sdgo-collection-server-") as temporary:
             payload = Path(temporary) / "server"
             shutil.copytree(package / "server", payload)
@@ -262,6 +263,7 @@ def install_server(package, server_ini, *, check_only=False):
                 # after the complete file update and state readback have succeeded.
                 cursor.execute("SET XACT_ABORT ON;BEGIN TRANSACTION;")
                 cursor.execute(sql)
+                cursor.execute("UPDATE sdgo_collection_capsule.State SET LegacyAccountMax=?,RegistrationBaseline=1 WHERE Singleton=1 AND RegistrationBaseline=0", legacy_max)
                 row = cursor.execute("SELECT MachineID,PriceGP,Enabled,PoolHash FROM sdgo_collection_capsule.State WHERE Singleton=1").fetchone()
                 if not row or tuple(row) != (model["machine_id"], 100000, True, pool_hash(model["pool"])):
                     raise RuntimeError("Installed collection state readback differs")

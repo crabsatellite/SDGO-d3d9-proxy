@@ -195,6 +195,7 @@ class CollectionDeploymentTests(unittest.TestCase):
         with (
             patch.object(CLI, "checked_model", return_value=(model, "fixture install SQL")),
             patch.object(CLI, "connection", return_value=database),
+            patch.object(CLI, "registration_baseline", return_value=2),
             patch.object(CLI, "_world_is_running", return_value=False) as running,
             patch.object(CLI.subprocess, "run", side_effect=installer),
             patch.object(CLI, "HOST_SHA256", sha256(executable)),

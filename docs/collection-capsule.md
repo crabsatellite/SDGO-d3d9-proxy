@@ -209,15 +209,25 @@ unacquired base unit and need not appear among those six previews.
 
 ## Complete history for existing accounts
 
-Installation marks every existing account as `Coverage=0`. It seeds `Seen` with
+Installation treats existing registrations as incomplete history (`Coverage=0`). It seeds `Seen` with
 facts from current inventory, native capsule records, and any recognized native
 deletion/recovery records, but it does not label those partial facts as complete
 from account creation. Such accounts cannot use Collection capsule until a trusted
 source proves complete coverage. A failed attempt should receive native compensation
 and have a net charge of zero.
 
-Accounts created after installation are tracked in their creation transaction and
-start with complete coverage.
+The installer reads only the account-ID high water mark through the host INI's
+`[DB Member]` connection; it does not export account rows. Updates retain this
+original baseline. An old registration creating or recreating a profile is still
+an old account. New registrations after installation are tracked from their first
+profile and unit-acquisition transactions.
+
+The Game identity needs the feature's schema/module/trigger and read/write
+permissions. Unit writers also need transaction-ID access: `VIEW SERVER STATE`
+on SQL Server 2014, or `VIEW SERVER PERFORMANCE STATE` on SQL Server 2022+.
+See [Microsoft's permission reference](https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/sys-dm-tran-current-transaction-transact-sql).
+The tool checks capabilities without granting existing identities broader rights.
+The Member identity must be able to read the aggregate of `tbl_Account.f_idx`.
 
 Only an upstream system that can attest to every acquisition since account creation
 may produce an old-account history file:
@@ -254,6 +264,16 @@ Each draw derives eligible inventory roots from the live `tbl_Units` catalog.
 Registration resolves only the initial-form identity of an ambiguous multi-form
 family. It does not freeze a prize-ID list and does not require a DLL rebuild for
 each new unit.
+
+For existing native units, the builder resolves reciprocal forms from enabled
+entries in the client's `0220.gdt`, checked against all six unit tables and the
+server transform graph. All 28 ambiguous families in the current data have one
+initial entry. Neither these families nor the catalog count are hardcoded; names
+containing `After`, ID order, and historical inventory are not root evidence.
+New unambiguous units enter automatically. Imported reciprocal forms declare
+their initial form in the content package. Missing or conflicting declarations
+reject the draw through the refund path instead of silently removing the family
+while continuing to charge.
 
 For multi-form content already installed in the live database, publish its
 declaration with:

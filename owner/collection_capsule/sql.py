@@ -36,12 +36,14 @@ def pool_hash(pool: dict) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def installation(pool: dict, source_rows: list[dict], machine_id: int) -> str:
+def installation(pool: dict, source_rows: list[dict], machine_id: int, *, legacy_account_max: int | None = None) -> str:
     from .metadata import validate_source
     validate_source(source_rows)
     source = {r["UnitNumber"]: r for r in source_rows}
     if type(machine_id) is not int or not 0 < machine_id <= 2_147_483_647:
         raise ValueError("Machine ID must be a positive SQL INT")
+    if legacy_account_max is not None and (type(legacy_account_max) is not int or not 0 <= legacy_account_max <= 2147483647):
+        raise ValueError("Invalid registration baseline")
     if not pool.get("units") or len(pool["units"]) > 20000:
         raise ValueError("Collection pool is empty or too large")
     root_ids = set()
@@ -166,6 +168,10 @@ ELSE UPDATE sdgo_collection_capsule.State SET PoolHash={literal(checksum)},Enabl
 IF NOT EXISTS(SELECT 1 FROM dbo.tbl_MachinePrice WHERE MachineID={machine_id})
  INSERT dbo.tbl_MachinePrice(MachineID,Price,Disable,Type) VALUES({machine_id},100000,0,0);
 ELSE UPDATE dbo.tbl_MachinePrice SET Disable=0 WHERE MachineID={machine_id};
+"""
+    if legacy_account_max is not None:
+        sql += f"UPDATE sdgo_collection_capsule.State SET LegacyAccountMax={legacy_account_max},RegistrationBaseline=1 WHERE Singleton=1 AND RegistrationBaseline=0;\n"
+    sql += """
 COMMIT;
 END TRY
 BEGIN CATCH

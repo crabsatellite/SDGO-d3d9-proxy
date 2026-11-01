@@ -1,7 +1,7 @@
-"""Build a conservative pool of independently ownable, pre-transform units.
+"""Derive ownable initial forms from the current graph and source metadata.
 
-No smallest-ID/name heuristic is used to choose a form. A mutually reachable
-group with multiple ownable forms is excluded until reviewed explicitly.
+No smallest-ID/name heuristic or fixed prize allowlist chooses a form. Missing
+cycle metadata is reported; the production builder rejects unresolved families.
 """
 from __future__ import annotations
 

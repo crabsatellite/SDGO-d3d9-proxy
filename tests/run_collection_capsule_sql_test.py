@@ -123,7 +123,7 @@ END""")
         execute("INSERT dbo.tbl_Units VALUES " + ",".join(
             f"({r['UnitNumber']},{r['UnitNumber_Transform']},{r['SallyReady']},1,2,{r['UnitGraph']},N'{r['UnitModelName']}')"
             for r in rows))
-        install = installation(build_pool(rows), rows, 990001)
+        install = installation(build_pool(rows), rows, 990001, legacy_account_max=2)
         (output / "install.sql").write_text(install, encoding="utf-8")
         execute(install)
         check(scalar("SELECT Complete FROM sdgo_collection_capsule.Coverage WHERE AccountNumber=1") == 0,
@@ -133,6 +133,9 @@ END""")
         execute(install)
         check(scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=1") == 2,
               "idempotent reinstall preserves collection history")
+        execute("INSERT dbo.tbl_Users VALUES(2,0)")
+        check(scalar("SELECT Complete FROM sdgo_collection_capsule.Coverage WHERE AccountNumber=2") == 0,
+              "an old registration cannot claim complete history merely by creating a new profile")
 
         def account(number):
             execute(f"INSERT dbo.tbl_Users VALUES({number},0);INSERT dbo.fixture_wallet VALUES({number},1000000);")
@@ -206,18 +209,18 @@ END""")
             execute("INSERT dbo.fixture_wallet VALUES(1,1000000)")
             check(draw(1)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=1") == 1000000,
                   "incomplete legacy history rejects with native-style full refund")
-            account(2)
-            result = draw(2)
+            account(7)
+            result = draw(7)
             check(result[0] == 0 and result[1][0] > 2147483647 and result[1][3] > 2147483647,
                   "successful draw returns the exact native 64-bit result fields")
             first = result[1][1]
-            execute("DELETE dbo.tbl_UserUnits WHERE AccountNumber=2")
-            check(scalar(f"SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=2 AND UnitID={first}") == 1,
+            execute("DELETE dbo.tbl_UserUnits WHERE AccountNumber=7")
+            check(scalar(f"SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=7 AND UnitID={first}") == 1,
                   "selling a committed unit does not erase acquisition history")
-            remaining = [draw(2), draw(2)]
+            remaining = [draw(7), draw(7)]
             check(all(r[0] == 0 for r in remaining) and len({first, *(r[1][1] for r in remaining)}) == 3,
                   "draws do not repeat a previously sold or currently owned base unit")
-            check(draw(2)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=2") == 700000,
+            check(draw(7)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == 700000,
                   "exhausted pool refunds the entire 100000 GP charge")
 
             account(3)
@@ -253,14 +256,14 @@ END""")
 
             # No pool rebuild: a newly imported standalone unit is discovered live.
             execute("INSERT dbo.tbl_Units VALUES(110,0,1,2,2,1000110,N'Imported base')")
-            check(draw(2)[1][1] == 110,
+            check(draw(7)[1][1] == 110,
                   "newly imported standalone units enter the live pool without an ID allowlist")
             execute("INSERT dbo.tbl_Units VALUES(111,112,1,2,2,1000111,N'Imported transform base'),(112,111,0,2,2,1000112,N'Imported alternate')")
-            check(draw(2)[1][1] == 111,
+            check(draw(7)[1][1] == 111,
                   "new unique-root transform families enter dynamically without a pool rebuild")
             execute("INSERT dbo.tbl_Units VALUES(120,121,1,3,2,1000120,N'Imported alternate'),(121,120,1,3,2,1000121,N'Imported base')")
-            before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=2")
-            check(draw(2)[0] == 3008 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=2") == before,
+            before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7")
+            check(draw(7)[0] == 3008 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == before,
                   "missing imported reciprocal-root metadata is reported, not silently omitted or charged")
             declaration = {"protocol": "sdgo.unit-family", "protocol_version": 1, "installable": True,
                            "package_id": "fixture.imported-family", "family": {"root_form": "base", "forms": [
@@ -272,7 +275,7 @@ END""")
                 importer.cursor().execute("COMMIT TRANSACTION;")
             # Replaying an older feature package must not erase later unit imports.
             execute(install)
-            check(draw(2)[1][1] == 121,
+            check(draw(7)[1][1] == 121,
                   "imported reciprocal family registers its declared root and survives feature reinstall")
             with contextlib.closing(connect()) as importer:
                 cur = importer.cursor()
