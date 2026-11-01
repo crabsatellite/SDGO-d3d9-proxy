@@ -22,6 +22,9 @@ int main() {
     assert(children.at(L"ModHangarSort")->text==L"停止整理");
     assert(ui.Click(Pointer(L"ModHangarSort"))==Action::Cancel && !Enabled(L"ModHangarOpen"));
     ui.State(false,false);assert(children.at(L"ModHangarSort")->text==L"一键整理");
+    ui.Status(std::wstring(500,L'测')+L"\n超长结果");
+    assert(children.at(L"ModHangarNotice0")->text.size()<=42);
+    assert(Get<float>(Pointer(L"ModHangarNotice0"),0x14C)==51);
     const auto count=creates;assert(ui.Attach(service.data()) && creates==count);
     ui.Open();assert(!Shown(L"ModHangarSort") && !Shown(L"UnitDeleteBtn") && Shown(L"ModHangarGB"));
     assert(!Enabled(L"ModHangarConfirm") && ui.Click(Pointer(L"ModHangarConfirm"))==Action::None);
@@ -46,6 +49,8 @@ int main() {
         assert(Get<float>(p,0x14C)>=33 && Get<float>(p,0x14C)+Get<int>(p,0x158)<=768);
         assert(Get<void*>(p,0x15C)==dialog.data());
         assert(Get<uint8_t>(p,0x168)==0); // no constructor debug rectangles
+        if(entry.first!=L"ModHangarSort" && entry.first!=L"ModHangarOpen")
+            assert(Get<float>(p,0x14C)+Get<int>(p,0x158)<700); // no native pager overlap
     }
     Put(service.data(),0,reinterpret_cast<void*>(0xBAD));ui.Close();assert(!ui.Ready());
     Setup();failAdd=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready());

@@ -132,13 +132,15 @@ sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES 
 sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP bots" SOURCES mods/battle_ai_server/battle_ai_server.cpp)
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery" SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
-             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32)
+             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32 ole32)
 sdgo_add_mod(storage_claim DESCRIPTION "native storage claim-all button"
              SOURCES mods/storage_claim/storage_claim.cpp mods/storage_claim/native_ui.cpp LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
              SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
+sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
+             SOURCES mods/room_random_client/room_random_client.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
@@ -437,7 +439,7 @@ if(BUILD_TESTING)
     target_compile_options(hangar_model_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_model_offline COMMAND hangar_model_test)
     add_executable(hangar_native_test tests/hangar_native_test.cpp mods/hangar_manager/native_ui.cpp)
-    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32)
+    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32 ole32)
     sdgo_strict(hangar_native_test)
     target_compile_options(hangar_native_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_native_offline COMMAND hangar_native_test)
@@ -650,6 +652,20 @@ if(BUILD_TESTING)
     sdgo_strict(room_random_test)
     add_test(NAME room_random_offline COMMAND room_random_test)
     set_tests_properties(room_random_offline PROPERTIES TIMEOUT 30)
+    add_library(room_random_head_probe SHARED tests/room_random_head_probe.cpp)
+    add_executable(room_random_client_policy_test tests/room_random_client_policy_test.cpp)
+    sdgo_strict(room_random_client_policy_test)
+    add_test(NAME room_random_client_policy COMMAND room_random_client_policy_test)
+    target_link_libraries(room_random_head_probe PRIVATE sdgo_api)
+    sdgo_strict(room_random_head_probe)
+    add_executable(room_random_client_runtime_test tests/room_random_client_runtime_test.cpp)
+    target_link_libraries(room_random_client_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(room_random_client_runtime_test)
+    add_dependencies(room_random_client_runtime_test sdgo_core room_random_client room_random_head_probe)
+    add_test(NAME room_random_client_runtime COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/room_random_client_runtime_test.ps1"
+        -BuildDir "${CMAKE_BINARY_DIR}" -Config "$<CONFIG>")
+    set_tests_properties(room_random_client_runtime PROPERTIES TIMEOUT 120)
 
     # Explicitly invoked read-only host probe; not a CTest or staged executable.
     add_executable(room_random_inventory_probe tests/room_random_inventory_probe.cpp mods/room_random/inventory.cpp)

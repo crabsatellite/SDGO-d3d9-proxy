@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "room_random_client",
+  "title": "每局随机机体 · 客户端同步",
+  "category": "gameplay",
+  "hosts": ["client"],
+  "description": "配合服务端随机机体，在开战前同步临时出击配置，无需额外设置。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "在原生消息分发前同步完整机体与卡组缓存，并在真人构造入口以本局通知修正旧开战快照；不发送选机请求，不写数据库。"
+}

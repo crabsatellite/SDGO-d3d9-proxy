@@ -2,6 +2,7 @@
 // No executable entry point, imports, renderer, sockets or account are started.
 #include "hangar_page_fixture.h"
 #include "native_button_replay.h"
+#include "sdgo/hangar_sort_request.h"
 #include <iostream>
 
 namespace {
@@ -26,6 +27,8 @@ int __fastcall Hit(void* control,void*,int x,int y) {
 }
 
 using native_button_replay::Snippet;
+void* __cdecl PacketZero(void* out,int value,size_t size){return memset(out,value,size);}
+char* __cdecl PacketCopy(char* out,const char* value,size_t size){return strncpy(out,value,size);}
 }
 
 int wmain(int argc,wchar_t** argv) {
@@ -33,6 +36,14 @@ int wmain(int argc,wchar_t** argv) {
         if(argc!=2)throw std::runtime_error("pass the supported local GOnline.exe; never started");
         const auto file=room_title_native::detail::ReadFile(argv[1]);
         if(room_title_native::detail::Sha256(file.data(),file.size())!="e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92")throw std::runtime_error("unsupported client identity");
+        Snippet mail(file,0x817360,157,"41c21e95b7572fb33bdc6a8656ab948bf20f59473a1b31b2e637bef72294aa01");
+        mail.Call(0x58,&PacketZero);for(size_t offset:{0x64u,0x77u,0x8Cu})mail.Call(offset,&PacketCopy);mail.Seal();
+        using MailCtor=void*(__thiscall*)(void*,uint32_t,const char*,uint32_t,const char*,const char*);
+        const std::string request="12345678-1234-1234-1234-123456789abc";
+        const auto expected=sdgo::hangar::ServerSortRequest("NativeFixture",request);
+        std::array<uint8_t,0x159> nativeMail{};
+        mail.Function<MailCtor>()(nativeMail.data(),0,"NativeFixture",0,sdgo::hangar::kSortRecipient,(std::string(sdgo::hangar::kSortPrefix)+request).c_str());
+        assert(nativeMail==expected); // full byte parity with the shipped producer
         Snippet mouse(file,0xC69080,512,"e69debfef6104196f8d5008caa9b157036d027efdba76fef166f0ba243b92c5d");
         mouse.Call(0x1D,&BaseMouse);mouse.Call(0x101,&Focus);
         for(size_t offset:{0x7Au,0x9Cu,0x174u,0x1ABu})mouse.Call(offset,&Event);

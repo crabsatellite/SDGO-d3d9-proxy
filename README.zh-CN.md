@@ -37,10 +37,10 @@ Beta、Experimental 表示发布阶段。
 | AI 机体目录（Beta，独立附加包） <!-- catalog: `ai_catalog` --> | 自定义 AI 机体目录 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） <!-- catalog: `battle_rewards` --> | 战斗奖励管理 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 收藏扭蛋（Beta） <!-- catalog: `collection_capsule` --> | 机体收藏玩法 | [使用说明](docs/collection-capsule.zh-CN.md) |
-| 每局随机机体（Beta） <!-- catalog: `room_random` --> | 随机对战配置 | [使用说明](docs/room-random.zh-CN.md) |
+| 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 任务与对战随机出击 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 房间标题扩展 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 战斗 AI 行为 | [使用说明](docs/battle-ai.md) |
-| 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 在机体管理页整理、兑换重复机体；0.2.4 修复整理后空白并恢复格子 | [使用说明](docs/hangar-manager.zh-CN.md) |
+| 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 服务端持久排序及原生重复兑换；0.3.0 修正重复计数和面板溢出 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 副官内容管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 扭蛋内容管理 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 | 每日双倍时间（Beta） <!-- catalog: `daily_rewards` --> | 定时奖励活动 | [使用说明](docs/daily-rewards.zh-CN.md) |

@@ -234,6 +234,7 @@ def attach(workspace):
     from .shop import Shop
     from .ai_catalog import AiCatalog
     from .collection_capsule import CollectionCapsule
-    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule):
+    from .hangar import Hangar
+    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule, Hangar):
         provider = cls(workspace)
         workspace.providers[provider.id] = provider
