@@ -248,6 +248,7 @@ if ($Role -eq 'Labels') {
 $payload=Join-Path $shopPackage "payload\$shopId"
 foreach ($file in Get-ChildItem -LiteralPath $payload -File) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $shopMod $file.Name) -Force }
 $modIni=Join-Path $shopMod 'mod.ini'; $data=Shop-Ini $modIni
+if ($Role -eq 'Catalog') { $data.mod.hosts=('{0}-{1:X8}-{2:X8}' -f [IO.Path]::GetFileNameWithoutExtension($Executable),$shopPE.Stamp,$shopPE.ImageSize) }
 if ($oldSettings.ContainsKey('settings')) { foreach ($key in $oldSettings.settings.Keys) { $data.settings[$key]=$oldSettings.settings[$key] } }
 if ($oldSettings.ContainsKey('mod') -and $oldSettings.mod.ContainsKey('enabled')) { $data.mod.enabled=$oldSettings.mod.enabled }
 if ($shopConfigText) {

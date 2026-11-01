@@ -88,7 +88,9 @@ def main():
             command += ["-File", str(wrapper), *extra]
         else:
             command += ["-File", str(package / "Install.ps1"), "-Target", str(target), *extra]
-        result = subprocess.run(command, env=env, capture_output=True, timeout=40)
+        # CIM enumeration and Windows PowerShell cold starts can take longer
+        # while other isolated build/test agents run on the same desktop.
+        result = subprocess.run(command, env=env, capture_output=True, timeout=120)
         if (result.returncode == 0) != expected:
             raise AssertionError(result.stdout.decode(errors="replace") + result.stderr.decode(errors="replace"))
         return result
@@ -101,7 +103,9 @@ def main():
         run(role, target, *extra)
         mod = target / "sdgo/mods" / module
         check((target / loader).is_file() and (target / "sdgo/core.dll").is_file() and (mod / (module + ".dll")).is_file(), role + "_fresh_bootstrap")
-        if role == "Catalog": check(ini(mod / "mod.ini")["mod"]["enabled"] == "0", "catalog_disabled_without_host_profile")
+        if role == "Catalog":
+            check(ini(mod / "mod.ini")["mod"]["enabled"] == "0", "catalog_disabled_without_host_profile")
+            check(ini(mod / "mod.ini")["mod"]["hosts"] == "IndependentWorld-548A86E3-0010C000", "renamed_World_manifest_matches_runtime_host_key")
         # Existing shared bytes and unrelated mod/symbol content must survive an update.
         (target / "sdgo/mods/other").mkdir()
         (target / "sdgo/mods/other/keep.txt").write_bytes(b"unrelated\0mod\xff")

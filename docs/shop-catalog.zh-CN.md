@@ -4,6 +4,10 @@
 界面沿用 GB / MB 发放工具的原生窗口风格。玩家继续使用游戏内原商城购买；玩家无需安装管理窗口。
 租赁/中文选项显示补丁独立分发。
 
+在主框架分类中，`shop_labels` 属于基础修复，随 Base / Full 安装；`shop_catalog` 属于联机与服主工具，
+仅 Full 或显式选择商城功能时包含，未配置默认关闭。Full 包附带 `shop/SdgoShopManager.exe`，
+World 模块旁附带同版本的原生应用工具。独立增量包继续可用，互相不会替换商品配置。
+
 ## 服主使用
 
 1. 双击 `SdgoShopManager.exe`。首次打开选择包含 `WorldServer.ini` 的服务端目录，点击「连接 / 刷新」。

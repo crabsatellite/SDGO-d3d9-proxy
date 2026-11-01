@@ -111,8 +111,11 @@ public:
             !Success(SQLAllocHandle(SQL_HANDLE_DBC, env, &connection)))
             throw std::runtime_error("ODBC initialization failed");
         SQLSetConnectAttrW(connection, SQL_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(5), 0);
-        std::wstring text = L"DRIVER={SQL Server};SERVER=" + EscapeConnection(Value(ini, section, L"DBServerName")) +
-            L";DATABASE=" + EscapeConnection(Value(ini, section, L"DBName")) + L";UID=" + EscapeConnection(Value(ini, section, L"ID")) +
+        const auto server = Value(ini, section, L"DBServerName"), database = Value(ini, section, L"DBName"), user = Value(ini, section, L"ID");
+        if (server.empty() || database.empty() || user.empty())
+            throw std::runtime_error("host database settings missing; no connection attempted");
+        std::wstring text = L"DRIVER={SQL Server};SERVER=" + EscapeConnection(server) +
+            L";DATABASE=" + EscapeConnection(database) + L";UID=" + EscapeConnection(user) +
             L";PWD=" + EscapeConnection(Value(ini, section, L"PWD")) + L";";
         const SQLRETURN opened = SQLDriverConnectW(connection, nullptr, reinterpret_cast<SQLWCHAR*>(text.data()), SQL_NTS,
                                                    nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
@@ -197,6 +200,8 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
     std::wstring temporary;
     try {
         const std::wstring hostFile = Absolute(hostIni);
+        if (GetFileAttributesW(hostFile.c_str()) == INVALID_FILE_ATTRIBUTES)
+            throw std::runtime_error("host database INI missing; no connection attempted");
         Catalog catalog = Load(Absolute(catalogIni), disable);
         if (disable) catalog.products.clear();
         const std::wstring output = Absolute(outputDirectory);
