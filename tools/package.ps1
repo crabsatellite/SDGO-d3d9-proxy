@@ -76,6 +76,8 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
 if (@($catalog.features.PSObject.Properties | Where-Object { $_.Name -eq 'game-test' }).Count) {
     New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools'), (Join-Path $out 'sdk\include\sdgo') | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test.py') -Destination (Join-Path $out 'tools')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test_record.py') -Destination (Join-Path $out 'tools')
+    Copy-Item -LiteralPath (Join-Path $buildRoot "$Config\game_test_audio.exe") -Destination (Join-Path $out 'tools')
     foreach ($header in @('sdgo_api.h','game_test.h','pvp_ai_observer.h','pvp_ai_client_observer.h')) {
         Copy-Item -LiteralPath (Join-Path $repo "include\sdgo\$header") -Destination (Join-Path $out 'sdk\include\sdgo')
     }

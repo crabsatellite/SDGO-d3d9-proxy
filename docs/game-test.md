@@ -53,3 +53,12 @@ Both components register with Mod Manager as development Mods. The Python
 runner is a developer test command for a bounded job; it is not a player launcher
 or a persistent service. Keep account profiles and run receipts out of distributed
 packages and source control.
+
+For optional developer footage, add `--sfx-only` to `prepare`, build the
+`game_test_audio` target, then use `python tools/game_test_record.py --run-dir
+build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`. The copied client's BGM
+is muted and effects remain enabled. Recording is bounded to 25 seconds per
+passed battle, using only the owned game window and its process audio. Failed,
+silent or black clips are deleted. Retained clips still need visual review for
+combat activity and framing before editing; a passed AI assertion alone does
+not guarantee a useful shot.

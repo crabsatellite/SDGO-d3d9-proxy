@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -942,6 +943,111 @@ state=pending_first_login
                         json.loads((run_dir / ".run.lock").read_text())["token"],
                         "other",
                     )
+
+
+class RecordingAudioSettingsTests(unittest.TestCase):
+    def test_sfx_only_disables_music_and_preserves_other_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "config.xml"
+            path.write_text('<Config><Video Value="keep"/><Sound>'
+                            '<BGMVolume Value="22" use="true"/>'
+                            '<EffectVolume Value="22" use="false"/>'
+                            '<VoiceVolume Value="56" use="true"/>'
+                            '</Sound></Config>')
+            receipt = game_test.configure_sfx_only(root)
+            tree = ET.parse(path)
+            self.assertEqual(tree.find('Sound/BGMVolume').attrib, {'Value': '0', 'use': 'false'})
+            self.assertEqual(tree.find('Sound/EffectVolume').attrib, {'Value': '22', 'use': 'true'})
+            self.assertEqual(tree.find('Sound/VoiceVolume').get('Value'), '56')
+            self.assertEqual(tree.find('Video').get('Value'), 'keep')
+            self.assertEqual(receipt['audio'], 'sfx_only')
+
+    def test_muted_effects_get_an_audible_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'config.xml').write_text('<Config><Sound><BGMVolume Value="1"/>'
+                                          '<EffectVolume Value="0" use="false"/></Sound></Config>')
+            self.assertEqual(game_test.configure_sfx_only(root)['effect_volume'], 40)
+
+    def test_missing_audio_settings_fail_without_changing_the_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root/'config.xml'
+            original = b'<Config><Sound><EffectVolume Value="22"/></Sound></Config>'
+            path.write_bytes(original)
+            with self.assertRaises(game_test.GameTestError):
+                game_test.configure_sfx_only(root)
+            self.assertEqual(path.read_bytes(), original)
+
+
+class RecordingLifecycleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location('game_test_record', ROOT/'tools/game_test_record.py')
+        cls.recorder = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {'game_test': game_test}):
+            spec.loader.exec_module(cls.recorder)
+
+    def test_wrong_process_is_rejected_before_any_capture_starts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = {'client': {'game': str(root/'GOnline.exe')}}
+            with mock.patch.object(game_test, 'process_image_path', return_value=str(root/'other.exe')), \
+                    mock.patch.object(self.recorder.subprocess, 'Popen') as popen:
+                result = self.recorder.capture(metadata, {'case':'pvp.ai_spawn','pid':99}, root, 25, root/'helper.exe')
+            self.assertEqual(result['status'], 'discarded')
+            self.assertIn('no longer owns', result['reason'])
+            popen.assert_not_called()
+            self.assertFalse(list(root.glob('*.mp4')))
+
+    def test_failed_native_run_deletes_only_its_pending_clip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pending = root/'pvp.pending.mp4'
+            pending.write_bytes(b'failed video')
+            other = root/'user-video.mp4'
+            other.write_bytes(b'preserve')
+            record = {'status':'pending_validation','path':str(pending)}
+            self.recorder.finalize_clip(record, False)
+            self.assertEqual(record['status'], 'discarded')
+            self.assertFalse(pending.exists())
+            self.assertEqual(other.read_bytes(), b'preserve')
+
+    def test_silent_or_black_candidates_are_deleted(self):
+        for output in ('RMS level dB: -inf',
+                       'RMS level dB: -20.0\nblack_start:0 black_end:25 black_duration:25'):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as temporary:
+                pending = Path(temporary)/'scene.pending.mp4'
+                pending.write_bytes(b'invalid video')
+                record = {'status':'pending_validation','path':str(pending),'duration_limit_seconds':25}
+                completed = game_test.subprocess.CompletedProcess([], 0, b'', output.encode())
+                with mock.patch.object(self.recorder.shutil, 'which', return_value='ffmpeg'), \
+                        mock.patch.object(self.recorder.subprocess, 'run', return_value=completed), \
+                        mock.patch.object(self.recorder.subprocess, 'CREATE_NO_WINDOW', 0, create=True):
+                    self.recorder.finalize_clip(record, True)
+                self.assertEqual(record['status'], 'discarded')
+                self.assertFalse(pending.exists())
+
+    def test_recording_refuses_changed_music_setting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root/'config.xml').write_text('<Config><Sound><BGMVolume Value="1" use="true"/>'
+                                          '<EffectVolume Value="22" use="true"/></Sound></Config>')
+            with self.assertRaisesRegex(game_test.GameTestError, 'policy changed'):
+                self.recorder.validate_audio_policy({'client':{'root':str(root)}, 'recording':{'audio':'sfx_only'}})
+
+    def test_failed_media_validator_deletes_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            pending = Path(temporary)/'scene.pending.mp4'
+            pending.write_bytes(b'candidate')
+            record = {'status':'pending_validation','path':str(pending),'duration_limit_seconds':25}
+            with mock.patch.object(self.recorder.shutil, 'which', return_value='ffmpeg'), \
+                    mock.patch.object(self.recorder.subprocess, 'run', side_effect=FileNotFoundError), \
+                    mock.patch.object(self.recorder.subprocess, 'CREATE_NO_WINDOW', 0, create=True):
+                self.recorder.finalize_clip(record, True)
+            self.assertEqual(record['status'], 'discarded')
+            self.assertFalse(pending.exists())
 
 
 if __name__ == "__main__":

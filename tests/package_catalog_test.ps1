@@ -111,7 +111,7 @@ try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
-        foreach ($required in @('tools/game_test.py','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
+        foreach ($required in @('tools/game_test.py','tools/game_test_record.py','tools/game_test_audio.exe','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
             if (-not $fullArchive.GetEntry($required)) { throw "GameTest package lacks $required" }
         }
         foreach ($relative in @('client/sdgo/mods/game_test_client/mod.ini','server/sdgo/mods/game_test_server/mod.ini')) {

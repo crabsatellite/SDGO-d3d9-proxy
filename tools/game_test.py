@@ -259,6 +259,30 @@ def overlay_observer(root: Path, stage: Path) -> None:
     enable_test_configuration(root)
 
 
+def configure_sfx_only(root: Path) -> dict:
+    """Change only the prepared client's audio settings before hashing it."""
+    path = root / "config.xml"
+    try:
+        tree = ET.parse(path)
+        sound = tree.getroot().find("Sound")
+        if sound is None:
+            raise ValueError("missing Sound settings")
+        bgm = sound.find("BGMVolume")
+        effects = sound.find("EffectVolume")
+        if bgm is None or effects is None:
+            raise ValueError("missing BGMVolume or EffectVolume")
+        previous_effects = int(effects.get("Value", "0"))
+        bgm.set("Value", "0")
+        bgm.set("use", "false")
+        effects.set("use", "true")
+        effects.set("Value", str(previous_effects if 0 < previous_effects <= 100 else 40))
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+        return {"audio": "sfx_only", "bgm_volume": 0,
+                "effect_volume": int(effects.get("Value")), "process_audio_only": True}
+    except (OSError, ET.ParseError, ValueError) as error:
+        raise GameTestError(f"cannot configure SFX-only test client: {error}") from error
+
+
 def random_account() -> tuple[str, str]:
     return (
         "".join(secrets.choice(ALNUM) for _ in range(10)),
@@ -605,6 +629,7 @@ def prepare(
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
+    sfx_only: bool = False,
 ) -> dict:
     client_template = client_template.resolve()
     stage = stage.resolve()
@@ -661,6 +686,7 @@ def prepare(
     try:
         shutil.copytree(client_template, client, ignore=copy_ignore)
         overlay_observer(client, stage)
+        recording = configure_sfx_only(client) if sfx_only else None
         write_job(client, run_id, plan, profile, profile_path)
 
         entry = client / (launcher_path or GAME_EXE)
@@ -696,6 +722,8 @@ def prepare(
             },
             "execution": None,
         }
+        if recording is not None:
+            metadata["recording"] = recording
         atomic_write(preparing / "run.json", json.dumps(metadata, indent=2, sort_keys=True))
         rename_prepared_directory(preparing, run_dir)
         (run_dir / ".gametest-preparing.json").unlink()
@@ -1491,6 +1519,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument("--mode-sequence", default="1")
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
+    prepare_parser.add_argument("--sfx-only", action="store_true",
+                                help="mute BGM and enable effects only in the isolated client")
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -1540,6 +1570,7 @@ def main(argv: list[str] | None = None) -> int:
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
+                sfx_only=args.sfx_only,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

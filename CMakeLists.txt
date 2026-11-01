@@ -145,6 +145,12 @@ sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf f
 sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp LIBS user32)
 sdgo_add_mod(game_test_server SERVER DESCRIPTION "isolated native GameTest battle server" SOURCES mods/game_test_server/game_test_server.cpp)
 
+# Bounded developer recorder, outside the installed Mod/runtime trees.
+add_executable(game_test_audio tools/game_test_audio.cpp)
+target_link_libraries(game_test_audio PRIVATE sdgo_api mmdevapi ole32)
+sdgo_strict(game_test_audio)
+sdgo_version_resource(game_test_audio game_test_audio.exe "SDGO GameTest process audio capture")
+
 sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta)"
              SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"

@@ -40,3 +40,9 @@ python tools/game_test.py run --run-dir build/gametest/pvp --timeout 3600
 
 两个组件均作为开发类 Mod 接入 Mod Manager。Python 运行器是执行有限测试任务的
 开发命令，不是玩家启动器或常驻服务。账号配置和运行回执不得放入分发包或源码仓库。
+
+需要录制开发素材时，`prepare` 加 `--sfx-only`，构建 `game_test_audio` 目标，再运行
+`python tools/game_test_record.py --run-dir build/gametest/pvp --output E:\videos\SDGO-Mod-GameTest`。
+仅测试副本关闭 BGM、启用音效。每场通过开局和 AI 断言后录制最多 25 秒，画面和声音
+只取自该测试游戏进程。失败、静音或黑屏片段会清理；保留素材仍需检查交战情况与构图，
+AI 断言通过本身不代表画面适合剪辑。
