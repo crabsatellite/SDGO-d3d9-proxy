@@ -41,9 +41,11 @@ catalog has no uploaded overrides and uses original local client artwork. No
 restored game artwork, game archives or AI models are published by this feature.
 
 Give players the complete generated `player` directory, including its manifest
-and `Install-Client.cmd`. Every catalog change requires a matching new player
-package; updating only the framework DLL does not update prize pictures or slots.
-Read back the generated package, installed client `runtime.ini` and server
+and `Install-Client.cmd`. Every catalog change requires matching generated client
+data; updating only the framework DLL does not update prize pictures or slots.
+For a Git-based player updater, publish that data and its updated file manifest
+to the client repository's update branch instead of creating another ZIP.
+Read back the published payload, installed client `runtime.ini` and server
 `sdgo_mod_CapsuleRuntimeState.CatalogRevision`: all must have the same
 `catalog_revision`. Keep the owner workspace on that catalog too. Check first,
 then install:

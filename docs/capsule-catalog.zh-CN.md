@@ -19,8 +19,9 @@ A/B/C 机体可上传处理好的 PNG，拖动取景框、拉角或滑杆缩放�
 
 安装前关闭目标游戏。服主向朋友分发生成的整个 `player` 目录，玩家运行其中的
 `Install-Client.cmd -GameDir "D:\Game"`，以后照常用原启动器进入游戏，无需额外的“开始联机”按钮。
-每次修改奖池都要重新生成并分发配套玩家包；只更新框架 DLL 不会同步奖池图片和槽位。
-服主核对玩家包 manifest、客户端 `runtime.ini` 和服务端
+每次修改奖池都要同步配套客户端数据；只更新框架 DLL 不会同步奖池图片和槽位。
+玩家通过 client Git 更新时，将这些数据和更新后的文件 manifest 提交并推送到更新分支，
+不再另做更新 ZIP。服主核对已发布的 manifest、客户端 `runtime.ini` 和服务端
 `sdgo_mod_CapsuleRuntimeState.CatalogRevision` 的 `catalog_revision` 完全一致，
 Manager 工作区也应指向同一份目录配置。
 
