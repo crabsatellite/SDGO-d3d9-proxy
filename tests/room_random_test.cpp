@@ -1,6 +1,9 @@
 #include "ai_test_support.h"
 #include "../mods/room_random/room_random.cpp"
 #include "sdgo/owned_unit_record.h"
+#include "native_title_image.h"
+#include "room_random_native_copy.h"
+#include <functional>
 #include <set>
 
 namespace room_random_inventory {
@@ -10,6 +13,11 @@ bool Read(const Settings&,const std::vector<uint32_t>&,
 
 namespace fixture {
 std::vector<uint8_t> room(0x33000),preview(0x33000),lobby(0x2218),lobbyProc(0x100);
+std::vector<uint8_t> client(0x4000);
+std::vector<std::vector<uint8_t>> notices;
+int noticeCalls=0,failNotice=0;
+using CopyNoticeFn=std::function<void(std::vector<uint8_t>&,const uint8_t*,uint16_t)>;
+CopyNoticeFn nativeCopyNotice;
 std::vector<policy::Candidate> inventory;
 std::map<uint32_t,std::array<uint8_t,64>> metadata;
 std::vector<std::string> hooks;
@@ -88,6 +96,27 @@ int __fastcall BuildNative(void*,void*,uint8_t*,uint8_t* info,uint8_t*,uint8_t,u
     built[owner]=ids;
     return 1;
 }
+int __fastcall BroadcastNative(uint8_t* actual,void*,uint8_t* packet,uint32_t length,uint32_t* sent) {
+    ++noticeCalls;*sent=0;
+    if(failNotice==noticeCalls) return 0;
+    const uint16_t opcode=Get<uint16_t>(packet,0);
+    CHECK(opcode==0x0861 || opcode==0x098B);
+    CHECK(length==(opcode==0x0861 ? 0xABu : 0x2CEu));
+    const uint32_t slot=Get<uint32_t>(packet,10),owner=Get<uint32_t>(packet,6);
+    CHECK(slot<12);CHECK((owner&kAiBit)==0);
+    CHECK(Get<uint32_t>(actual+kSlotBase+slot*kSlotStride,kOwner)==owner);
+    CHECK(Get<uint32_t>(packet,14)==Get<uint32_t>(actual,0));
+    notices.emplace_back(packet,packet+length);
+    if(nativeCopyNotice) nativeCopyNotice(client,packet,opcode);
+    else std::memcpy(client.data()+0x5D7+slot*0x48E+(opcode==0x0861 ? 0x49 : 0x146),
+                     packet+0x12,opcode==0x0861 ? 0x99 : 0x2BC);
+    for(unsigned i=0;i<12;++i) {
+        const uint32_t id=Get<uint32_t>(actual,kSlotBase+i*kSlotStride+kOwner);
+        if(id && !(id&kAiBit)) ++*sent;
+    }
+    Put<uint32_t>(packet,2,1001); // the native broadcaster rewrites recipient routing
+    return 1;
+}
 void __fastcall ReleaseNative(uint8_t*,void*) { ++releases; }
 int __fastcall DispatchNative(void* proc,void*,int,void*,uint32_t*,uint32_t*) {
     preview=room;
@@ -122,6 +151,8 @@ void Reset(uint8_t mode=1,const char* title="!rand") {
     g_saved.clear();g_history.clear();g_attempt=nullptr;g_token=0;
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
+    notices.clear();noticeCalls=failNotice=0;
+    std::fill(client.begin(),client.end(),uint8_t{0xCC});
     reads=builds=releases=failAfter=validationError=0;readFailure=changeOwner=changeReady=addAiAfterValidation=nativeOverrideSecond=false;
     Put<uint32_t>(room.data(),0,0x10077); room[4]=1;room[5]=mode;
     Title(room,title);
@@ -141,8 +172,10 @@ void Reset(uint8_t mode=1,const char* title="!rand") {
     g_special=reinterpret_cast<SpecialFn>(&SpecialNative);
     g_validate=reinterpret_cast<ValidateFn>(&ValidateNative);g_build=reinterpret_cast<BuildFn>(&BuildNative);
     g_release=reinterpret_cast<ReleaseFn>(&ReleaseNative);g_lookup=reinterpret_cast<UnitLookupFn>(&Lookup);
+    g_broadcast=reinterpret_cast<BroadcastFn>(&BroadcastNative);
     g_unitTable=reinterpret_cast<void*>(1);
     g_lobby=nullptr;g_lobbyFind=nullptr;g_lobbyRoom=nullptr;g_lobbyUnlock=nullptr;
+    for(unsigned i=0;i<2;++i) std::memcpy(client.data()+0x5D7+i*0x48E,Info(i),0x48E);
 }
 int Start() {
     if(room[5]==13 || room[5]==14) return SpecialStart(nullptr,nullptr,room.data(),0);
@@ -153,6 +186,7 @@ uint32_t Setting(SdgoMod*,const char*,const char* def,char* out,uint32_t size) {
     strcpy_s(out,size,def); return static_cast<uint32_t>(std::strlen(def));
 }
 void* Symbol(SdgoMod*,const char* key) {
+    if(std::strcmp(key,"battle.room_random_broadcast")==0) return reinterpret_cast<void*>(&BroadcastNative);
     if(std::strcmp(key,"battle.unit_lookup")==0) return reinterpret_cast<void*>(&Lookup);
     if(std::strcmp(key,"battle.unit_table")==0) return reinterpret_cast<void*>(1);
     if(std::strcmp(key,"battle.lobby_proc")==0) return lobbyProc.data();
@@ -178,8 +212,27 @@ std::vector<uint8_t> Sources() {
 }
 } // namespace fixture
 
-int main() {
+// Execute only the native start-packet's model-selection branch in this test
+// process. No game entry point, imports, networking or database is invoked.
+__declspec(naked) void __cdecl InvokeAnnounceModel(void*,void*) {
+    __asm {
+        push ebp
+        mov eax,[esp+0Ch]
+        mov ebp,[esp+8]
+        call eax
+        pop ebp
+        ret
+    }
+}
+int wmain(int argc,wchar_t** argv) {
     using namespace fixture;
+    std::unique_ptr<room_random_native_test::ClientCopies> nativeCopies;
+    if(argc>=3) {
+        nativeCopies=std::make_unique<room_random_native_test::ClientCopies>(argv[2]);
+        nativeCopyNotice=[&](std::vector<uint8_t>& service,const uint8_t* packet,uint16_t opcode) {
+            nativeCopies->Apply(service,packet,opcode);
+        };
+    }
     SCENARIO("exact room token and byte boundaries");
     CHECK(policy::Command("room !RaNd !ai3",16));
     CHECK(policy::Command("!random",7));
@@ -187,6 +240,71 @@ int main() {
     CHECK(!policy::Command("room!rand",9));
     CHECK(!policy::Command(nullptr,10));
     CHECK(!policy::Command("!rand",4));
+
+    SCENARIO("all start modes synchronize native client caches and restore the saved selection");
+    for(uint8_t mode=1;mode<=14;++mode) {
+        Reset(mode,"!ai !rand");const auto originalClient=client;
+        CHECK(Start()==0);
+        CHECK(notices.size()==(UsesDeck(mode)?4u:2u));
+        for(unsigned i=0;i<2;++i) {
+            const uint8_t* cached=client.data()+0x5D7+i*0x48E;
+            CHECK(Get<uint32_t>(cached,0x49)==built.at(1001+i).front());
+            CHECK(std::memcmp(cached+0x49,Info(i)+kActive,0x99)==0);
+            if(UsesDeck(mode)) {
+                CHECK(std::memcmp(cached+0x146,Info(i)+kShip,0x2BC)==0);
+                for(size_t n=0;n<built.at(1001+i).size();++n)
+                    CHECK(Get<uint64_t>(cached,0x17A+n*8)==Get<uint64_t>(cached,0x19E+n*0x99+8));
+            }
+        }
+        Release(room.data(),nullptr);CHECK(client==originalClient);
+    }
+
+    SCENARIO("partial notification and failure after the final build restore every client");
+    for(int failure:{1,2,3,4}) {
+        Reset(7);const auto originalClient=client,originalSource=Sources();failNotice=failure;
+        CHECK(Start()==kStartError);CHECK(client==originalClient);CHECK(Sources()==originalSource);
+        CHECK(g_saved.empty());CHECK(g_history.empty());
+    }
+    Reset(5);const auto lateClient=client,lateSource=Sources();failAfter=2;
+    CHECK(Start()==kStartError);CHECK(client==lateClient);CHECK(Sources()==lateSource);
+    CHECK(g_saved.empty());CHECK(g_history.empty());
+
+    SCENARIO("no random command emits no temporary loadout notification");
+    Reset(5,"!ai");CHECK(Start()==0xFB4);CHECK(notices.empty());
+
+    if(argc>=2) {
+        SCENARIO("native start packet announces the randomized model in every room type");
+        room_title_native::KnownBattleServerImage image(argv[1]);
+        constexpr size_t codeSize=0xA3; // 004B6466 through 004B6508, all branches local
+        auto source=image.Function<const uint8_t*>(0x000B6466);
+        CHECK(room_title_native::detail::Sha256(source,codeSize)==
+              "57232cde326829e9176de6988642bc8eef6d60ad0a4cec619e37e2f422c377af");
+        auto code=static_cast<uint8_t*>(VirtualAlloc(nullptr,codeSize+1,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+        CHECK(code!=nullptr);
+        if(code) {
+            std::memcpy(code,source,codeSize);code[codeSize]=0xC3;
+            DWORD previousProtection=0;
+            CHECK(VirtualProtect(code,codeSize+1,PAGE_EXECUTE_READ,&previousProtection)!=FALSE);
+            FlushInstructionCache(GetCurrentProcess(),code,codeSize+1);
+            for(uint8_t type:{uint8_t{1},uint8_t{2},uint8_t{3}})
+                for(uint8_t mode:{uint8_t{1},uint8_t{5},uint8_t{8},uint8_t{10}}) {
+                    Reset(mode,"!ai !rand");room[4]=type;
+                    constexpr uint32_t originalAnnouncedModel=21025;
+                    Put<uint32_t>(Info(0),0x450,originalAnnouncedModel);
+                    CHECK(Start()==0);
+                    const uint32_t chosen=Get<uint32_t>(Info(0),kActive);
+                    std::vector<uint8_t> storage(0x3000);
+                    uint8_t* frame=storage.data()+0x2600;
+                    Put<void*>(frame,8,room.data());
+                    Put<int>(frame-0xCF0,0,0); // native participant slot index
+                    InvokeAnnounceModel(frame,code);
+                    CHECK(Get<uint32_t>(frame-0xCC5,0)==chosen);
+                    Release(room.data(),nullptr);
+                    CHECK(Get<uint32_t>(Info(0),0x450)==originalAnnouncedModel);
+                }
+            VirtualFree(code,0,MEM_RELEASE);
+        }
+    }
 
     SCENARIO("exact decks and repeat exclusion across every feasible set");
     Reset(7);std::mt19937_64 rng(771);
@@ -264,6 +382,31 @@ int main() {
         CHECK(built==stable);CHECK(reads==1);CHECK(g_attempt==nullptr);
         Release(room.data(),nullptr);CHECK(releases==1);CHECK(Sources()==original);CHECK(g_saved.empty());
     }
+
+    SCENARIO("type-three mission and special starts update the client model and restore it");
+    for(uint8_t mode:{uint8_t{1},uint8_t{5},uint8_t{8},uint8_t{10},uint8_t{13},uint8_t{14}}) {
+        Reset(mode,"!ai !rand");room[4]=3;
+        Put<uint32_t>(Info(0),0x450,21025);
+        Put<uint32_t>(Info(1),0x450,21026);
+        Put<uint32_t>(Info(0),0x44C,9); // adjacent native selection metadata is not ours
+        const auto original=Sources();
+        CHECK(Start()==0);
+        CHECK(Get<uint32_t>(Info(0),0x450)==built.at(1001).front());
+        CHECK(Get<uint32_t>(Info(1),0x450)==built.at(1002).front());
+        CHECK(Get<uint32_t>(Info(0),0x44C)==9);
+        Release(room.data(),nullptr);
+        CHECK(Sources()==original);
+
+        Reset(mode,"!ai !rand");room[4]=3;
+        Put<uint32_t>(Info(0),0x450,21025);
+        const auto failedOriginal=Sources();failAfter=1;
+        CHECK(Start()==kStartError);CHECK(Sources()==failedOriginal);CHECK(g_saved.empty());
+    }
+
+    SCENARIO("ordinary room types leave the unused alternate announcement untouched");
+    Reset(5,"!ai !rand");Put<uint32_t>(Info(0),0x450,21025);
+    CHECK(Start()==0);CHECK(Get<uint32_t>(Info(0),0x450)==21025);
+    Release(room.data(),nullptr);
 
     SCENARIO("repeated battles in the same room change both humans without rejoining");
     Reset(3);std::map<uint32_t,std::vector<uint32_t>> last;

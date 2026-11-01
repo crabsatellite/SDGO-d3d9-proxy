@@ -6,7 +6,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "每局从玩家自己的机库抽取机体用于战斗。",
+  "description": "每局从各自机库抽取机体，通过原生通知同步任务与对战的临时出击配置。",
   "settings": [
     {
       "id": "database_ini",

@@ -15,11 +15,15 @@
 #include "sdgo/mod_settings.h"
 #include "sdgo/random_loadout.h"
 #include "inventory.h"
+#include "loadout_sync.h"
 
 namespace {
 namespace policy = sdgo::random_loadout;
 constexpr size_t kSlotBase=0x533, kSlotStride=0x48E, kOwner=0x429;
 constexpr size_t kActive=0x49, kDeck=0x19E, kActiveSerial=0x162;
+constexpr size_t kShip=0x146, kShipUnitSerials=0x17A;
+// Native type-3 starts announce this model instead of the active UnitData ID.
+constexpr size_t kAnnouncedModel=0x450;
 constexpr size_t kTitleLength=0x79, kTitle=0x7A, kTitleMax=20;
 constexpr uint32_t kAiBit=0x80000000u;
 constexpr int kStartError=0xFBE;
@@ -28,6 +32,7 @@ using SpecialFn=int(__thiscall*)(void*,void*,uintptr_t);
 using ValidateFn=int(__thiscall*)(void*,uint8_t*,int);
 using BuildFn=int(__thiscall*)(void*,uint8_t*,uint8_t*,uint8_t*,uint8_t,uint8_t);
 using ReleaseFn=void(__thiscall*)(uint8_t*);
+using BroadcastFn=int(__thiscall*)(uint8_t*,uint8_t*,uint32_t,uint32_t*);
 using UnitLookupFn=uint8_t*(__thiscall*)(void*,uint32_t);
 using LobbyFindFn=int(__thiscall*)(void*,const uint32_t*,int*);
 using LobbyRoomFn=uint8_t*(__thiscall*)(void*,int,uint16_t);
@@ -43,6 +48,7 @@ SpecialFn g_special=nullptr;
 ValidateFn g_validate=nullptr;
 BuildFn g_build=nullptr;
 ReleaseFn g_release=nullptr;
+BroadcastFn g_broadcast=nullptr;
 UnitLookupFn g_lookup=nullptr;
 void* g_unitTable=nullptr;
 void* g_lobby=nullptr;
@@ -137,41 +143,44 @@ bool UsesDeck(uint8_t mode) { return mode==6 || mode==7; }
 struct Source {
     uint32_t owner=0;
     std::array<uint8_t,0x99> active{};
-    std::array<uint8_t,4*0x99> deck{};
-    uint64_t activeSerial=0;
+    std::array<uint8_t,room_random_sync::kShipSize> ship{};
+    uint32_t announcedModel=0;
 };
 bool Capture(uint8_t* info,Source* source) {
     __try {
         source->owner=Get<uint32_t>(info,kOwner);
         std::memcpy(source->active.data(),info+kActive,source->active.size());
-        std::memcpy(source->deck.data(),info+kDeck,source->deck.size());
-        source->activeSerial=Get<uint64_t>(info,kActiveSerial);
+        std::memcpy(source->ship.data(),info+kShip,source->ship.size());
+        source->announcedModel=Get<uint32_t>(info,kAnnouncedModel);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-bool Apply(uint8_t* info,const policy::Selection& selection,bool deck) {
+bool Apply(uint8_t* info,const policy::Selection& selection,bool deck,bool alternateAnnouncement) {
     if(selection.units.empty() || selection.units.size()>4) return false;
     __try {
         std::memcpy(info+kActive,selection.units[0].data.data(),0x99);
         info[kActive+6]=1;
+        if(alternateAnnouncement) Put(info,kAnnouncedModel,selection.units[0].unit);
         if(deck) {
             std::memset(info+kDeck,0,4*0x99);
+            std::memset(info+kShipUnitSerials,0,4*sizeof(uint64_t));
             for(size_t i=0;i<selection.units.size();++i) {
                 std::memcpy(info+kDeck+i*0x99,selection.units[i].data.data(),0x99);
                 info[kDeck+i*0x99+6]=i==0?1:0;
+                Put(info,kShipUnitSerials+i*sizeof(uint64_t),selection.units[i].serial);
             }
             Put(info,kActiveSerial,selection.units[0].serial);
         }
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-bool Restore(uint8_t* info,const Source& source,bool deck) {
+bool Restore(uint8_t* info,const Source& source,bool deck,bool alternateAnnouncement) {
     __try {
         if(Get<uint32_t>(info,kOwner)!=source.owner) return false;
         std::memcpy(info+kActive,source.active.data(),source.active.size());
+        if(alternateAnnouncement) Put(info,kAnnouncedModel,source.announcedModel);
         if(deck) {
-            std::memcpy(info+kDeck,source.deck.data(),source.deck.size());
-            Put(info,kActiveSerial,source.activeSerial);
+            std::memcpy(info+kShip,source.ship.data(),source.ship.size());
         }
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -181,11 +190,13 @@ struct Player {
     uint32_t owner=0;
     policy::Selection selection;
     Source previewOriginal;
+    bool built=false;
 };
 struct SavedRoom {
     uint64_t token=0;
     uint32_t key=0;
-    bool deck=false;
+    bool deck=false,alternateAnnouncement=false;
+    bool clientsTouched=false;
     std::vector<std::pair<int,Source>> players;
 };
 struct History { std::vector<uint32_t> units; uint64_t stamp=0; };
@@ -196,7 +207,7 @@ std::atomic<uint64_t> g_token{0};
 
 struct Attempt {
     uint64_t token=0;
-    bool checked=false,enabled=false,prepared=false,applied=false,failed=false;
+    bool checked=false,enabled=false,prepared=false,applied=false,failed=false,synchronized=false;
     uint8_t* preview=nullptr;
     uint8_t* actual=nullptr;
     Signature signature;
@@ -274,8 +285,8 @@ bool Prepare(Attempt& a,uint8_t* room) {
     a.preview=room;
     a.prepared=true;
     for(const auto& p:a.players)
-        if(!Apply(room+kSlotBase+p.slot*kSlotStride,p.selection,deck)) {
-            for(const auto& rollback:a.players) Restore(room+kSlotBase+rollback.slot*kSlotStride,rollback.previewOriginal,deck);
+        if(!Apply(room+kSlotBase+p.slot*kSlotStride,p.selection,deck,a.signature.type==3)) {
+            for(const auto& rollback:a.players) Restore(room+kSlotBase+rollback.slot*kSlotStride,rollback.previewOriginal,deck,a.signature.type==3);
             Fail(a,"cannot prepare native validation snapshot"); return false;
         }
     return true;
@@ -288,6 +299,7 @@ bool ApplyActual(Attempt& a,uint8_t* room) {
         Fail(a,"room membership or restrictions changed during preparation"); return false;
     }
     SavedRoom saved; saved.token=a.token; saved.key=current.key; saved.deck=UsesDeck(current.mode);
+    saved.alternateAnnouncement=current.type==3;
     for(const auto& p:a.players) {
         Source source;
         if(room==a.preview) source=p.previewOriginal;
@@ -303,20 +315,68 @@ bool ApplyActual(Attempt& a,uint8_t* room) {
     }
     a.actual=room; a.applied=true;
     for(const auto& p:a.players)
-        if(!Apply(room+kSlotBase+p.slot*kSlotStride,p.selection,saved.deck)) {
+        if(!Apply(room+kSlotBase+p.slot*kSlotStride,p.selection,saved.deck,saved.alternateAnnouncement)) {
             Fail(a,"cannot apply native room loadout"); return false;
         }
     return true;
 }
+template<size_t N> bool Broadcast(uint8_t* room,std::array<uint8_t,N>& packet,unsigned humans) {
+    uint32_t recipients=0;
+    return g_broadcast && g_broadcast(room,packet.data(),static_cast<uint32_t>(packet.size()),&recipients)!=0
+        && recipients>=humans;
+}
+bool Notify(uint8_t* room,int slot,const Source& source,bool deck,unsigned humans) {
+    if(deck) {
+        auto ship=room_random_sync::Packet(room_random_sync::kShipOpcode,source.owner,
+                                          static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.ship);
+        if(!Broadcast(room,ship,humans)) return false;
+    }
+    auto active=room_random_sync::Packet(room_random_sync::kUnitOpcode,source.owner,
+                                        static_cast<uint32_t>(slot),Get<uint32_t>(room,0),source.active);
+    return Broadcast(room,active,humans);
+}
+bool Synchronize(Attempt& a,uint8_t* room) {
+    if(a.synchronized) return true;
+    if(!std::all_of(a.players.begin(),a.players.end(),[](const Player& p){return p.built;})) return true;
+    std::vector<std::pair<int,Source>> updates;
+    for(const auto& p:a.players) {
+        Source source;
+        if(!Capture(room+kSlotBase+p.slot*kSlotStride,&source) || source.owner!=p.owner) {
+            Fail(a,"cannot read the completed random loadout for client synchronization"); return false;
+        }
+        updates.emplace_back(p.slot,source);
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_state);
+        auto saved=g_saved.find(room);
+        if(saved==g_saved.end() || saved->second.token!=a.token) {
+            Fail(a,"random room was replaced before client synchronization"); return false;
+        }
+        // A partial send must also restore every original client record.
+        saved->second.clientsTouched=true;
+    }
+    for(const auto& update:updates)
+        if(!Notify(room,update.first,update.second,UsesDeck(a.signature.mode),static_cast<unsigned>(a.players.size()))) {
+            Fail(a,"native loadout notification did not find all human routes"); return false;
+        }
+    a.synchronized=true;
+    return true;
+}
 void RestoreActual(uint8_t* room,uint64_t token=0) {
-    std::lock_guard<std::mutex> lock(g_state);
-    auto it=g_saved.find(room);
-    if(it==g_saved.end() || (token && it->second.token!=token)) return;
+    SavedRoom saved;
+    {
+        std::lock_guard<std::mutex> lock(g_state);
+        auto it=g_saved.find(room);
+        if(it==g_saved.end() || (token && it->second.token!=token)) return;
+        saved=std::move(it->second);g_saved.erase(it);
+    }
     Signature current;
-    if(SignatureOf(room,&current) && current.key==it->second.key)
-        for(const auto& entry:it->second.players)
-            Restore(room+kSlotBase+entry.first*kSlotStride,entry.second,it->second.deck);
-    g_saved.erase(it);
+    if(SignatureOf(room,&current) && current.key==saved.key)
+        for(const auto& entry:saved.players)
+            if(Restore(room+kSlotBase+entry.first*kSlotStride,entry.second,saved.deck,saved.alternateAnnouncement)
+               && saved.clientsTouched
+               && !Notify(room,entry.first,entry.second,saved.deck,static_cast<unsigned>(saved.players.size())))
+                g_api->Log(g_mod,SDGO_LOG_WARN,"native restore notification could not reach every remaining human route");
 }
 void Commit(const Attempt& a) {
     std::lock_guard<std::mutex> lock(g_state);
@@ -329,9 +389,10 @@ void Commit(const Attempt& a) {
                       static_cast<unsigned long>(u.unit),u.points));
                 points+=u.points;
             }
-            g_api->Log(g_mod,SDGO_LOG_INFO,"round %llu owner %lu: %s; %u points%s",a.token,
+            g_api->Log(g_mod,SDGO_LOG_INFO,"round %llu owner %lu: %s; %u points%s; room type %u mode %u; native loadout notices queued",a.token,
                 static_cast<unsigned long>(p.owner),message,points,
-                p.selection.alternativeToPrevious?"":" (only one feasible model set)");
+                p.selection.alternativeToPrevious?"":" (only one feasible model set)",
+                static_cast<unsigned>(a.signature.type),static_cast<unsigned>(a.signature.mode));
         }
     }
     while(g_history.size()>8192) {
@@ -357,19 +418,26 @@ int __fastcall Build(void* proc,void*,uint8_t* room,uint8_t* info,uint8_t* pilot
                 return room+kSlotBase+p.slot*kSlotStride==info;
             });
             if(player==a.players.end() || Get<uint32_t>(info,kOwner)!=player->owner
-               || !Apply(info,player->selection,UsesDeck(mode))) {
+               || !Apply(info,player->selection,UsesDeck(mode),a.signature.type==3)) {
                 Fail(a,"native human source no longer matches the prepared owner"); return 0;
             }
         }
     }
-    return g_build(proc,room,info,pilot,type,mode);
+    const int result=g_build(proc,room,info,pilot,type,mode);
+    if(result && g_attempt && g_attempt->enabled) {
+        Attempt& a=*g_attempt;
+        for(auto& p:a.players)
+            if(room+kSlotBase+p.slot*kSlotStride==info) p.built=true;
+        if(!Synchronize(a,room)) return 0;
+    }
+    return result;
 }
 template<class Call> int RunAttempt(Call&& call) {
     Attempt attempt; attempt.token=++g_token;
     Attempt* parent=g_attempt; g_attempt=&attempt;
     try {
         const int result=call();
-        if(result==0 && attempt.applied && !attempt.failed) Commit(attempt);
+        if(result==0 && attempt.applied && !attempt.failed && attempt.synchronized) Commit(attempt);
         else if(attempt.applied) RestoreActual(attempt.actual,attempt.token);
         g_attempt=parent;
         return attempt.failed ? kStartError : result;
@@ -433,6 +501,7 @@ SDGO_MOD_ENTRY {
     g_titleApi=sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     if(!LoadSettings()) { api->Log(mod,SDGO_LOG_ERROR,"invalid room_random configuration"); return 0; }
     if(!Bind(g_lookup,"battle.unit_lookup") || !Bind(g_unitTable,"battle.unit_table")
+       || !Bind(g_broadcast,"battle.room_random_broadcast")
        || !Bind(g_lobby,"battle.lobby_proc") || !Bind(g_lobbyFind,"battle.lobby_map_find")
        || !Bind(g_lobbyRoom,"battle.lobby_room") || !Bind(g_lobbyUnlock,"battle.lobby_release")) return 0;
     if(!api->HookCode(mod,"battle.start_dispatch",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch))

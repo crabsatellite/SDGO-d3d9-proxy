@@ -20,6 +20,20 @@ The whole title is read, including commands after byte 20; randomization itself 
 Title transport does not install or enable the AI or random-loadout features.
 See [combined commands](room-commands.md).
 
+`!ai !rand` is valid. Version 0.1.5 fixes a synchronization gap: changing only the
+server's battle record left the stock client's preparation cache unchanged.
+After all human units build, native `0x0861` full-unit notifications are queued
+before `0x06C3` battle start; deck modes also receive native `0x098B` full-ship
+records, including the leader and all 64-bit unit UIDs. Failed starts and teardown
+restore the original records through the same notifications. Type-3 announcement
+IDs are synchronized as well. No additional client Mod or database selection
+write is required. A queued notification is not a client/gameplay acceptance receipt.
+
+The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
+executes the actual server model-selection and client cache-copy instructions
+in private fixture memory, without game entry points, imports or networking.
+Full mission/PvP models, weapons, respawn and reward persistence remain manual acceptance.
+
 The incremental installer updates core and already installed `pvp_ai` / `coop_ai`
 DLLs together, preserving their manifests and settings. It does not install missing
 AI mods. Updated mods also share the same SDK parser when run under an older core.
