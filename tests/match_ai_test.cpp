@@ -352,6 +352,37 @@ int main() {
     CHECK(static_cast<uint32_t>(g_createReplyDetails) == 0x0918);
     CHECK(ServicePacket(nullptr, nullptr, 0, 0, 0, 0x1234, nullptr) == 73);
     CHECK(g_createReplySequence == 2);
+    SCENARIO("Lua observation survives missing battle objects and preserves the published room ABI");
+    CHECK(sizeof(SdgoPvpAiClientSnapshotV1) == 1280);
+    CHECK(sizeof(SdgoPvpAiClientLuaStatusV1) == 20);
+    auto savedApp = g_gameApp;
+    g_gameApp = nullptr;
+    InterlockedExchange(&g_receivedBattleStartCount, 37);
+    InterlockedExchange(&g_luaErrors, 4);
+    InterlockedExchange(&g_luaErrorObserverAvailable, 1);
+    SdgoPvpAiClientLuaStatusV1 lua{sizeof(lua), SDGO_PVP_AI_CLIENT_OBSERVER_VERSION, 0, 0, 0};
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 1);
+    CHECK(lua.battle_start_sequence == 37 && lua.error_count == 4 && lua.observer_available == 1);
+    InterlockedExchange(&g_luaErrors, 0);
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 1 && lua.error_count == 0);
+    auto savedLuaError = g_originalLuaOnError;
+    const bool savedDiagnostics = g_logDiagnostics;
+    g_originalLuaOnError = +[](lua_State*) -> int { return 73; };
+    g_logDiagnostics = false;
+    for (unsigned i = 0; i < 47; ++i)
+        CHECK(LuaOnError(nullptr) == 73);
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 1 && lua.error_count == 47);
+    g_originalLuaOnError = savedLuaError;
+    g_logDiagnostics = savedDiagnostics;
+    InterlockedExchange(&g_luaErrorObserverAvailable, 0);
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 1 && lua.observer_available == 0);
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(nullptr) == 0);
+    lua.size = sizeof(lua) - 1;
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 0);
+    lua.size = sizeof(lua); lua.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION + 1;
+    CHECK(SdgoPvpAiClientGetLuaStatusV1(&lua) == 0);
+    g_gameApp = savedApp;
+
     for (void* p : allocations) std::free(p); allocations.clear();
     return ai_test::Finish();
 }

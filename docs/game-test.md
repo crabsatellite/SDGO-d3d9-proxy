@@ -40,14 +40,26 @@ profile. Later runs reuse that profile. Use a fresh `run-dir` for each receipt;
 the same account cannot run concurrently. The default endpoint is
 `127.0.0.1:5001`; change it with `--target-host` and `--login-port`. The original
 client selects its server and channel through the normal native flow.
+The default `--network-policy direct` disables inherited routing only in the
+test copy and verifies that process's actual TCP peer before login. Use
+`preserve` explicitly when testing an owner's FRP routes.
 
 The example tests normal, death match and leader match in order.
 Each mode covers room creation, real battle startup, AI state assertions and
 normal completion and return. Select a single mode when diagnosing a failure.
-These three modes have completed real-client lifecycle tests. Grid (`6`) and
-Tag (`7`) are accepted by the runner but still need native VS channel selection
-before their positive paths can be verified. A server rejection fails the case.
+Grid (`6`) and Tag (`7`) use the native VS channel business flow and require a
+complete battleship deck on the account. Missing decks and server rejections
+fail the case.
 Results are under `receipts/report.json` and `receipts/junit.xml` in the run directory.
+
+Account preparation can use `--bootstrap-only`, `--battleship-only`,
+`--gift-requests-only` or `--deck-only`; these do not claim PvP acceptance.
+Ship acquisition uses the native tutorial. Gifts use an existing sender's normal
+mail business and require the server's ordinary gift service plus independent
+processing evidence. Deck setup reads four genuinely owned unit UIDs from
+`[deck] unit_uid0` through `unit_uid3` in the private account profile and waits
+for the original Save and GoOut replies. Log in again with that same account for
+battle tests; no units or gameplay database records are supplemented.
 
 Both components register with Mod Manager as development Mods. The Python
 runner is a developer test command for a bounded job; it is not a player launcher

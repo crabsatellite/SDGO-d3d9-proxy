@@ -234,6 +234,46 @@ namespace
         CHECK(lifecycle.phase == 4);
     }
 
+    void TestBattleEndUsesCapturedIdentityWithoutRelaxingFilters()
+    {
+        ResetConfig("T7x", 9229, 3, 1, true);
+        ResetQueue();
+
+        Lifecycle lifecycle;
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED));
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_SETUP_COMPLETE));
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_BATTLE_ACTIVE));
+        CHECK(lifecycle.outcome == Lifecycle::Running);
+        CHECK(lifecycle.phase == 3);
+
+        SdgoPvpAiObserverEventV1 afterNativeEnd =
+            Event(SDGO_PVP_AI_EVENT_BATTLE_END);
+        afterNativeEnd.host_pilot_id = 0;
+        afterNativeEnd.mode = 0;
+        afterNativeEnd.title[0] = '\0';
+        ObservePvpAi(&afterNativeEnd, nullptr);
+        CHECK(g_queueCount == 0);
+        CHECK(lifecycle.outcome == Lifecycle::Running);
+        CHECK(lifecycle.phase == 3);
+
+        const SdgoPvpAiObserverEventV1 capturedBeforeNativeEnd =
+            Event(SDGO_PVP_AI_EVENT_BATTLE_END);
+        ObservePvpAi(&capturedBeforeNativeEnd, nullptr);
+        CHECK(g_queueCount == 1);
+        SdgoPvpAiObserverEventV1 output[kDrainBatch] = {};
+        CHECK(Drain(output) == 1);
+        CHECK(output[0].host_pilot_id == lifecycle.hostPilotId);
+        CHECK(output[0].room_cookie == lifecycle.roomCookie);
+        CHECK(output[0].mode == lifecycle.mode);
+        CHECK(TitleContainsNonce(output[0].title));
+        ProcessEvent(&lifecycle, output[0]);
+        CHECK(lifecycle.outcome == Lifecycle::Pass);
+        CHECK(lifecycle.phase == 4);
+    }
+
     void TestLifecycleFailures()
     {
         ResetConfig("T7x", 9229, 3, 1, false);
@@ -424,6 +464,7 @@ int main()
     TestTitleBoundary();
     TestNormalLifecycle();
     TestRequireEndLifecycle();
+    TestBattleEndUsesCapturedIdentityWithoutRelaxingFilters();
     TestLifecycleFailures();
     TestLifecycleDuplicatesAndTerminalOutcomes();
     TestQueueCapacityAndOrder();

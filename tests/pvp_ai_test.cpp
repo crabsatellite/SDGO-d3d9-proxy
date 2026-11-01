@@ -15,6 +15,9 @@ uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 int originals = 0;
 bool revive = true;
+bool clearIdentityAtEnd = false;
+bool originalReturnedBeforeObserver = false;
+std::vector<SdgoPvpAiObserverEventV1> observerEvents;
 std::vector<uint32_t> npcIds = {100, 101, 102, 103, 104};
 std::vector<uint8_t> points = {4, 3, 2, 5, 0};
 
@@ -66,7 +69,20 @@ int __fastcall Respawn(uint8_t*, void*, uint32_t, uint8_t* pilot, uint32_t, uint
 }
 void __fastcall Refresh(uint8_t*, void*, int, uint8_t*, int, int) { ++refreshes; }
 int __fastcall StateRespawn(uint8_t*, void*) { ++stateRespawns; return 1; }
-void __fastcall End(uint8_t*, void*, uint16_t, uint16_t, int) { ++originals; }
+void __fastcall End(uint8_t* endRoom, void*, uint16_t, uint16_t, int) {
+    ++originals;
+    if (clearIdentityAtEnd) {
+        Put(endRoom, kRoomHost, 0u);
+        endRoom[kRoomMode] = 0;
+        endRoom[kRoomTitleLength] = 0;
+        memset(endRoom + kRoomTitle, 0, kRoomTitleMax);
+    }
+    originalReturnedBeforeObserver = true;
+}
+void __cdecl Observe(const SdgoPvpAiObserverEventV1* event, void*) {
+    CHECK(originalReturnedBeforeObserver);
+    observerEvents.push_back(*event);
+}
 
 void Reset(int mode = 1) {
     std::fill(room.begin(), room.end(), uint8_t{});
@@ -88,9 +104,19 @@ void Reset(int mode = 1) {
     g_battleEnd = reinterpret_cast<BattleEndFn>(&End);
     std::memset(g_dead, 0, sizeof(g_dead));
     std::memset(g_watch, 0, sizeof(g_watch));
+    for (auto& active : g_observerActiveRooms)
+        InterlockedExchangePointer(&active, nullptr);
+    InterlockedExchangePointer(&g_observerCallback, nullptr);
+    InterlockedExchangePointer(&g_observerUser, nullptr);
+    InterlockedExchange(&g_observerRegistration, 0);
+    InterlockedExchange(&g_observerSequence, 0);
+    InterlockedExchange(&g_observerFaultLogged, 0);
     buildCalls = setupCalls = respawns = refreshes = stateRespawns = originals = 0;
     failBuild = failSetup = 0;
     revive = true;
+    clearIdentityAtEnd = false;
+    originalReturnedBeforeObserver = false;
+    observerEvents.clear();
 }
 }
 
@@ -234,6 +260,41 @@ int main() {
     CHECK(std::equal(before.begin(), before.end(), Pilot(0)));
     CHECK(g_dead[0].room == nullptr && g_watch[0].room == nullptr);
     RemoveAiPilots(room.data()); CHECK(SlotPilotId(room.data(), 0) == 10);
+
+    SCENARIO("battle-end observer preserves the real battle identity and publishes only after the native end returns");
+    Reset(1);
+    Human(0, 1);
+    Put(room.data(), kRoomHost, 10u);
+    Title("T7x !ai");
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    const SdgoPvpAiObserverSinkV1 sink = {
+        sizeof(sink), SDGO_PVP_AI_OBSERVER_VERSION, &Observe, nullptr};
+    CHECK(SdgoPvpAiRegisterObserverV1(&sink) == 1);
+    InterlockedExchangePointer(&g_observerActiveRooms[0], room.data());
+    clearIdentityAtEnd = true;
+    BattleEnd(room.data(), nullptr, 0, 0, 100);
+    CHECK(originals == 1);
+    CHECK(observerEvents.size() == 1);
+    if (observerEvents.size() == 1) {
+        const auto& end = observerEvents.front();
+        CHECK(end.type == SDGO_PVP_AI_EVENT_BATTLE_END);
+        CHECK(end.room_cookie ==
+              static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room.data())));
+        CHECK(end.host_pilot_id == 10);
+        CHECK(end.mode == 1);
+        CHECK(std::strcmp(end.title, "T7x !ai") == 0);
+        CHECK(end.active_slots == 2);
+        CHECK(end.ai_team_2 == 1);
+        CHECK(end.slots[0].pilot_id == 10);
+        CHECK(end.slots[6].pilot_id & kAiPilotBit);
+        CHECK(end.sequence == 1);
+        CHECK(end.qpc != 0);
+        CHECK(end.thread_id == GetCurrentThreadId());
+    }
+    CHECK(Get<uint32_t>(room.data(), kRoomHost) == 0);
+    CHECK(room[kRoomTitleLength] == 0);
+    CHECK(SlotPilotId(room.data(), 6) == 0);
+    CHECK(!ObserverRoomActive(room.data()));
 
     SCENARIO("expanded eligible pools are sampled afresh in both deck modes");
     auto originalIds = npcIds; auto originalPoints = points;
