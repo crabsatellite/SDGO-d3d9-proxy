@@ -1,11 +1,11 @@
 import {e,button,download} from '/panel_helpers.js';
 export async function mount(root,ctx){
  const intro=e('section',undefined,'manager-card');
- intro.append(e('h2','收藏扭蛋 · Beta'),e('p','每次 100,000 GP，永久获得此前从未获得的初始形态。已出售或置换的机体仍计入历史；奖池随机体库和导入元数据更新。'),e('p','先生成配套资源，再检查并分别安装到目标 WorldServer 和客户端，最后导出玩家包。安装前关闭对应程序；本面板不会停止游戏服务。'));
+ intro.append(e('h2','活动收藏扭蛋 · Beta'),e('p','每次 100,000 GP，抽取此前从未获得的永久初始形态，奖品在游戏内领取箱领取。C/B/A/S 默认概率35%/30%/20%/15%；某等级已收集完时，其他等级按原权重重新分配。未领取、已出售或置换的机体仍不重复。'),e('p','使用361×322活动海报。先生成配套资源，再检查并分别安装到目标 WorldServer 和客户端，最后导出玩家包。安装前关闭对应程序；本面板不会停止游戏服务。'));
  root.append(intro);
  let state=await ctx.request('/api/state',undefined);
  const summary=e('p'),result=e('p'),actions=e('div',undefined,'actions');root.append(summary,actions,result);
- const render=()=>{summary.textContent=state.generated?`已生成 · ${state.eligible_roots} 个可用初始形态 · 100,000 GP。生成不代表已安装或游戏验收通过。`:'尚无与当前配置匹配的构建。';};render();
+ const render=()=>{const position=state.placement?`活动机台第${state.placement.page}页、第${state.placement.page_slot}格。`:'';summary.textContent=state.generated?`已生成 · ${state.eligible_roots} 个可用初始形态 · 100,000 GP。${position}生成不代表已安装或游戏验收通过。`:'尚无与当前配置匹配的构建。';};render();
  for(const [id,label] of [['generate','生成 / 更新配套资源'],['check-install','检查安装条件'],['install-server','安装 / 更新目标 World'],['install-client','安装 / 更新本机客户端'],['export','导出玩家包']]){
   actions.append(button(label,async()=>{
    if(id.startsWith('install-')&&!confirm('更新工作区中选定的目标？请先关闭对应程序。'))return;

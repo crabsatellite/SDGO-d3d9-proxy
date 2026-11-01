@@ -85,6 +85,9 @@ def build_pool(rows: Iterable[dict], *, verified_bases: dict[int, str] | None = 
     source = json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {"schema_version": 1, "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
             "policy": "never_acquired_base_forms", "units": pool,
+            "selection": {"kind": "rank_then_uniform_unit", "rank_weights": {"C": 35, "B": 30, "A": 20, "S": 15},
+                          "exhausted_rank": "renormalize"},
+            "delivery": "native_activity_unit_gift",
             "form_aliases": [{"unit_id": form, "base_unit_id": base} for form, base in aliases],
             "excluded": excluded}
 

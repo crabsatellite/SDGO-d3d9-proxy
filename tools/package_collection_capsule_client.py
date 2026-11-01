@@ -21,6 +21,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 HOST_SYMBOL = "GOnline-54BE1568-00C97000.ini"
 PACKAGE_ID = "collection-capsule-client"
+SUPPORT_MARKER = b'SDGO_CAPSULE_REGISTRY_6TABLE_V2'
 CAPSULE_SYMBOLS = {
     "capsule.main.open_file": {
         "kind": "code",
@@ -233,9 +234,11 @@ def _validated_registry(registry: Path) -> tuple[dict, dict[str, bytes]]:
     manifest = _read_json(manifest_path, "client registry manifest")
     if (
         manifest.get("schema_version") != 1
-        or manifest.get("machine", {}).get("id") != 990001
+        or type(manifest.get("machine", {}).get("id")) is not int
+        or not 0 < manifest['machine']['id'] <= 2147483647
         or manifest.get("machine", {}).get("price_gp") != 100000
         or manifest.get("machine", {}).get("enabled") is not True
+        or manifest.get('machine', {}).get('kind') != 'activity'
         or not re.fullmatch(
             r"[0-9a-f]{64}", str(manifest.get("catalog_revision", ""))
         )
@@ -275,6 +278,8 @@ def package_client_registry(
     registry = _directory(registry, "client registry")
     stage = _directory(framework_stage, "framework client stage")
     support_dll = _file(support_dll, "capsule registry support DLL")
+    if SUPPORT_MARKER not in support_dll.read_bytes():
+        raise ClientPackageError('Update the shared capsule provider: activity posters and retained unit gifts require the current six-table build')
     output = _absolute(output)
     if output.exists():
         raise FileExistsError(f"Client package output already exists: {output}")
@@ -327,7 +332,10 @@ def package_client_registry(
         "\r\n"
         "Install: double-click Install-Client.cmd and select the folder containing GOnline.exe.\r\n"
         "Uninstall: close that client, double-click Uninstall-Client.cmd and select the same folder.\r\n"
-        "The server owner must install the matching server feature and MachineID 990001 data.\r\n"
+        f"The server owner must install the matching activity capsule data (MachineID {manifest['machine']['id']}).\r\n"
+        f"Find it under Activity capsule: page {manifest['placement']['page']}, slot {manifest['placement']['page_slot']}.\r\n"
+        "Rewards arrive in the native prize box; claim the permanent level-1 unit there.\r\n"
+        "C/B/A/S rank weights: 35/30/20/15. Exhausted ranks are removed and remaining weights renormalized.\r\n"
         "This player package contains no server address, account, database credential or player history.\r\n"
     ).encode("utf-8")
 

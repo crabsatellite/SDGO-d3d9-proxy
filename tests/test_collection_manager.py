@@ -30,6 +30,7 @@ class CollectionManagerTests(unittest.TestCase):
 
     def build_state(self):
         state = {'build_id': 'a' * 32,
+                 'machine_kind': 'activity',
                  'config_revision': storage.revision(storage.json_bytes(self.provider.config)),
                  'machine_id': 990001, 'eligible_roots': 1}
         storage.atomic(self.provider.state_file, storage.json_bytes(state))

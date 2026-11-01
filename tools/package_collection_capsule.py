@@ -165,6 +165,8 @@ def contents(repo: Path, stage: Path) -> dict[str, bytes]:
 
     for destination, relative in STAGE_FILES.items():
         add(destination, stage.joinpath(*relative.split("/")))
+    if b'SDGO_CAPSULE_REGISTRY_6TABLE_V2' not in files['framework/support/capsule-registry/capsule_catalog.dll']:
+        raise OwnerPackageError('The owner toolkit needs the current six-table capsule registry provider')
 
     owner_root = repo / "owner" / "collection_capsule"
     owner_python = sorted(owner_root.glob("*.py"), key=lambda path: path.name)
