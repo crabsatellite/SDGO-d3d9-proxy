@@ -26,6 +26,14 @@ local function Log(fmt, ...)
   SDGO_Log(string.format(fmt, unpack(arg)))
 end
 
+local function ProtectedCall(fn, ...)
+  local ok, err = pcall(fn, unpack(arg))
+  if not ok and SDGO_MissionAI_PcallError then
+    SDGO_MissionAI_PcallError()
+  end
+  return ok, err
+end
+
 -- Mission state lives in a global so a hot reload keeps it.
 local M = SDGO_MissionAI_State
 if not M then
@@ -90,7 +98,7 @@ function SearchLockPlayer(npcId)
   local result = SDGO_Original_SearchLockPlayer(npcId)
   if CFG.EnemiesTargetWingmen == 1 and MissionLive() then
     local ids, set = Wingmen()
-    if ids[1] and not set[npcId] then pcall(DivertToWingman, npcId, ids) end
+    if ids[1] and not set[npcId] then ProtectedCall(DivertToWingman, npcId, ids) end
   end
   return result
 end
@@ -134,7 +142,7 @@ if not SDGO_Original_PlayerWarp then SDGO_Original_PlayerWarp=PlayerWarp end
 function PlayerWarp(player, position, direction)
   local result=SDGO_Original_PlayerWarp(player,position,direction)
   if MissionLive() then
-    local ok,err=pcall(WarpWingmen,player,position,direction)
+    local ok,err=ProtectedCall(WarpWingmen,player,position,direction)
     if not ok then Log('wingman stage warp failed: %s',tostring(err)) end
   end
   return result

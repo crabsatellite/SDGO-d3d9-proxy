@@ -13,12 +13,14 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/sdgo_api.h"
 
 namespace
@@ -66,6 +68,15 @@ namespace
     int g_loadFailures = 0;
     int g_tickErrors = 0;
     bool g_disabled = false;
+    volatile LONG g_battleGeneration = 0;
+    volatile LONG g_battlePcallErrors = 0;
+    volatile LONG g_battleTickPcallErrors = 0;
+    volatile LONG g_battleLoadPcallErrors = 0;
+    volatile LONG g_battleNestedPcallErrors = 0;
+    volatile LONG g_battleTickCount = 0;
+    volatile LONG g_battleSuccessfulTickCount = 0;
+    volatile LONG g_nativeExceptionCount = 0;
+    volatile LONG g_lastNativeException = 0;
 
     FILETIME g_loadedScriptTime = {};
     FILETIME g_loadedManifestTime = {};
@@ -115,6 +126,7 @@ namespace
 
     constexpr size_t kModeRoom = 0x08;          // room data*
     constexpr size_t kModeRoomMaster = 0x61C;   // u8, local player is room master
+    constexpr size_t kModeRoomMode = 0x66;      // u16, room data: battle mode
     constexpr size_t kRoomHumansBegin = 0x1C;   // vector of 0x344-byte records
     constexpr size_t kRoomHumansEnd = 0x20;
     constexpr size_t kRoomAiBegin = 0x3C;
@@ -126,8 +138,19 @@ namespace
     constexpr size_t kRecordNpcData = 0x44;
     constexpr size_t kStartPointPos = 0x24;     // x, y, z floats
     constexpr size_t kUnitObjectId = 0x04;
+    constexpr size_t kUnitNode = 0x08;
+    constexpr size_t kUnitTeam = 0x20;
+    constexpr size_t kObjectHp = 0x38;
     constexpr size_t kUnitServerId = 0x2B68;
+    constexpr size_t kUnitLocalControl = 0x2B64;
+    constexpr size_t kUnitRemote = 0x2B65;
+    constexpr size_t kUnitMasterNpc = 0x3074;
+    constexpr size_t kUnitTargetObject = 0x3130;
     constexpr size_t kUnitNpcData = 0x320C;     // npc data*, name (wchar) at +5
+    constexpr size_t kUnitNpcDataId = 0x3238;
+    constexpr size_t kUnitAiEnabled = 0x326C;
+    constexpr size_t kNodePosition = 0x88;
+    constexpr size_t kUnitManagerPlayerCount = 0x8C;
     constexpr size_t kSlotName = 0x08;          // std::wstring in the player slot
     constexpr size_t kModeIsNetworkSlot = 0x1C / sizeof(void*);
 
@@ -144,6 +167,7 @@ namespace
     using AddAiUnitFn = void(__thiscall*)(void* um, uint8_t* unit);
     using CalculateTeamFn = void(__thiscall*)(void* um);
     using ModeVirtualFn = bool(__thiscall*)(uint8_t* mode);
+    using FindObjectFn = void*(__thiscall*)(void* um, uint32_t objectId);
 
     struct GameCalls
     {
@@ -160,11 +184,69 @@ namespace
         WStringAssignFn assign;
         AddAiUnitFn addAiUnit;
         CalculateTeamFn calculateTeam;
+        FindObjectFn findObject;
     };
     GameCalls g_game = {};
 
     std::vector<uint32_t> g_wingmen; // object ids of the AI participants of this mission
     std::vector<uint32_t> g_localWingmen; // only this client's simulated participants
+
+    struct ObservedWingman
+    {
+        uint32_t recordIndex = 0;
+        uint32_t pilotId = 0;
+        uint32_t objectId = 0;
+        uint8_t* spawnedUnit = nullptr;
+        bool local = false;
+        bool hasPosition = false;
+        bool moved = false;
+        float lastX = 0.0f;
+        float lastY = 0.0f;
+        float lastZ = 0.0f;
+    };
+
+    struct RecordSpan
+    {
+        uint8_t* first = nullptr;
+        uint32_t count = 0;
+        bool valid = false;
+    };
+
+    std::vector<ObservedWingman> g_observedWingmen;
+    uint8_t* g_observedMode = nullptr;
+    SdgoMissionAiClientSnapshotV1 g_observerSnapshot = {};
+    volatile LONG g_observerSnapshotVersion = 0;
+    SRWLOCK g_observerSnapshotLock = SRWLOCK_INIT;
+
+    uint32_t PointerValue(const void* pointer)
+    {
+        return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pointer));
+    }
+
+    RecordSpan ReadRecordSpan(uint8_t* room, size_t begin, size_t end)
+    {
+        RecordSpan span;
+        if (!room)
+            return span;
+        uint8_t* first = *reinterpret_cast<uint8_t**>(room + begin);
+        uint8_t* last = *reinterpret_cast<uint8_t**>(room + end);
+        if (!first && !last) {
+            span.valid = true;
+            return span;
+        }
+        const uintptr_t firstAddress = reinterpret_cast<uintptr_t>(first);
+        const uintptr_t lastAddress = reinterpret_cast<uintptr_t>(last);
+        if (!first || !last || lastAddress < firstAddress ||
+            (lastAddress - firstAddress) % kRecordSize != 0)
+            return span;
+        const uintptr_t count = (lastAddress - firstAddress) / kRecordSize;
+        if (count > 12)
+            return span;
+        span.first = first;
+        span.count = static_cast<uint32_t>(count);
+        span.valid = true;
+        return span;
+    }
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
@@ -175,10 +257,336 @@ namespace
         return static_cast<int>((last - first) / kRecordSize);
     }
 
+    ObservedWingman* FindObservedWingman(
+        uint32_t recordIndex,
+        uint32_t pilotId)
+    {
+        for (ObservedWingman& wingman : g_observedWingmen)
+            if (wingman.recordIndex == recordIndex &&
+                wingman.pilotId == pilotId)
+                return &wingman;
+        return nullptr;
+    }
+
+    void PublishObserverSnapshot(const SdgoMissionAiClientSnapshotV1& snapshot)
+    {
+        AcquireSRWLockExclusive(&g_observerSnapshotLock);
+        InterlockedIncrement(&g_observerSnapshotVersion);
+        g_observerSnapshot = snapshot;
+        InterlockedIncrement(&g_observerSnapshotVersion);
+        ReleaseSRWLockExclusive(&g_observerSnapshotLock);
+    }
+
+    void ResetBattleCounters()
+    {
+        InterlockedExchange(&g_battlePcallErrors, 0);
+        InterlockedExchange(&g_battleTickPcallErrors, 0);
+        InterlockedExchange(&g_battleLoadPcallErrors, 0);
+        InterlockedExchange(&g_battleNestedPcallErrors, 0);
+        InterlockedExchange(&g_battleTickCount, 0);
+        InterlockedExchange(&g_battleSuccessfulTickCount, 0);
+        InterlockedExchange(&g_nativeExceptionCount, 0);
+        InterlockedExchange(&g_lastNativeException, 0);
+    }
+
+    void BeginMissionObservation(uint8_t* mode)
+    {
+        g_observedMode = mode;
+        g_observedWingmen.clear();
+        ResetBattleCounters();
+        InterlockedIncrement(&g_battleGeneration);
+    }
+
+    void CountPcallError(bool tick)
+    {
+        if (InterlockedCompareExchange(&g_battleGeneration, 0, 0) == 0)
+            return;
+        InterlockedIncrement(&g_battlePcallErrors);
+        InterlockedIncrement(tick ? &g_battleTickPcallErrors
+                                  : &g_battleLoadPcallErrors);
+    }
+
+    void CountNestedPcallError()
+    {
+        if (InterlockedCompareExchange(
+                &g_battleGeneration,
+                0,
+                0) == 0)
+            return;
+        InterlockedIncrement(&g_battlePcallErrors);
+        InterlockedIncrement(&g_battleNestedPcallErrors);
+    }
+
+    void RecordNativeException(DWORD code)
+    {
+        InterlockedIncrement(&g_nativeExceptionCount);
+        InterlockedExchange(
+            &g_lastNativeException,
+            static_cast<LONG>(code));
+    }
+
+    SdgoMissionAiClientSnapshotV1 BuildObserverSnapshot(uint8_t* mode)
+    {
+        SdgoMissionAiClientSnapshotV1 snapshot = {};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;
+        snapshot.battle_generation = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battleGeneration, 0, 0));
+        snapshot.last_native_update_tick = GetTickCount();
+        snapshot.lua_pcall_error_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battlePcallErrors, 0, 0));
+        snapshot.lua_tick_pcall_error_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battleTickPcallErrors, 0, 0));
+        snapshot.lua_load_pcall_error_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battleLoadPcallErrors, 0, 0));
+        snapshot.lua_nested_pcall_error_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(
+                &g_battleNestedPcallErrors,
+                0,
+                0));
+        snapshot.lua_tick_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battleTickCount, 0, 0));
+        snapshot.lua_successful_tick_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(
+                &g_battleSuccessfulTickCount,
+                0,
+                0));
+        snapshot.native_exception_count = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_nativeExceptionCount, 0, 0));
+        snapshot.last_native_exception = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_lastNativeException, 0, 0));
+        snapshot.mission_vtable = PointerValue(g_game.missionVtable);
+        snapshot.find_object_available = g_game.findObject ? 1 : 0;
+        snapshot.mission_ai_disabled = g_disabled ? 1 : 0;
+        if (!mode)
+            return snapshot;
+
+        snapshot.mode_object = PointerValue(mode);
+        const void* modeVtable =
+            *reinterpret_cast<const void* const*>(mode);
+        snapshot.mode_vtable = PointerValue(modeVtable);
+        snapshot.exact_plain_mission =
+            modeVtable == g_game.missionVtable ? 1 : 0;
+        snapshot.mode_class = snapshot.exact_plain_mission
+                                  ? SDGO_MISSION_AI_MODE_CLASS_PLAIN_MISSION
+                                  : SDGO_MISSION_AI_MODE_CLASS_OTHER;
+        if (!snapshot.exact_plain_mission ||
+            mode != g_observedMode)
+            return snapshot;
+
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        void* unitManager =
+            g_game.unitManager ? *g_game.unitManager : nullptr;
+        snapshot.room_object = PointerValue(room);
+        snapshot.unit_manager_object = PointerValue(unitManager);
+        snapshot.local_is_host = mode[kModeRoomMaster] != 0 ? 1 : 0;
+        snapshot.network_game =
+            g_game.isNetwork && g_game.isNetwork() ? 1 : 0;
+        snapshot.local_is_observer =
+            unitManager && g_game.isObserver &&
+                    g_game.isObserver(unitManager)
+                ? 1
+                : 0;
+        if (!room || !unitManager || !g_game.findObject)
+            return snapshot;
+
+        const RecordSpan humans =
+            ReadRecordSpan(room, kRoomHumansBegin, kRoomHumansEnd);
+        const RecordSpan ai =
+            ReadRecordSpan(room, kRoomAiBegin, kRoomAiEnd);
+        snapshot.room_records_valid =
+            humans.valid && ai.valid ? 1 : 0;
+        if (!snapshot.room_records_valid)
+            return snapshot;
+
+        snapshot.room_mode =
+            *reinterpret_cast<const uint16_t*>(room + kModeRoomMode);
+        snapshot.human_participant_count = humans.count;
+        snapshot.ai_record_count = ai.count;
+        snapshot.spawned_wingman_count =
+            static_cast<uint32_t>(g_observedWingmen.size());
+        snapshot.unit_manager_player_count =
+            *reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(unitManager) +
+                kUnitManagerPlayerCount);
+        for (const ObservedWingman& wingman : g_observedWingmen)
+            if (wingman.local)
+                ++snapshot.local_wingman_count;
+        if (snapshot.room_mode != 5 &&
+            snapshot.room_mode != 8 &&
+            snapshot.room_mode != 10)
+            return snapshot;
+
+        for (uint32_t index = 0; index < ai.count; ++index) {
+            uint8_t* record = ai.first + index * kRecordSize;
+            SdgoMissionAiParticipantSnapshotV1& copied =
+                snapshot.participants[index];
+            copied.pilot_id =
+                *reinterpret_cast<const uint32_t*>(
+                    record + kRecordServerId);
+            copied.connection_id =
+                *reinterpret_cast<const uint32_t*>(
+                    record + kRecordConnection);
+            copied.record_npc_id =
+                *reinterpret_cast<const uint32_t*>(
+                    record + kRecordNpcData);
+            copied.record_team = record[kRecordTeam];
+
+            ObservedWingman* observed =
+                FindObservedWingman(index, copied.pilot_id);
+            if (!observed)
+                continue;
+            copied.spawned = 1;
+            copied.object_id = observed->objectId;
+
+            uint8_t* unit = static_cast<uint8_t*>(
+                g_game.findObject(
+                    unitManager,
+                    observed->objectId));
+            copied.valid_registered_object =
+                unit &&
+                        observed->objectId != 0 &&
+                        unit == observed->spawnedUnit &&
+                        *reinterpret_cast<const uint32_t*>(
+                            unit + kUnitObjectId) ==
+                            observed->objectId
+                    ? 1
+                    : 0;
+            if (!copied.valid_registered_object)
+                continue;
+
+            copied.unit_server_id =
+                *reinterpret_cast<const uint32_t*>(
+                    unit + kUnitServerId);
+            copied.native_npc_id =
+                *reinterpret_cast<const uint32_t*>(
+                    unit + kUnitNpcDataId);
+            copied.target_object_id =
+                *reinterpret_cast<const uint32_t*>(
+                    unit + kUnitTargetObject);
+            copied.current_hp =
+                *reinterpret_cast<const int32_t*>(
+                    unit + kObjectHp);
+            copied.unit_team = unit[kUnitTeam];
+            copied.local_control =
+                unit[kUnitLocalControl] != 0 ? 1 : 0;
+            copied.remote_copy =
+                unit[kUnitRemote] != 0 ? 1 : 0;
+            copied.master_npc =
+                unit[kUnitMasterNpc] != 0 ? 1 : 0;
+            copied.ai_enabled =
+                unit[kUnitAiEnabled] != 0 ? 1 : 0;
+            copied.mapping_valid =
+                copied.unit_server_id == copied.pilot_id &&
+                        copied.native_npc_id ==
+                            copied.record_npc_id &&
+                        copied.unit_team == copied.record_team
+                    ? 1
+                    : 0;
+
+            const uint8_t* node =
+                *reinterpret_cast<uint8_t* const*>(
+                    unit + kUnitNode);
+            if (node) {
+                const float* position =
+                    reinterpret_cast<const float*>(
+                        node + kNodePosition);
+                const float x = position[0];
+                const float y = position[1];
+                const float z = position[2];
+                if (std::isfinite(x) &&
+                    std::isfinite(y) &&
+                    std::isfinite(z)) {
+                    copied.position_valid = 1;
+                    copied.position_x = x;
+                    copied.position_y = y;
+                    copied.position_z = z;
+                    if (observed->hasPosition) {
+                        const float dx = x - observed->lastX;
+                        const float dy = y - observed->lastY;
+                        const float dz = z - observed->lastZ;
+                        if (dx * dx + dy * dy + dz * dz >
+                            0.0001f)
+                            observed->moved = true;
+                    }
+                    observed->hasPosition = true;
+                    observed->lastX = x;
+                    observed->lastY = y;
+                    observed->lastZ = z;
+                }
+            }
+            copied.movement_observed =
+                observed->moved ? 1 : 0;
+
+            if (copied.target_object_id) {
+                const uint8_t* target =
+                    static_cast<const uint8_t*>(
+                        g_game.findObject(
+                            unitManager,
+                            copied.target_object_id));
+                if (target &&
+                    *reinterpret_cast<const uint32_t*>(
+                        target + kUnitObjectId) ==
+                        copied.target_object_id) {
+                    copied.target_valid = 1;
+                    copied.target_hp =
+                        *reinterpret_cast<const int32_t*>(
+                            target + kObjectHp);
+                }
+            }
+        }
+        snapshot.active = 1;
+        return snapshot;
+    }
+
+    bool GuardedRefreshObserver(uint8_t* mode, DWORD* code)
+    {
+        __try {
+            PublishObserverSnapshot(
+                BuildObserverSnapshot(mode));
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            *code = GetExceptionCode();
+            return false;
+        }
+    }
+
+    bool CopyObserverSnapshot(
+        SdgoMissionAiClientSnapshotV1* output)
+    {
+        if (!output ||
+            output->size < sizeof(*output) ||
+            output->version !=
+                SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION)
+            return false;
+        {
+            // The export may be read off-thread. A sequence retry around a
+            // non-atomic struct copy is still a C++ data race; synchronize the
+            // copy itself, and never hold this lock while reading game memory.
+            AcquireSRWLockShared(&g_observerSnapshotLock);
+            SdgoMissionAiClientSnapshotV1 snapshot =
+                g_observerSnapshot;
+            ReleaseSRWLockShared(&g_observerSnapshotLock);
+            if (snapshot.size == 0) {
+                snapshot.size = sizeof(snapshot);
+                snapshot.version =
+                    SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION;
+            }
+            if (snapshot.active &&
+                GetTickCount() -
+                        snapshot.last_native_update_tick >
+                    3000)
+                snapshot.active = 0;
+            *output = snapshot;
+            return true;
+        }
+    }
+
     void SpawnAiParticipants(uint8_t* mode)
     {
         g_wingmen.clear();
         g_localWingmen.clear();
+        g_observedWingmen.clear();
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
@@ -230,6 +638,15 @@ namespace
             g_wingmen.push_back(objectId);
             if (local)
                 g_localWingmen.push_back(objectId);
+            ObservedWingman observed;
+            observed.recordIndex = static_cast<uint32_t>(k);
+            observed.pilotId =
+                *reinterpret_cast<uint32_t*>(
+                    record + kRecordServerId);
+            observed.objectId = objectId;
+            observed.spawnedUnit = unit;
+            observed.local = local;
+            g_observedWingmen.push_back(observed);
             g_api->Log(g_mod, SDGO_LOG_INFO, "AI participant %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)),
                        static_cast<unsigned long>(objectId), static_cast<unsigned long>(npcData), team, slot,
@@ -253,18 +670,28 @@ namespace
     {
         // Rule initialization may warp humans before spawning the new wingmen.
         // Never expose the previous mission's reused object ids to that callback.
-        if (*reinterpret_cast<const void* const*>(mode) == g_game.missionVtable) {
+        const bool exactMission =
+            *reinterpret_cast<const void* const*>(mode) ==
+            g_game.missionVtable;
+        if (exactMission) {
             g_wingmen.clear();
             g_localWingmen.clear();
+            BeginMissionObservation(mode);
         }
         g_game.originalInit(mode);
         // CAINormalGameMode and the other AI modes derive from CMissionMode and spawn
         // their AI participants themselves: only a plain co-op mission is handled here.
-        if (*reinterpret_cast<const void* const*>(mode) != g_game.missionVtable)
+        if (!exactMission)
             return;
         DWORD code = 0;
-        if (!GuardedSpawn(mode, &code))
+        if (!GuardedSpawn(mode, &code)) {
+            RecordNativeException(code);
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while spawning AI participants", code);
+        }
+        if (!GuardedRefreshObserver(mode, &code)) {
+            RecordNativeException(code);
+            g_api->Log(g_mod, SDGO_LOG_WARN, "exception %08lX while observing mission participants", code);
+        }
     }
 
     // ---- functions exposed to mission_ai.lua -------------------------------
@@ -298,6 +725,15 @@ namespace
         return static_cast<int>(g_localWingmen.size());
     }
 
+    // Called by the Lua wrapper only after one of its nested protected calls
+    // returns an error. This records the real pcall outcome; it does not create
+    // or alter any game state.
+    int __cdecl Lua_PcallError(lua_State*)
+    {
+        CountNestedPcallError();
+        return 0;
+    }
+
     // ---- loading Lua source into the game's state --------------------------
 
     struct Chunk
@@ -321,8 +757,11 @@ namespace
         int top = g_lua.gettop(L);
         Chunk chunk = {code.data(), code.size()};
         int status = g_lua.load(L, ReadChunk, &chunk, name);
-        if (status == 0)
+        if (status == 0) {
             status = g_lua.pcall(L, 0, 0, 0);
+            if (status != 0)
+                CountPcallError(false);
+        }
         if (status != 0) {
             const char* message = g_lua.tostring(L, -1);
             g_api->Log(g_mod, SDGO_LOG_ERROR, "%s: %s", name, message ? message : "unknown Lua error");
@@ -372,6 +811,10 @@ namespace
         SetGlobalFunction(L, "SDGO_Now", Lua_Now);
         SetGlobalFunction(L, "SDGO_Wingmen", Lua_Wingmen);
         SetGlobalFunction(L, "SDGO_LocalWingmen", Lua_LocalWingmen);
+        SetGlobalFunction(
+            L,
+            "SDGO_MissionAI_PcallError",
+            Lua_PcallError);
         if (!RunChunk(L, g_configChunk, "=mission_ai config"))
             return false;
         std::string chunkName = "@" + g_scriptPath;
@@ -450,8 +893,10 @@ namespace
         g_lua.pushMode(L, mode);
         g_lua.pushnumber(L, static_cast<double>(now));
         g_lua.pushnumber(L, g_session);
+        InterlockedIncrement(&g_battleTickCount);
         int status = g_lua.pcall(L, 3, 0, 0);
         if (status != 0) {
+            CountPcallError(true);
             const char* message = g_lua.tostring(L, -1);
             g_api->Log(g_mod, SDGO_LOG_ERROR, "SDGO_MissionAI_Tick: %s", message ? message : "unknown Lua error");
             if (++g_tickErrors >= 30) {
@@ -460,6 +905,8 @@ namespace
             }
         } else {
             g_tickErrors = 0;
+            InterlockedIncrement(
+                &g_battleSuccessfulTickCount);
         }
         g_lua.settop(L, top);
     }
@@ -478,12 +925,19 @@ namespace
     void __fastcall MissionUpdate(void* mode, void* /*edx*/)
     {
         g_originalUpdate(mode);
-        if (g_disabled)
-            return;
         DWORD code = 0;
-        if (!GuardedTick(mode, &code)) {
-            g_disabled = true;
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX in mission tick; mission AI disabled until restart", code);
+        if (!g_disabled) {
+            if (!GuardedTick(mode, &code)) {
+                g_disabled = true;
+                RecordNativeException(code);
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX in mission tick; mission AI disabled until restart", code);
+            }
+        }
+        if (!GuardedRefreshObserver(
+                static_cast<uint8_t*>(mode),
+                &code)) {
+            RecordNativeException(code);
+            g_api->Log(g_mod, SDGO_LOG_WARN, "exception %08lX while observing mission update", code);
         }
     }
 
@@ -572,6 +1026,17 @@ namespace
     }
 }
 
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiClientGetSnapshotV1(
+    SdgoMissionAiClientSnapshotV1* snapshot)
+{
+    __try {
+        return CopyObserverSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 SDGO_MOD_ENTRY
 {
     g_api = api;
@@ -593,6 +1058,15 @@ SDGO_MOD_ENTRY
                  Bind(g_game.calculateTeam, "um.calculate_team");
     if (!bound)
         return 0;
+    g_game.findObject = reinterpret_cast<FindObjectFn>(
+        api->Symbol(mod, "um.find_object"));
+    if (!g_game.findObject)
+        api->Log(
+            mod,
+            SDGO_LOG_WARN,
+            "read-only mission GameTest object validation is unavailable");
+    PublishObserverSnapshot(
+        BuildObserverSnapshot(nullptr));
 
     std::wstring directory = api->ModDirectory(mod);
     g_scriptPathW = directory + L"\\mission_ai.lua";
