@@ -116,7 +116,7 @@ struct DefencePlan {
     Vec3 shieldThreat;
     uint32_t routeTarget=0;
     ULONGLONG at=0;
-    bool threatened=false,shielding=false;
+    bool threatened=false,shielding=false,meleeBusy=false,specialBusy=false,hurt=false;
     bool shieldHitKnown=false;uint8_t shieldHitType=0;
 };
 struct Actor {
@@ -138,13 +138,26 @@ struct Actor {
     float cueAngle=0;
     int specialSlotLease=-1;
     DefencePlan defence;
-    ULONGLONG turnedAt=0,defenceRepathAt=0;
-    bool defenceMoveOwned=false;
+    Vec3 defenceAnchor;
+    ULONGLONG turnedAt=0,defenceRepathAt=0,defenceEpisodeAt=0;
+    bool defenceMoveOwned=false,defenceEpisode=false;
     uint32_t expectedSpecialWeapon=0;
     ULONGLONG expectedSpecialAt=0;
     bool specialAcknowledged=false;
     ULONGLONG specialAcknowledgedAt=0;
+    uint64_t specialAcknowledgedSequence=0;
     uint64_t specialFinished=0;
+    uint64_t thinkSerial=0;
+    uint64_t coverQueryFrame=0;
+    bool coverQueryUsed=false;
+    struct CoverSearch {
+        uint32_t target=0,weapon=0;
+        ULONGLONG started=0;
+        int sample=0,side=0,exposure=0;
+        bool active=false;
+        float score=1.0e9f;
+        Vec3 hide,peek;
+    } coverSearch;
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
@@ -332,6 +345,12 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
     a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;a.suppressMelee=false;a.path.clear();
     a.defenceMoveOwned=false;a.defence={};
 }
+void AdvancePath(uint8_t* unit,Actor& a) {
+    if(a.path.empty()) return;
+    const Vec3 here=Position(unit);
+    while(a.waypoint<a.path.size()&&battle_ai::Length(a.path[a.waypoint]-here)<(a.pathRanged?25:100)) ++a.waypoint;
+    if(a.waypoint>=a.path.size()) a.path.clear();
+}
 void FollowPath(uint8_t* unit,Actor& a) {
     if(a.path.empty()) return;
     auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
@@ -346,9 +365,8 @@ void FollowPath(uint8_t* unit,Actor& a) {
         // cancelling the movement belonging to their active state.
         a.path.clear();return;
     }
-    Vec3 here=Position(unit);
-    while(a.waypoint<a.path.size() && battle_ai::Length(a.path[a.waypoint]-here)<(a.pathRanged?25:100)) ++a.waypoint;
-    if(a.waypoint>=a.path.size()) { a.path.clear(); return; }
+    AdvancePath(unit,a);
+    if(a.path.empty()) return;
     Vec3 current=*reinterpret_cast<Vec3*>(unit+0x3078);
     if(battle_ai::Length(current-a.path[a.waypoint])>1) g_setGoal(unit,&a.path[a.waypoint],1);
 }
@@ -377,27 +395,33 @@ struct Observation {
 };
 void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     const auto previousMovement=actor.defence.movement;
-    bool continuing=actor.defence.threatened&&now-actor.defence.at<250;
     actor.defence={};
-    if(!g_runtime.enabled||g_runtime.difficulty<1) return;
+    if(!g_runtime.enabled||g_runtime.difficulty<1) {actor.defenceEpisode=false;return;}
+    if(actor.defenceEpisode&&now-actor.defenceEpisodeAt>1000) actor.defenceEpisode=false;
     auto& plan=actor.defence;plan.at=now;
+    plan.meleeBusy=o.caps.meleeBusy;plan.specialBusy=o.caps.specialBusy;plan.hurt=o.hurt;
     Vec3 forward=*reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(g_current+8)+0x6C);
     forward=battle_ai::Horizontal(forward);
     if(!battle_ai::Finite(forward)||battle_ai::Length(forward)<0.5) return;
+    float effectiveRange=0;
+    for(const auto& w:o.caps.weapons)
+        if(w.valid&&w.slot>=0&&w.slot<3&&std::isfinite(w.range)&&w.range>effectiveRange) effectiveRange=w.range;
     double nearest=1e30;auto add=[&](uint32_t id,Vec3 point,float weight,bool melee,uint8_t hitType,bool hitKnown) {
-        if(!battle_ai::Finite(point)||battle_ai::Length(point-o.pos)<1) return;
-        auto direction=battle_ai::Horizontal(point-o.pos);
-        double facing=battle_ai::Dot(forward,direction);
-        if(facing<-0.12||(continuing&&facing<0.995)||melee) plan.threatened=true;
+        if(!battle_ai::Finite(point)) return;
+        const double distance=battle_ai::Length(point-o.pos);
+        if(!std::isfinite(distance)||distance<1) return;
         if(plan.count<32) plan.threats[plan.count++]={point,weight};
-        auto distance=battle_ai::Length(point-o.pos);
         if(!plan.routeTarget) plan.routeTarget=id;
         if(melee&&distance<nearest) {nearest=distance;plan.shieldThreat=point;plan.shielding=true;plan.shieldHitType=hitType;plan.shieldHitKnown=hitKnown;}
     };
     for(size_t i=0;i<o.count;++i) {
         const auto& t=o.targets[i];if(!t.visible||!t.attackable||t.hp<=0) continue;
-        bool melee=t.selectedTarget==o.id&&(t.meleeTracking||t.meleeSwinging)&&t.distance<600;
-        add(t.id,t.ground,melee?1.8f:(t.selectedTarget==o.id?1.2f:1.0f),melee,t.hitType,t.hitKnown);
+        bool engaged=t.selectedTarget==o.id&&(t.rangedFiring||t.meleeTracking||t.meleeSwinging);
+        bool melee=engaged&&(t.meleeTracking||t.meleeSwinging)&&t.distance<600;
+        // A distant idle opponent remains observable to targeting, but does not
+        // force this bot to turn side-on or abandon its current engagement.
+        if(!engaged&&t.distance>effectiveRange) continue;
+        add(t.id,t.ground,melee?1.8f:(engaged?1.2f:1.0f),melee,t.hitType,t.hitKnown);
     }
     auto received=g_incoming.find(g_current);
     if(received!=g_incoming.end()) for(const auto& incoming:received->second)
@@ -409,10 +433,32 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     auto facing=battle_ai::DefensiveFacing(o.pos,forward,plan.threats,plan.count);
     plan.movement={o.pos,facing,false};
     if(facing.rearRisk>0.9||facing.rearExposure>0.00001) {
+        if(!actor.defenceEpisode) {
+            actor.defenceEpisode=true;actor.defenceAnchor=o.pos;
+        }
+        actor.defenceEpisodeAt=now;
         if(now>=actor.defenceRepathAt||(actor.defenceMoveOwned&&actor.path.empty()))
             plan.movement=battle_ai::DefensivePosition(o.pos,forward,plan.threats,plan.count);
         else if(actor.defenceMoveOwned&&!actor.path.empty()) {
             plan.movement.destination=previousMovement.destination;plan.movement.relocate=true;
+        }
+        if(plan.movement.relocate) {
+            const float radius=g_runtime.difficulty>=2?1200.0f:480.0f;
+            Vec3 currentOffset=o.pos-actor.defenceAnchor;currentOffset.y=0;
+            Vec3 destinationOffset=plan.movement.destination-actor.defenceAnchor;destinationOffset.y=0;
+            double currentDistance=battle_ai::Length(currentOffset);
+            double destinationDistance=battle_ai::Length(destinationOffset);
+            if(!std::isfinite(currentDistance)||!std::isfinite(destinationDistance)||currentDistance>=radius) {
+                plan.movement.destination=o.pos;plan.movement.relocate=false;
+            } else if(destinationDistance>radius) {
+                float scale=radius/static_cast<float>(destinationDistance);
+                plan.movement.destination.x=actor.defenceAnchor.x+destinationOffset.x*scale;
+                plan.movement.destination.z=actor.defenceAnchor.z+destinationOffset.z*scale;
+            }
+            Vec3 remaining=plan.movement.destination-o.pos;remaining.y=0;
+            if(plan.movement.relocate&&battle_ai::Length(remaining)<25) {
+                plan.movement.destination=o.pos;plan.movement.relocate=false;
+            }
         }
     }
     // The relocation's destination may have a different optimal angle. While
@@ -428,6 +474,7 @@ bool CaptureUnsafe(Observation& o) {
     if(!hasWeapon) return false;
     uint8_t* unit=g_current;
     auto& actor=ActorFor(unit);
+    AdvancePath(unit,actor);
     ULONGLONG now=GetTickCount64();
     o.id=*reinterpret_cast<uint32_t*>(unit+4);o.generation=actor.generation;
     o.hp=*reinterpret_cast<int*>(unit+0x38);o.pos=Position(unit);
@@ -550,7 +597,9 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"hp",o.hp);Number(L,"unitId",o.caps.unitId);Number(L,"alternate",o.caps.alternate);Number(L,"selectedSlot",o.caps.selectedSlot);
     Number(L,"moving",o.moving);Number(L,"hurtRecently",o.hurtRecently);
     Number(L,"routeActive",!ActorFor(g_current).path.empty());
-    Number(L,"defenceMoving",ActorFor(g_current).defenceMoveOwned&&!ActorFor(g_current).path.empty());
+    const auto& observedActor=ActorFor(g_current);
+    Number(L,"defenceMoving",(observedActor.defenceMoveOwned&&!observedActor.path.empty())||
+        (observedActor.defence.movement.relocate&&!o.hurt&&!o.caps.meleeBusy&&!o.caps.specialBusy));
     Number(L,"hurt",o.hurt);
     Number(L,"boostFraction",o.caps.boostFraction);
     // Lua SetJumpEnable writes +3291. This is permission for native automatic
@@ -558,6 +607,8 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"canJump",g_current[0x3291]!=0);
     Number(L,"meleeBusy",o.caps.meleeBusy);Number(L,"specialBusy",o.caps.specialBusy);
     Number(L,"specialFinished",static_cast<double>(ActorFor(g_current).specialFinished));
+    Number(L,"specialAcknowledged",ActorFor(g_current).specialAcknowledged);
+    Number(L,"specialAckSequence",static_cast<double>(ActorFor(g_current).specialAcknowledgedSequence));
     Number(L,"rangedBusy",o.rangedBusy);
     auto attackFsm=*reinterpret_cast<uint8_t**>(g_current+0x9CC);
     Number(L,"moveCancelOpen",attackFsm&&attackFsm[0xB38]==1);
@@ -700,8 +751,11 @@ int __cdecl ProfilePreviousSlot(lua_State* L) {
 }
 int __cdecl BoundSlot(lua_State* L) {
     battle_ai::native::Capabilities caps={};
-    int slot=Owned(g_current)&&battle_ai::native::ReadCapabilities(g_current,caps)?caps.selectedSlot:-1;
-    g_lua.pushnumber(L,slot);return 1;
+    const bool known=Owned(g_current)&&battle_ai::native::ReadCapabilities(g_current,caps);
+    int mask=known?0:-1;
+    if(known) for(unsigned i=0;i<3;++i) if(caps.weapons[i].valid) mask|=1<<i;
+    g_lua.pushnumber(L,known?caps.selectedSlot:-1);g_lua.pushnumber(L,mask);
+    g_lua.pushnumber(L,known&&caps.specialBusy?1:0);return 3;
 }
 bool QueryRoute(uint8_t* nav,uint32_t id,Vec3 from,Vec3 to,Vec3** points,uint32_t* count) {
     __try { *points=g_route(nav,id,from,to,nullptr,count);return true; }
@@ -723,8 +777,8 @@ bool LoadRouteUnsafe(uint32_t target,const Vec3* lastSeen) {
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
     auto& a=ActorFor(g_current);
     a.path.clear(); // a failed repath must never resurrect its previous goal
-    auto other=FindObject(target);
-    if(!other||*reinterpret_cast<int*>(other+0x38)<=0) return false;
+    auto other=lastSeen?nullptr:FindObject(target);
+    if(!lastSeen&&(!other||*reinterpret_cast<int*>(other+0x38)<=0)) return false;
     auto nav=*reinterpret_cast<uint8_t**>(*g_document+0x8364);
     if(!nav) return false;
     uint32_t count=0;
@@ -794,21 +848,41 @@ int __cdecl Cover(lua_State* L) {
                 if(clear(target,c+offset)) ++count;
             return count;
         };
-        Vec3 hide={},peek={};float best=1.0e9f;int exposure=0;
-        for(int sign:{-1,1}) for(int tucked=0;tucked<=2;++tucked) {
-            Vec3 h=here+side*static_cast<float>(sign*tucked*100);
-            if(exposed(h)>1) continue;
-            for(int step=1;step<=5;++step) {
-                Vec3 p=h+side*static_cast<float>(-sign*step*70);
-                if(!clear(p+muzzle,target)) continue;
-                int n=exposed(p);if(n==0||n>3) continue;
-                float score=static_cast<float>(battle_ai::Length(h-here)+battle_ai::Length(p-h))*0.05f+n*100;
-                if(g_lua.gettop(L)>=5 && g_lua.tonumber(L,5)!=sign) score+=15;
-                if(score<best) {best=score;hide=h;peek=p;exposure=n;}
-                break; // nearest fireable edge, not a broad open destination
+        auto& actor=ActorFor(self);auto& search=actor.coverSearch;
+        auto record=fsm?*reinterpret_cast<uint8_t**>(fsm+0x248):nullptr;
+        uint32_t weapon=record?*reinterpret_cast<uint32_t*>(record):0;
+        int preferred=g_lua.gettop(L)>=5?static_cast<int>(g_lua.tonumber(L,5)):0;
+        auto now=GetTickCount64();
+        if(actor.coverQueryUsed&&actor.coverQueryFrame==actor.thinkSerial) {Number(L,"pending",1);return 1;}
+        actor.coverQueryFrame=actor.thinkSerial;actor.coverQueryUsed=true;
+        if(!search.active||search.target!=targetId||search.weapon!=weapon||search.side!=preferred||now-search.started>500) {
+            search={};search.active=true;search.target=targetId;search.weapon=weapon;
+            search.side=preferred;search.started=now;
+        }
+        // One hide candidate per native Think, at most 35 search rays plus 11
+        // final validation rays. Ordinary combat continues while search is pending.
+        const int index=search.sample++,sign=index<3?-1:1,tucked=index%3;
+        Vec3 h=here+side*static_cast<float>(sign*tucked*100);
+        if(exposed(h)<=1) for(int step=1;step<=5;++step) {
+            Vec3 p=h+side*static_cast<float>(-sign*step*70);
+            if(!clear(p+muzzle,target)) continue;
+            int n=exposed(p);if(n==0||n>3) continue;
+            float score=static_cast<float>(battle_ai::Length(h-here)+battle_ai::Length(p-h))*0.05f+n*100;
+            if(preferred&&preferred!=sign) score+=15;
+            if(score<search.score) {search.score=score;search.hide=h;search.peek=p;search.exposure=n;}
+            break;
+        }
+        if(search.sample<6) {Number(L,"pending",1);return 1;}
+        search.active=false;
+        // Candidate points may be several frames old. Revalidate against the
+        // current target before granting a cover movement/shot opportunity.
+        if(search.score<1.0e9f&&battle_ai::Length(search.hide-here)<=500&&battle_ai::Length(search.peek-here)<=850&&
+           exposed(search.hide)<=1&&clear(search.peek+muzzle,target)) {
+            const int exposure=exposed(search.peek);
+            if(exposure>0&&exposure<=3) {
+                Number(L,"valid",1);Vector(L,"hide",search.hide);Vector(L,"peek",search.peek);Number(L,"exposure",exposure);
             }
         }
-        if(best<1.0e9f) {Number(L,"valid",1);Vector(L,"hide",hide);Vector(L,"peek",peek);Number(L,"exposure",exposure);}
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
     return 1;
 }
@@ -819,20 +893,27 @@ bool WantsAim(uint8_t* unit) {
     return g_runtime.enabled&&g_runtime.aim&&(g_runtime.generic||g_runtime.difficulty==1)&&Owned(unit)&&!g_preparationFault;
 }
 Vec3 ShieldDirection(uint8_t* unit,const DefencePlan& plan,Vec3 current) {
+    if(!plan.shielding) return plan.movement.facing.direction;
     auto shield=battle_ai::native::ReadShield(unit);
-    if(!plan.shielding||!shield.intact||(shield.type!=0&&(!plan.shieldHitKnown||shield.type!=plan.shieldHitType))) return plan.movement.facing.direction;
-    Vec3 toward=battle_ai::Horizontal(plan.shieldThreat-Position(unit));
+    if(!shield.intact||(shield.type!=0&&(!plan.shieldHitKnown||shield.type!=plan.shieldHitType))) return plan.movement.facing.direction;
+    Vec3 position=Position(unit);
+    Vec3 toward=battle_ai::Horizontal(plan.shieldThreat-position);
     if(battle_ai::Length(toward)<0.5) return plan.movement.facing.direction;
+    struct ShieldThreat {Vec3 direction;float weight;};
+    ShieldThreat threats[32];size_t count=0;
+    for(size_t i=0;i<plan.count;++i) {
+        Vec3 incoming=battle_ai::Horizontal(plan.threats[i].point-position);
+        if(battle_ai::Length(incoming)>=0.5) threats[count++]={incoming,plan.threats[i].weight};
+    }
     Vec3 best=plan.movement.facing.direction;double bestRisk=1e30;
     for(unsigned kind=1;kind<=4;++kind) {
         if(!battle_ai::native::ShieldCovers(shield,kind)) continue;
         double offset=kind==2?battle_ai::kPi:(kind==3?-battle_ai::kPi/2:(kind==4?battle_ai::kPi/2:0));
         Vec3 candidate=battle_ai::Heading(battle_ai::Bearing(toward)+offset);
         double worst=0;
-        for(size_t i=0;i<plan.count;++i) {
-            Vec3 incoming=battle_ai::Horizontal(plan.threats[i].point-Position(unit));
-            double risk=(1-battle_ai::Dot(candidate,incoming))*plan.threats[i].weight;
-            if(battle_ai::Dot(incoming,toward)>0.95) risk*=0.1; // the intact shield faces this attack
+        for(size_t i=0;i<count;++i) {
+            double risk=(1-battle_ai::Dot(candidate,threats[i].direction))*threats[i].weight;
+            if(battle_ai::Dot(threats[i].direction,toward)>0.95) risk*=0.1; // the intact shield faces this attack
             worst=(std::max)(worst,risk);
         }
         double cost=worst+std::abs(battle_ai::WrapAngle(battle_ai::Bearing(candidate)-battle_ai::Bearing(current)))*0.001;
@@ -852,17 +933,65 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
     auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
     auto movement=*reinterpret_cast<uint8_t**>(unit+0x9C8);
     if(a.sideCue||!fsm||!movement) return;
+    // Lua/AttackIntent can queue a new action after Capture. Read only the two
+    // live state pointers here; a cached pre-decision capability must not let
+    // defence turn the body away from a just-started melee/special action.
+    const auto current=*reinterpret_cast<uint32_t*>(fsm+4),pending=*reinterpret_cast<uint32_t*>(fsm+8);
+    const auto currentMove=*reinterpret_cast<uint32_t*>(movement+4),pendingMove=*reinterpret_cast<uint32_t*>(movement+8);
+    bool hurt=false;
+    for(size_t offset:{size_t(0xD4),size_t(0xE8),size_t(0xFC),size_t(0x110),size_t(0x138)})
+        hurt=hurt||battle_ai::native::detail::StateIs(movement,currentMove,offset)||battle_ai::native::detail::StateIs(movement,pendingMove,offset);
+    auto active=[&](size_t offset) {
+        return battle_ai::native::detail::StateIs(fsm,current,offset)||battle_ai::native::detail::StateIs(fsm,pending,offset);
+    };
+    bool liveMelee=false,liveSpecial=false;
+    for(size_t offset:{size_t(0x48),size_t(0x5C),size_t(0x70),size_t(0x84),size_t(0x98),size_t(0xE8),size_t(0xFC),size_t(0x1D8),size_t(0x1EC)})
+        liveMelee=liveMelee||active(offset);
+    for(size_t offset:{size_t(0x98),size_t(0xAC),size_t(0xC0),size_t(0xD4),size_t(0x1D8),size_t(0x1EC)})
+        liveSpecial=liveSpecial||active(offset);
+    if(((plan.meleeBusy||liveMelee)&&!hurt)||plan.specialBusy||liveSpecial) return;
     for(size_t offset:{size_t(0xD4),size_t(0x138),size_t(0x160),size_t(0x174),size_t(0x188)})
         if(battle_ai::native::detail::InState(movement,offset)) return;
-    battle_ai::native::Capabilities caps={};
-    if(!battle_ai::native::ReadCapabilities(unit,caps)||caps.specialBusy) return;
     if(a.defenceMoveOwned&&!plan.movement.relocate) {
-        if(!ControlBlocked(unit)) g_stop(unit);
+        if(!hurt) g_stop(unit);
         a.path.clear();a.defenceMoveOwned=false;
     }
-    if(plan.movement.relocate&&!ControlBlocked(unit)&&(now>=a.defenceRepathAt||(a.defenceMoveOwned&&a.path.empty()))&&plan.routeTarget) {
+    auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
+    const bool neutral=battle_ai::native::detail::StateIs(fsm,current,0x20)&&
+        (pending==0||battle_ai::native::detail::StateIs(fsm,pending,0x20));
+    const bool legalRanged=battle_ai::native::detail::StateIs(fsm,current,0x34)&&
+        (pending==0||battle_ai::native::detail::StateIs(fsm,pending,0x34))&&record&&(record[0x8F]==1||fsm[0xB38]==1);
+    if(plan.movement.relocate&&!hurt&&(neutral||legalRanged)&&
+       (now>=a.defenceRepathAt||(a.defenceMoveOwned&&a.path.empty()))&&plan.routeTarget) {
         a.defenceRepathAt=now+650;a.pathRanged=true;
         a.defenceMoveOwned=LoadRoute(plan.routeTarget,&plan.movement.destination);
+        if(!a.defenceMoveOwned) {
+            struct Alternative {Vec3 point;double rear,risk;};
+            Alternative options[12];size_t count=0;
+            const Vec3 position=Position(unit);
+            const float radius=g_runtime.difficulty>=2?1200.0f:480.0f;
+            for(int i=0;i<12;++i) {
+                Vec3 p=position+battle_ai::Heading(i*2*battle_ai::kPi/12)*240.0f;
+                Vec3 offset=p-a.defenceAnchor;offset.y=0;
+                const double distance=battle_ai::Length(offset);
+                if(distance>radius) {p.x=a.defenceAnchor.x+offset.x*radius/static_cast<float>(distance);p.z=a.defenceAnchor.z+offset.z*radius/static_cast<float>(distance);}
+                if(battle_ai::Length(p-position)<25||battle_ai::Length(p-plan.movement.destination)<1) continue;
+                bool close=false;
+                for(size_t k=0;k<plan.count;++k)
+                    if(battle_ai::Length(plan.threats[k].point-p)<180&&battle_ai::Length(plan.threats[k].point-p)<battle_ai::Length(plan.threats[k].point-position)) close=true;
+                if(close) continue;
+                auto facing=battle_ai::DefensiveFacing(p,plan.movement.facing.direction,plan.threats,plan.count);
+                const auto& prior=plan.movement.facing;
+                if(!facing.valid||facing.rearExposure>prior.rearExposure+0.00001||
+                   (facing.rearExposure>=prior.rearExposure-0.01&&facing.rearRisk>prior.rearRisk-0.08)) continue;
+                options[count++]={p,facing.rearExposure,facing.rearRisk};
+            }
+            std::sort(options,options+count,[](const Alternative& x,const Alternative& y){return x.rear!=y.rear?x.rear<y.rear:x.risk<y.risk;});
+            for(size_t i=0;i<(std::min)(count,size_t(2));++i) if(LoadRoute(plan.routeTarget,&options[i].point)) {
+                a.defenceMoveOwned=true;plan.movement.destination=options[i].point;break;
+            }
+            if(!a.defenceMoveOwned) g_stop(unit);
+        }
     }
     auto node=*reinterpret_cast<uint8_t**>(unit+8);auto scene=*reinterpret_cast<uint8_t**>(unit+0x34);
     if(!node||!scene) return;
@@ -871,7 +1000,7 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
     const bool locomoting=unit[0x30DC]!=0||!a.path.empty()||a.defenceMoveOwned;
     // A grabbed, stationary Hard bot may present its intact rear shield. During
     // legal movement use front defence, independently of the waypoint direction.
-    Vec3 desired=locomoting&&!ControlBlocked(unit)?plan.movement.facing.direction:ShieldDirection(unit,plan,forward);
+    Vec3 desired=locomoting&&!hurt?plan.movement.facing.direction:ShieldDirection(unit,plan,forward);
     float step=battle_ai::TurnStepDegrees(forward,desired,900,a.turnedAt?static_cast<double>(now-a.turnedAt):16.0);
     a.turnedAt=now;
     Vec3 bounded=battle_ai::Heading(battle_ai::Bearing(forward)+step*battle_ai::kPi/180);
@@ -1048,6 +1177,7 @@ void ApplySpNotice(const SpNotice& notice) {
         if(notice.begin) {
             if(!notice.weapon||actor.expectedSpecialWeapon!=notice.weapon||notice.time<actor.expectedSpecialAt||notice.time-actor.expectedSpecialAt>3000) return;
             actor.expectedSpecialWeapon=0;actor.specialAcknowledged=true;actor.specialAcknowledgedAt=notice.time;
+            actor.specialAcknowledgedSequence=notice.sequence;
         } else {
             if(!actor.specialAcknowledged||notice.time<actor.specialAcknowledgedAt||notice.time-actor.specialAcknowledgedAt>60000) return;
             actor.specialAcknowledged=false;actor.specialFinished=notice.sequence;
@@ -1547,6 +1677,7 @@ bool __fastcall Think(uint8_t* unit, void*) {
         if (g_generations.size() >= 1024) g_generations.clear();
         g_generations[unit] = ++g_serial;
     }
+    if(WantsGeneric(unit)) ++ActorFor(unit).thinkSerial;
     auto actor=g_actors.find(unit);
     if(actor!=g_actors.end()&&actor->second.specialSlotLease>=0&&
        (!g_runtime.enabled||g_runtime.difficulty<1||g_preparationFault)&&Owned(unit)) {

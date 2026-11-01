@@ -78,6 +78,35 @@ constexpr std::size_t kProjectileInitializerFunction = 0x6EB;
 
 constexpr float kSourceUpdatesPerSecond = 60.0f;
 
+struct ReadableRegion {
+    std::uintptr_t begin = 0;
+    std::uintptr_t end = 0;
+};
+
+struct ReadableRegionCache {
+    ReadableRegion regions[32]{};
+    std::size_t count = 0;
+    std::size_t virtualQueryCount = 0;
+};
+
+inline thread_local ReadableRegionCache* g_readableRegionCache = nullptr;
+
+class ScopedReadableRegionCache {
+public:
+    explicit ScopedReadableRegionCache(ReadableRegionCache& cache) noexcept
+        : previous_(g_readableRegionCache) {
+        g_readableRegionCache = &cache;
+    }
+    ~ScopedReadableRegionCache() noexcept {
+        g_readableRegionCache = previous_;
+    }
+    ScopedReadableRegionCache(const ScopedReadableRegionCache&) = delete;
+    ScopedReadableRegionCache& operator=(const ScopedReadableRegionCache&) = delete;
+
+private:
+    ReadableRegionCache* previous_;
+};
+
 inline bool Readable(const void* address, std::size_t size) noexcept {
     if (!address || size == 0) return false;
     const auto first = reinterpret_cast<std::uintptr_t>(address);
@@ -86,7 +115,21 @@ inline bool Readable(const void* address, std::size_t size) noexcept {
     const auto last = first + size;
     auto cursor = first;
     while (cursor < last) {
+        bool cached = false;
+        if (g_readableRegionCache) {
+            for (std::size_t i = 0; i < g_readableRegionCache->count; ++i) {
+                const auto& region = g_readableRegionCache->regions[i];
+                if (cursor >= region.begin && cursor < region.end) {
+                    cursor = region.end < last ? region.end : last;
+                    cached = true;
+                    break;
+                }
+            }
+        }
+        if (cached) continue;
         MEMORY_BASIC_INFORMATION info{};
+        if (g_readableRegionCache)
+            ++g_readableRegionCache->virtualQueryCount;
         if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) != sizeof(info))
             return false;
         if (info.State != MEM_COMMIT || (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
@@ -101,6 +144,13 @@ inline bool Readable(const void* address, std::size_t size) noexcept {
             return false;
         const auto regionEnd = region + info.RegionSize;
         if (regionEnd <= cursor) return false;
+        if (g_readableRegionCache &&
+            g_readableRegionCache->count <
+                sizeof(g_readableRegionCache->regions) /
+                    sizeof(g_readableRegionCache->regions[0])) {
+            g_readableRegionCache->regions[g_readableRegionCache->count++] =
+                ReadableRegion{region, regionEnd};
+        }
         cursor = regionEnd < last ? regionEnd : last;
     }
     return true;
@@ -238,6 +288,11 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     (void)out;
     return false;
 #else
+    // Capability fields repeatedly touch the same handful of committed heap
+    // regions. Cache only this attempt's VirtualQuery results; every Copy still
+    // retains its range check and SEH guard, and a retry starts with a new cache.
+    ReadableRegionCache readableRegions{};
+    ScopedReadableRegionCache readableScope(readableRegions);
     if (!unit || !Readable(unit, 0xE35)) return false;
 
     Capabilities value{};

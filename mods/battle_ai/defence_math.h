@@ -24,25 +24,32 @@ inline float TurnStepDegrees(Vec3 forward,Vec3 desired,double rate,double elapse
 }
 struct DefenceThreat {Vec3 point;float weight=1;};
 struct DefenceFacing {Vec3 direction;double rearRisk=0;bool valid=false;double rearExposure=0;};
-// Minimize the worst weighted rear exposure rather than averaging opposing
-// enemies to a zero vector. With enemies on both sides, side-on is preferable
-// to presenting the entire rear to either one; relocation can improve further.
+// Avoid the rear hemisphere first, then minimize weighted threat. With enemies
+// on both sides, side-on is preferable; relocation can improve further.
 inline DefenceFacing DefensiveFacing(Vec3 position,Vec3 current,const DefenceThreat* threats,std::size_t count) {
     DefenceFacing best;best.direction=Horizontal(current);
     if(!threats||!Finite(position)||count==0||count>128) return best;
+    struct PreparedThreat {Vec3 direction;double weight;};
+    PreparedThreat prepared[128];std::size_t usable=0;
+    // These vectors do not change between candidate headings. Normalize once
+    // per threat/position, rather than once per candidate *and* threat.
+    for(std::size_t i=0;i<count;++i) {
+        if(!Finite(threats[i].point)||!std::isfinite(threats[i].weight)||threats[i].weight<=0) continue;
+        Vec3 enemy=Horizontal(threats[i].point-position);if(Length(enemy)<0.5) continue;
+        prepared[usable++]={enemy,threats[i].weight};
+    }
+    if(!usable) return best;
+    const double currentBearing=Bearing(current);
     double bestScore=1e30,bestRear=1e30;
     auto consider=[&](double angle) {
-        Vec3 direction=Heading(angle);double worst=0,total=0,rear=0;std::size_t usable=0;
-        for(std::size_t i=0;i<count;++i) {
-            if(!Finite(threats[i].point)||!std::isfinite(threats[i].weight)||threats[i].weight<=0) continue;
-            Vec3 enemy=Horizontal(threats[i].point-position);if(Length(enemy)<0.5) continue;
-            double facing=Dot(direction,enemy);
+        Vec3 direction=Heading(angle);double worst=0,total=0,rear=0;
+        for(std::size_t i=0;i<usable;++i) {
+            double facing=Dot(direction,prepared[i].direction);
             if(facing<-0.00001) rear=(std::max)(rear,-facing);
-            double risk=(1-facing)*threats[i].weight;
-            worst=(std::max)(worst,risk);total+=risk;++usable;
+            double risk=(1-facing)*prepared[i].weight;
+            worst=(std::max)(worst,risk);total+=risk;
         }
-        if(!usable) return;
-        double turn=std::abs(WrapAngle(angle-Bearing(current)));
+        double turn=std::abs(WrapAngle(angle-currentBearing));
         // Avoid the rear hemisphere first, even for a weaker attacker. If the
         // enemies surround us, minimize the unavoidable exposure before weights.
         double score=worst+total/(usable*100.0)+turn*0.0001;

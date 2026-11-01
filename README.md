@@ -100,6 +100,8 @@ the NPC pool, while Medium uses unit level 12 and Hard uses EX13. The new diffic
 Mods and their matching `pvp_ai`/`match_ai` components must be updated together.
 Medium and Hard act on each native decision frame without added reaction/burst
 pauses, and keep facing known threats while moving. Native action and weapon limits apply.
+Medium uses basic ground strafing and defensive specials. Hard adds advanced movement
+and confirmed offensive-special opportunities, without stealing allied catches or chasing failed routes.
 Enable `room_titles` on clients, `room_titles_agent` on Agents and `room_titles_server` on Battle servers,
 and update the consuming `coop_ai` / `pvp_ai` / `room_random` DLLs. Players use their normal launcher.
 The three title Mods default to off; AI and random-loadout features still need their own installation and settings.

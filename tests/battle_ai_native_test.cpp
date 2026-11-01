@@ -1,6 +1,7 @@
 // Real core + real battle_ai DLL + official Lua 5.0 VM. Game entry points are
 // private fixtures: no game, account, network socket, or existing process used.
 #include <windows.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -27,6 +28,12 @@ bool Eval(const char* s) {
     lua_settop(g_L,top); return ok;
 }
 lua_State* __cdecl State(lua_State* value) { if(value) g_L=value; return g_L; }
+int QueueFixtureSwing(lua_State*) {
+    auto fsm=native_world::fsms[0].data();
+    native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
+    native_world::Put(fsm,8,fsm+0x5C);
+    return 0;
+}
 struct Unit {
     unsigned char bytes[0x3300] = {};
     __declspec(noinline) bool Think() {
@@ -137,6 +144,27 @@ int wmain(int argc,wchar_t** argv) {
         const auto protectedFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
         Check(protectedFacing.z>0.99f&&unit.bytes[0x30DC]!=0&&reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->z==-400,
               "Medium/Hard backward movement retains its waypoint and front facing despite a reversed path yaw cache");
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{0,0,-3000});
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        unit.Think();
+        Check(reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C)->z>0.99f,
+              "a far idle opponent cannot force side-on defence during an existing front engagement");
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{0,0,-1000});
+        native_world::Put(native_world::fsms[1].data(),0x200,uint32_t(20));
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        lua_pushcfunction(g_L,QueueFixtureSwing);lua_setglobal(g_L,"FixtureQueueSwing");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe(); n:SetAttackTarget(2); FixtureQueueSwing(); return 123 end");
+        const int beforeMeleeTurn=native_world::rotations;unit.Think();
+        Check(native_world::rotations==beforeMeleeTurn&&reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C)->z>0.99f,
+              "a melee action queued after observation retains native target-facing instead of defence turning its swing away");
+        native_world::Put(native_world::fsms[0].data(),8,uint32_t(0));
+        native_world::Put(native_world::fsms[0].data(),0x240,int32_t(1));
+        native_world::Put(native_world::fsms[0].data(),0x248,native_world::weapons[1].data());
+        native_world::Put(native_world::fsms[1].data(),0x200,uint32_t(0));
+        native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{1000,0,0});
         Eval("SDGO_BattleAI_GenericUpdate=motionProbe");
         native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
         native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{1400,0,100});
@@ -226,10 +254,13 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,0x248,special);requestSpecial();
             Check(native_world::attackAdmissions==beforeRequests,"final attack admission rejects the special branch without player SP");
             native_world::Put(fsm,0x248,native_world::weapons[1].data());
+            auto pressureMotor=native_world::movements[0].data();
+            native_world::Put(pressureMotor,4,pressureMotor+0xE8);
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();
             Check(*reinterpret_cast<int*>(fsm+0x240)==3&&unit.bytes[0x312A]==0,
-                  "Medium requests special slot through the native weapon-change API at full SP");
+                  "Medium uses full SP for a player-permitted hurt counter through the native weapon-change API");
             unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
+            native_world::Put(pressureMotor,4,pressureMotor+0x20);
             requestSpecial();Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
             native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));uint8_t accepted[0x18]={};
             native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
@@ -303,7 +334,9 @@ int wmain(int argc,wchar_t** argv) {
             int skillResult=skillNotice(native_world::document.data(),skillPacket);unit.Think();
             Check(skillResult==0x51D1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==9000,
                   "native skill-state SP snapshots share the same sequence and cannot be rolled back by an older queued clear");
+            native_world::Put(pressureMotor,4,pressureMotor+0xE8);
             native_world::Put(unit.bytes,0xBC8,int32_t(30000));unit.Think();unit.Think();
+            native_world::Put(pressureMotor,4,pressureMotor+0x20);
             native_world::deferSwitch=true;
             Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
             Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
@@ -433,7 +466,11 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(fsm,4,fsm+0x20);callbacks->Receipts(nullptr);unit.Think();
         Check(Eval("assert(sample.shots==2)"),"non-ranged state cannot manufacture a counted primary fire");
         native_world::coverWall=true;auto beforeCoverMoves=native_world::moves;
-        Eval("SDGO_BattleAI_GenericUpdate=function(n) coverSample=SDGO_BattleAI_Cover(2,1400,100,0); count80=0; for i=1,1000 do count80=count80+SDGO_BattleAI_Chance(80) end; return 123 end");unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) coverSample=SDGO_BattleAI_Cover(2,1400,100,0); coverRepeat=SDGO_BattleAI_Cover(2,1400,100,0); count80=0; for i=1,1000 do count80=count80+SDGO_BattleAI_Chance(80) end; return 123 end");
+        int maxCoverQueries=0;
+        for(int frame=0;frame<6;++frame) {int previousQueries=native_world::queries;unit.Think();maxCoverQueries=(std::max)(maxCoverQueries,native_world::queries-previousQueries);}
+        Check(maxCoverQueries<=46&&Eval("assert(coverRepeat.pending==1)"),
+              "cover geometry is bounded per Think and repeated same-frame calls do not repeat the search");
         Check(Eval("assert(coverSample.valid==1 and coverSample.exposure<=3 and coverSample.peek.z>0)"),"real native bridge samples a minimally exposed fireable cover edge using private collision queries");
         Check(native_world::moves==beforeCoverMoves&&Eval("assert(count80>=750 and count80<=850)"),"cover sampling is read-only and mod-owned probability does not touch native RNG");
         native_world::coverWall=false;
@@ -548,6 +585,52 @@ int wmain(int argc,wchar_t** argv) {
         if(f) { fputs("\nthis is invalid lua [",f); fclose(f); }
         Sleep(2100); unit.Think();
         Check(Eval("assert(calls==8 and SDGO_BattleAI.after==savedPolicy and SDGO_BattleAI.faults==0)"),"syntax error retains last working policy");
+    }
+
+    if(generic||medium) {
+        native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=0;
+        Config(generic?"[settings]\nDifficulty=Hard\n":"[settings]\nDifficulty=Medium\n");
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        unit.Init(reinterpret_cast<void*>(3));Sleep(2100);unit.Think();
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe();return 123 end");
+        auto location=[&] {return *reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x88);};
+        auto setPosition=[&](native_world::Vec3 p){native_world::Put(native_world::nodes[0].data(),0x88,p);};
+        auto crossfire=[&] {
+            auto p=location();
+            native_world::Put(native_world::nodes[1].data(),0x88,p+native_world::Vec3{0,0,-5000});
+            native_world::Put(native_world::nodes[2].data(),0x88,p+native_world::Vec3{0,0,5000});
+            uint8_t hit[0x50]={};native_world::Put(hit,0,uint16_t(0xC));native_world::Put(hit,0x14,int32_t(1));
+            for(uint32_t attacker:{1u,2u}) {native_world::Put(hit,0x3C,attacker);native_world::EmitContact(native_world::document.data(),20,hit,0);}
+        };
+        crossfire();const auto anchor=location();const double radius=generic?1200:480;
+        native_world::pathMode=4;const int priorPaths=native_world::pathCalls;unit.Think();
+        const auto alternateGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(unit.bytes[0x30DC]&&alternateGoal.x<anchor.x&&native_world::pathCalls-priorPaths<=3,
+              "a blocked best escape point tries a bounded reachable alternative instead of giving up on movement");
+        if(unit.bytes[0x30DC]) setPosition(alternateGoal);
+        native_world::pathMode=0;
+        bool bounded=true;double furthest=0;
+        for(int step=0;step<12;++step) {
+            unit.Think();
+            if(unit.bytes[0x30DC]) {
+                auto goal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+                double distance=battle_ai::Length(goal-anchor);furthest=(std::max)(furthest,distance);
+                bounded=bounded&&distance<=radius+0.1;setPosition(goal);
+            }
+        }
+        Check(bounded&&furthest>radius-1,
+              "a continuous crossfire episode reaches but never exceeds its Medium/Hard defensive destination radius");
+        const auto nextAnchor=location();
+        native_world::Put(native_world::nodes[1].data(),0x88,nextAnchor+native_world::Vec3{0,0,1000});
+        native_world::Put(native_world::nodes[2].data(),0x88,nextAnchor+native_world::Vec3{10,0,1100});
+        Sleep(1050);unit.Think();crossfire();unit.Think();
+        const auto newGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(unit.bytes[0x30DC]&&battle_ai::Length(newGoal-nextAnchor)>25&&battle_ai::Length(newGoal-nextAnchor)<=radius+0.1,
+              "a pressure-free interval expires the old anchor so a new crossfire episode can move again");
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));setPosition(newGoal);
+        const int beforePointRoute=native_world::pathCalls;unit.Think();
+        Check(unit.bytes[0x30DC]&&native_world::pathCalls>beforePointRoute,
+              "an explicit defensive destination remains navigable without a living threat object");
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
     // Mods live for this process; do not unload an installed trampoline.

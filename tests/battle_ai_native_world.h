@@ -29,6 +29,8 @@ inline bool blocked=false;
 inline bool coverWall=false;
 inline bool nullRay=false;
 inline int pathMode=0;
+inline int pathCalls=0;
+inline bool directPathFixture=false;
 inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,frees=0,queries=0;
 inline int lastWait=0;
@@ -137,14 +139,16 @@ struct Callbacks {
     __declspec(noinline) uint8_t* Find(uint32_t id) {
         if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();return nullptr;
     }
-    __declspec(noinline) Vec3* Path(uint32_t,Vec3,Vec3 end,Vec3*,uint32_t* count) {
+    __declspec(noinline) Vec3* Path(uint32_t,Vec3 start,Vec3 end,Vec3*,uint32_t* count) {
+        ++pathCalls;
         if(pathMode==1) return nullptr;
+        if(pathMode==4&&end.x>=start.x) return nullptr;
         if(pathMode==3) {
             protectedPath=VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_NOACCESS);
             *count=2;return static_cast<Vec3*>(protectedPath);
         }
         auto p=static_cast<Vec3*>(HeapAlloc(GetProcessHeap(),0,sizeof(Vec3)*2));
-        p[0]={200,0,200};p[1]=end;*count=2;return p;
+        p[0]=directPathFixture?start:Vec3{200,0,200};p[1]=end;*count=2;return p;
     }
 };
 // The caller anchor comes from the actual instruction following the fixture's

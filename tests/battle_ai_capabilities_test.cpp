@@ -96,6 +96,35 @@ struct Fixture {
 
 int main() {
     static_assert(sizeof(void*) == 4, "GOnline capability fixture is Win32");
+    auto page = static_cast<std::uint8_t*>(
+        VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Check(page != nullptr, "readable-region cache fixture allocates one private page");
+    if (page) {
+        battle_ai::native::detail::ReadableRegionCache cache{};
+        DWORD oldProtect = 0;
+        bool protectedPage = false;
+        {
+            battle_ai::native::detail::ScopedReadableRegionCache scope(cache);
+            Check(battle_ai::native::detail::Readable(page, 16) &&
+                      battle_ai::native::detail::Readable(page + 32, 16) &&
+                      cache.virtualQueryCount == 1,
+                  "one capability snapshot reuses its readable VirtualQuery region");
+            protectedPage =
+                VirtualProtect(page, 4096, PAGE_NOACCESS, &oldProtect) != 0;
+            std::uint32_t value = 0;
+            Check(protectedPage &&
+                      battle_ai::native::detail::Readable(page, 16) &&
+                      !battle_ai::native::detail::Copy(page, &value, sizeof(value)),
+                  "cached region never bypasses the per-copy SEH guard");
+        }
+        Check(protectedPage &&
+                  !battle_ai::native::detail::Readable(page, 16),
+              "readable-region cache is discarded when the snapshot ends");
+        DWORD ignored = 0;
+        if (protectedPage)
+            VirtualProtect(page, 4096, oldProtect, &ignored);
+        VirtualFree(page, 0, MEM_RELEASE);
+    }
     Fixture fixture;
     Check(battle_ai::RoomDifficulty(L"!ai")==-1&&battle_ai::RoomDifficulty(L"usual room")==-1,
           "unmarked room defers to the Medium default");
