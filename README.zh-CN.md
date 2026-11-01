@@ -26,6 +26,8 @@ English: [README.md](README.md)
 | 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
 | 开游戏随机崩溃修复 | 修复开游戏时随机崩溃（读取界面闪退，`0x008FE610`）：读取界面随机挑一组，其机体在客户端数据里不存在时会闪退；现在这种组会换成最近的一组机体存在的读取界面。 | `startup_crash_fix` | 客户端 | [中文](docs/startup-crash-fix.zh-CN.md) · [English](docs/startup-crash-fix.md) |
 | 发包日志 | 开发 mod 用的发包记录，默认关闭。 | `net_probe` | 客户端 | [docs/net-probe.md](docs/net-probe.md) |
+| 商城租赁与中文选项标签 | 悬停、购买和赠送窗口明确显示租赁/永久，支持受数值条件约束的 Unicode 选项文字，单独补丁分发。 | `shop_labels` | 客户端 | [中文](docs/shop-labels.zh-CN.md) |
+| 服主管理的商城 | 通过可分发配置增加、查询、修改和下架自有的单物品商品，沿用原生结算，配置前默认关闭。 | `shop_catalog` | WorldServer | [中文](docs/shop-catalog.zh-CN.md) |
 
 "安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装配套的客户端部分才生效。
 AI 对战房间的所有参与者应使用配套版本。
@@ -74,6 +76,9 @@ SDGO-ModFramework-<版本>/
 | `sdgo\mods\<id>\` | 两边 | 每个 mod 一个目录：`<id>.dll`、`mod.ini`（清单 + 设置）、附带文件 |
 
 安装脚本会复制包里的全部内容，新增功能不需要改安装脚本。
+
+商城两项功能通过 `python tools/package_shop.py` 分别打包，使用各包内的 `Install.ps1`。
+商品配置模块安装到 WorldServer，显示补丁安装到客户端。配置方法和验证范围见上方独立说明。
 
 ## 支持的游戏版本
 

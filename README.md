@@ -27,6 +27,8 @@ Each feature is one or more mods with its own guide (use, settings, logs, how it
 | General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
 | Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
 | Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
+| Shop rental and Unicode labels | Explicit rental/permanent labels in hover, buy and gift options; optional guarded Unicode captions. Distributed as a separate client patch. | `shop_labels` | clients | [中文](docs/shop-labels.zh-CN.md) |
+| Host-managed shop catalog | Add, query, update and retire owned single-item offers using portable configuration and native billing. Default off until configured. | `shop_catalog` | WorldServer | [中文](docs/shop-catalog.zh-CN.md) |
 
 A feature that lists the battle server works only when the battle servers have the server
 part and the players have matching client parts. Every participant in a PvP AI room
@@ -80,6 +82,10 @@ on in its `mod.ini`.
 
 The installers copy whatever the package contains, so new features need no installer
 changes.
+
+The shop features have separate packages built with `python tools/package_shop.py`.
+Use their own `Install.ps1`: the catalog belongs in WorldServer, and the label patch
+belongs in each client. See the guides above for configuration and test limits.
 
 ## Supported game builds
 
