@@ -4,6 +4,10 @@
 它使用游戏原生的换槽、机体详情和拆解请求，不需要新的登录方式、HTTP 服务、SQL 凭据或服务器端 DLL。
 朋友拿到同一份 Mod 和机体规则即可使用；服主只在修改了机体/拆解奖励时更新规则文件。
 
+0.2.1 修复原生页按钮不能点击及随机红/绿色块：操作按钮使用旁边原生按钮的普通、悬停、
+按下皮肤和文字样式。通过 Manager 导入修复增量包，关闭并重新启动目标客户端后生效；
+本次更新无需重启服务器，也不需要重新分发账号或修改奖励规则。
+
 ## 功能
 
 - 一键按 S/A/B/C、子等级、机体编号、等级与实例编号整理可移动槽位。
@@ -84,9 +88,13 @@ python export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output 
 自动检查覆盖随机排列排序、锁定/出击/舰队/租赁保护、状态变体保留、唯一机体保留、
 确认前无兑换、原生字节布局、取消、拒绝、超时、连接变化，以及生产代码的合成原生适配器。
 新版还覆盖宿主分配的原生子控件、页内布局边界、清单分页、两次确认、关闭失效、原控件可见性恢复和布局不匹配拒绝接入。
+0.2.1 额外使用本地客户端两段已校验的原生代码，复现空按钮故障并检查鼠标移入、按下、
+松开、移出和禁用状态；命中区域、焦点、事件接收和绘图接口使用合成替身，不启动游戏或联网。
 这些不是玩家账号的实战证明。首次真人验收先检查按钮与页内文字，再测试纯排序，用已核对的普通重复机体验证两种奖励。
 本任务不自动对真实机库执行整理或兑换。
 
 构建：`cmake -S . -B build/hangar -G "Visual Studio 17 2022" -A Win32`，
 随后 `cmake --build build/hangar --config Release`。
 测试：`ctest --test-dir build/hangar -C Release --output-on-failure`。
+原生鼠标回放需配置 `-DSDGO_HANGAR_NATIVE_HOST="D:/Games/SDGO/GOnline.exe"`，
+构建 `hangar_native_input_test` 后执行 `ctest --test-dir build/hangar -C Release -R hangar_native_input_replay --output-on-failure`。

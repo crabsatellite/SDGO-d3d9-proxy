@@ -37,45 +37,74 @@ bool PageUi::Bind(const SdgoApi* api,SdgoMod* mod) {
     bindings_.find=reinterpret_cast<Bindings::Find>(api->Symbol(mod,"hangar.ui_find_control"));
     bindings_.text=reinterpret_cast<Bindings::Text>(api->Symbol(mod,"hangar.ui_text_item"));
     bindings_.buttonVtable=api->Symbol(mod,"hangar.ui_button_vtable");
-    return bindings_.add && bindings_.find && bindings_.text && bindings_.buttonVtable;
+    bindings_.skin=reinterpret_cast<Bindings::Skin>(api->Symbol(mod,"hangar.ui_add_skin"));
+    return bindings_.add && bindings_.find && bindings_.text && bindings_.buttonVtable && bindings_.skin;
 }
 void PageUi::Detach() {
     // Native init may already have freed the previous dialog, including all its
     // children. Drop references without attempting to restore old visibility.
-    service_=dialog_=serviceVtable_=dialogVtable_=nullptr;controls_.clear();hidden_.clear();rows_.clear();
+    service_=dialog_=serviceVtable_=dialogVtable_=styleSource_=nullptr;controls_.clear();hidden_.clear();rows_.clear();
     page_=0;exchange_=busy_=confirm_=armed_=false;
 }
 bool PageUi::Attach(void* service,const Bindings& bindings) {bindings_=bindings;return Attach(service);}
 bool PageUi::Add(const wchar_t* name,const wchar_t* label,Action action,int x,int y,int w,int h,bool body) {
+    if(action!=Action::None){w=buttonWidth_;h=buttonHeight_;}
     const std::wstring key=name;const auto native=View(key);
     bindings_.add(dialog_,&native,x,y,w,h,0);
     auto* child=bindings_.find(dialog_,&native,4);
     if(!Button(child,bindings_.buttonVtable) || Read<void*>(child,0x15C)!=dialog_)return false;
     controls_.push_back({child,action,w,body,{}});
-    Text(controls_.back(),label,0xFF8ED9FF);
+    // Fresh CUIBase controls draw a random debug quad by default. This flag
+    // is independent of the enabled/input flags and must be cleared for labels too.
+    Write<uint8_t>(child,0x168,0);
+    if(action!=Action::None) {
+        auto** skins=Read<uint8_t**>(styleSource_,0x1A4);
+        for(size_t i=0;i<3;++i) {
+            auto* skin=skins[i];
+            bindings_.skin(child,reinterpret_cast<NativeString*>(skin+4),Read<uint8_t>(skin,0x44),
+                           Read<uint32_t>(skin,0x3C),Read<uint32_t>(skin,0x40));
+        }
+        // The native mouse state machine only emits ButtonClicked after skin
+        // states 1 (hover) and 2 (pressed). No textures means no click, even if
+        // the control is visible and accepts input. Never alias host vectors.
+        auto** first=Read<uint8_t**>(child,0x1A4);auto** last=Read<uint8_t**>(child,0x1A8);
+        if(!first || reinterpret_cast<uintptr_t>(last)-reinterpret_cast<uintptr_t>(first)!=3*sizeof(void*))return false;
+        for(size_t i=0;i<3;++i)if(!first[i] || !Read<void*>(first[i]))return false;
+    }
+    Text(controls_.back(),label,textColor_);
     Write<uint8_t>(child,0x162,body?0:1);
     return true;
 }
 bool PageUi::Attach(void* service) {
     if(Owns(service))return true;
     Detach();
-    if(!service || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.buttonVtable)return false;
+    if(!service || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.buttonVtable || !bindings_.skin)return false;
     auto* dialog=Read<void*>(service,0x44);
     auto* source=Read<void*>(service,0x4C); // native UnitDeleteBtn
     if(!dialog || !Button(source,bindings_.buttonVtable) || Read<void*>(source,0x15C)!=dialog)return false;
     const int w=Read<int>(dialog,0x154),h=Read<int>(dialog,0x158);
     const float sx=Read<float>(source,0x148),sy=Read<float>(source,0x14C);
     if(!std::isfinite(sx) || !std::isfinite(sy) || sx<0 || sy<0 || sx>2048 || sy>128 || w<520 || w>2048 || h<600 || h>2048)return false;
-    const int x=static_cast<int>(sx)+Read<int>(source,0x154)+8;
-    if(x+210>w)return false; // do not overlap existing native controls
+    buttonWidth_=Read<int>(source,0x154);buttonHeight_=Read<int>(source,0x158);
+    if(buttonWidth_<100 || buttonWidth_>256 || buttonHeight_<16 || buttonHeight_>40)return false;
+    const int x=static_cast<int>(sx)+buttonWidth_+8;
+    if(x+2*buttonWidth_+8>w)return false; // do not overlap existing native controls
+    auto** skins=Read<uint8_t**>(source,0x1A4);auto** skinsEnd=Read<uint8_t**>(source,0x1A8);
+    const auto first=reinterpret_cast<uintptr_t>(skins),last=reinterpret_cast<uintptr_t>(skinsEnd);
+    if(!first || last<first || last-first<3*sizeof(void*) || last-first>16*sizeof(void*) || (last-first)%sizeof(void*))return false;
+    for(size_t i=0;i<3;++i) {
+        if(!skins[i] || !Read<void*>(skins[i]) || !Read<uint32_t>(skins[i],0x14))return false;
+    }
     auto** begin=Read<uint8_t**>(source,0x190);auto** end=Read<uint8_t**>(source,0x194);
     if(!begin || reinterpret_cast<uintptr_t>(end)<reinterpret_cast<uintptr_t>(begin) ||
        reinterpret_cast<uintptr_t>(end)-reinterpret_cast<uintptr_t>(begin)>64*sizeof(void*) || begin==end || !*begin)return false;
     font_=Read<uint32_t>(*begin,0x6C);
+    textColor_=Read<uint32_t>(*begin,0x58);shadowColor_=Read<uint32_t>(*begin,0x5C);
+    styleSource_=source;
     service_=service;dialog_=dialog;width_=w;height_=h;
     serviceVtable_=Read<void*>(service);dialogVtable_=Read<void*>(dialog);
-    bool ok=Add(L"ModHangarSort",L"[一键整理]",Action::Sort,x,static_cast<int>(sy),92,24,false) &&
-        Add(L"ModHangarOpen",L"[重复兑换]",Action::Open,x+100,static_cast<int>(sy),110,24,false);
+    bool ok=Add(L"ModHangarSort",L"一键整理",Action::Sort,x,static_cast<int>(sy),buttonWidth_,buttonHeight_,false) &&
+        Add(L"ModHangarOpen",L"重复兑换",Action::Open,x+buttonWidth_+8,static_cast<int>(sy),buttonWidth_,buttonHeight_,false);
     for(size_t i=0;ok && i<kSummaryLines;++i) {
         const auto name=L"ModHangarStatus"+std::to_wstring(i);
         ok=Add(name.c_str(),L"",Action::None,12,44+static_cast<int>(i)*22,w-24,22,true);
@@ -85,13 +114,13 @@ bool PageUi::Attach(void* service) {
         ok=Add(name.c_str(),L"",Action::None,12,174+static_cast<int>(i)*28,w-24,26,true);
     }
     const int bottom=h-84;
-    ok=ok && Add(L"ModHangarPrevious",L"[上一页]",Action::Previous,12,bottom-38,96,26,true) &&
-        Add(L"ModHangarNext",L"[下一页]",Action::Next,116,bottom-38,96,26,true) &&
-        Add(L"ModHangarPage",L"",Action::None,230,bottom-38,w-244,26,true) &&
-        Add(L"ModHangarGB",L"[预览换 GB]",Action::GB,12,bottom,150,26,true) &&
-        Add(L"ModHangarItem",L"[预览换经验胶囊]",Action::Item,174,bottom,200,26,true) &&
-        Add(L"ModHangarConfirm",L"[确认兑换]",Action::Confirm,12,bottom+36,274,28,true) &&
-        Add(L"ModHangarCancel",L"[返回机库]",Action::Cancel,310,bottom+36,180,28,true);
+    ok=ok && Add(L"ModHangarPrevious",L"上一页",Action::Previous,12,bottom-38,96,26,true) &&
+        Add(L"ModHangarNext",L"下一页",Action::Next,24+buttonWidth_,bottom-38,96,26,true) &&
+        Add(L"ModHangarPage",L"",Action::None,36+2*buttonWidth_,bottom-38,w-48-2*buttonWidth_,26,true) &&
+        Add(L"ModHangarGB",L"预览换 GB",Action::GB,12,bottom,150,26,true) &&
+        Add(L"ModHangarItem",L"预览换经验胶囊",Action::Item,24+buttonWidth_,bottom,200,26,true) &&
+        Add(L"ModHangarConfirm",L"确认兑换",Action::Confirm,12,bottom+36,274,28,true) &&
+        Add(L"ModHangarCancel",L"返回机库",Action::Cancel,24+buttonWidth_,bottom+36,180,28,true);
     if(!ok) {
         for(auto& control:controls_)Write<uint8_t>(control.pointer,0x162,0);
         Detach();return false;
@@ -101,7 +130,7 @@ bool PageUi::Attach(void* service) {
 void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
     if(control.textSet && control.text==value && control.color==color)return;
     const auto native=View(value);
-    bindings_.text(control.pointer,0,&native,2,3,control.width-4,14,color,0xFF000000,0,font_,1);
+    bindings_.text(control.pointer,0,&native,2,3,control.width-4,14,color,shadowColor_,0,font_,control.action==Action::None?1:2);
     control.text=value;control.color=color;control.textSet=true;
 }
 bool PageUi::Connected() {
@@ -171,8 +200,13 @@ void PageUi::Render() {
                 Text(c,value,0xFFE3EEF6);
             }else Text(c,L"清单 "+std::to_wstring(page_+1)+L" / "+std::to_wstring(pages)+L" 页，共 "+std::to_wstring(rows_.size())+L" 台",0xFFE3EEF6);
         }
-        if(c.action==Action::Confirm)Text(c,armed_?L"[再次确认，开始兑换]":L"[确认兑换]",0xFFFFCF7E);
-        if(c.action==Action::Cancel)Text(c,busy_?L"[停止后续请求]":L"[返回机库]",0xFF8ED9FF);
+        if(c.action==Action::Confirm)Text(c,armed_?L"再次确认兑换":L"确认兑换",enabled?textColor_:0xFF70808A);
+        else if(c.action==Action::Cancel)Text(c,busy_?L"停止后续请求":L"返回机库",textColor_);
+        else if(c.action!=Action::None)Text(c,c.text,enabled?textColor_:0xFF70808A);
+        if(!visible || !enabled) {
+            Write<uint16_t>(c.pointer,0x21C,0);Write<uint8_t>(c.pointer,0x164,0);
+            Write<uint32_t>(c.pointer,0x18C,0);
+        }
         Write<uint8_t>(c.pointer,0x162,visible?1:0);
         Write<uint8_t>(c.pointer,0x167,enabled?1:0);
     }
