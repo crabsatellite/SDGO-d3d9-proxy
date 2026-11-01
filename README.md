@@ -44,9 +44,18 @@ and random-unit gameplay belong in this category.
 |---|---|---|---|---|
 | Mission AI wingmen | Add AI teammates with `!ai` in a mission title | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`. | `room_random` | Battle server | [Use](docs/room-random.md) |
 <!-- /mod-category:gameplay -->
+
+The AI catalog is a separate, default-off addon; Base/Full framework packages do
+not install it. The owner generates `catalog.bin` from their database catalog and
+matching client tables, installs both halves, and exports a player overlay.
+Players run its included setup once, then use their normal launcher. Room titles
+such as `!ai e2 a1 lv2` use the expanded random pool; there is no extra selection
+screen. No SQL rows or game archives are rewritten. See the
+[owner installation and player distribution guide](docs/ai-catalog.md).
 
 <details>
 <summary>Short AI gameplay examples</summary>

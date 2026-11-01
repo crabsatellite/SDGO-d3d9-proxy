@@ -133,6 +133,31 @@ sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank p
 
 sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
 
+# Optional catalog provider, same mod id in the two processes. Owner-generated
+# catalog.bin is never staged or bundled by a framework build.
+foreach(role client server)
+    set(target ai_catalog_${role})
+    add_library(${target} SHARED mods/ai_catalog/${role}.cpp)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME ai_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>")
+    target_link_libraries(${target} PRIVATE sdgo_api)
+    sdgo_strict(${target})
+    sdgo_version_resource(${target} ai_catalog.dll "SDGO mod: AI roster (${role})")
+    sdgo_stage(${target} "${role}/sdgo/mods/ai_catalog")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
+            "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini")
+endforeach()
+add_custom_target(ai_catalog_data ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/server/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/client.ini"
+        "${SDGO_STAGE}/client/sdgo/mods/ai_catalog/mod.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/server.ini"
+        "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -191,6 +216,22 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
+    target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
+    sdgo_strict(catalog_conflict_mod)
+    add_executable(ai_catalog_test tests/ai_catalog_test.cpp)
+    target_link_libraries(ai_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(ai_catalog_test)
+    # Keep native fixture calls as hookable calls in optimized builds as well.
+    target_compile_options(ai_catalog_test PRIVATE /Ob0)
+    add_executable(ai_catalog_native_test tests/ai_catalog_native_test.cpp)
+    target_link_libraries(ai_catalog_native_test PRIVATE sdgo_api minhook)
+    sdgo_strict(ai_catalog_native_test)
+    add_executable(ai_catalog_client_map_test EXCLUDE_FROM_ALL tests/ai_catalog_client_map_test.cpp)
+    target_link_libraries(ai_catalog_client_map_test PRIVATE sdgo_api kernel32 shell32)
+    sdgo_strict(ai_catalog_client_map_test)
+    target_compile_options(ai_catalog_client_map_test PRIVATE /Gy /GS- /GR-)
+    target_link_options(ai_catalog_client_map_test PRIVATE /BASE:0x400000 /DYNAMICBASE:NO /NODEFAULTLIB /ENTRY:Entry /IGNORE:4078)
     # Explicit optional acceptance probe requiring a locally supplied Agent EXE.
     # It is never staged or run by CI against game files.
     add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
@@ -347,6 +388,10 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME ai_catalog_integration COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
         add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
