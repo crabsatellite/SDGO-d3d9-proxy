@@ -48,11 +48,21 @@ and random-unit gameplay belong in this category.
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
+| Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
 Daily double rewards need only a BattleServer update; players keep their current clients.
 See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-acceptance).
+
+Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
+names, portraits and drop probabilities/amounts. Five permanent free support officers
+cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
+holdings migrate in place, preserving equipped references and personal nicknames.
+The owner applies server rules and distributes a matching client update; players
+keep their normal launcher. The module registers products for the storefront to
+price and list. In-game display, claiming and settlement still need manual acceptance.
+See the [configuration and migration guide](docs/operator-assistant.md).
 
 The AI catalog is a separate, default-off addon; Base/Full framework packages do
 not install it. The owner generates `catalog.bin` from their database catalog and

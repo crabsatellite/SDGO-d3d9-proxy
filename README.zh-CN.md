@@ -44,11 +44,17 @@
 | 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
+| 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 每日双倍仅需服主更新对战服务器，玩家沿用现有客户端。配置、关闭和实测步骤见
 [每日双倍教程](docs/daily-rewards.zh-CN.md#手动验收)。
+
+副官管理通过包内 `tools/Start-Assistant.ps1` 打开服主 UI，可修改名称、头像和掉落概率、数量。
+自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官；旧持有记录原位迁移，保留当前装备与个人昵称。
+服主应用服务端配置并分发客户端更新包后，玩家仍使用原启动器。商品只登记，上架和定价由商城模块负责。
+游戏内显示、领取和结算仍需服主手动验收。[完整配置与迁移说明](docs/operator-assistant.zh-CN.md#默认补给副官)。
 
 机体目录是**默认关闭的独立 Mod**，Base / Full 框架包不会直接安装它。服主用自己的数据库目录表和
 配套客户端表生成 `catalog.bin`，安装到两端，再导出玩家增量包；玩家只需运行包内的一次性安装工具，

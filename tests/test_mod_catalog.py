@@ -67,6 +67,15 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             catalog.select_catalog(catalog.read_catalog(self.root), features=["random-unit-not-bundled"])
 
+    def test_operator_feature_preserves_live_config_and_is_optional(self):
+        source=catalog.read_catalog(self.root)
+        selected=catalog.select_catalog(source,features=['operator-assistant'])
+        mod=next(m for m in selected['mods'] if m['id']=='operator_catalog')
+        self.assertEqual(mod['target'],'client')
+        self.assertEqual(set(mod['config_files']),{'display.ini','definitions.json'})
+        self.assertTrue(all(m['category']=='fixes' or m['id']=='operator_catalog' for m in selected['mods']))
+        self.assertNotIn('operator_catalog',{m['id'] for m in catalog.select_catalog(source,'base')['mods']})
+
     def test_bad_profile_is_rejected(self):
         with self.assertRaises(ValueError):
             catalog.select_catalog(catalog.read_catalog(self.root), "unknown")
