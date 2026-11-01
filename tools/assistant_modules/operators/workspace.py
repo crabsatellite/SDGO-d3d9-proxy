@@ -91,6 +91,7 @@ class Workspace:
         prefix = "client/sdgo/mods/operator_catalog/"
         files[prefix + "operator_catalog.dll"] = self.module_binary.read_bytes()
         files[prefix + "mod.ini"] = (server.MODULE_DIR / "mod.ini").read_bytes()
+        files[prefix + "display.example.ini"] = (server.MODULE_DIR / "display.example.ini").read_bytes()
         ini = ["[catalog]", "Version=1", "Revision=" + model.revision(catalog)]
         for op in catalog["operators"]:
             if not op["managed"]:

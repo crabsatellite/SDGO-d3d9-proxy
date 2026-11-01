@@ -1,4 +1,5 @@
 import base64
+import configparser
 import copy
 import io
 import json
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from urllib.error import HTTPError
 from urllib.request import Request,urlopen
 
@@ -212,6 +214,7 @@ class DefaultPresetTests(unittest.TestCase):
 class FakeAssets:
     index_hash='fixture'
     def portrait(self,id):return PNG
+    def records(self,name,size):return {}
 
 
 class HTTPTests(unittest.TestCase):
@@ -243,6 +246,18 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(saved['operators'][0]['name'],'免费补给')
         self.assertFalse(result['capabilities']['server_apply'])
         self.assertTrue((self.ws.root/'product-registrations.json').exists())
+
+    def test_client_update_contains_every_manifest_declared_payload(self):
+        self.ws.module_binary=self.ws.root/'fixture.dll'
+        self.ws.module_binary.write_bytes(b'fixture module')
+        package=zipfile.ZipFile(io.BytesIO(self.ws.package()))
+        prefix='client/sdgo/mods/operator_catalog/'
+        manifest=configparser.ConfigParser()
+        manifest.read_string(package.read(prefix+'mod.ini').decode('utf-8-sig'))
+        for field in ('files','config_files'):
+            for name in manifest['mod'][field].split(','):
+                self.assertIn(prefix+name.strip(),package.namelist())
+        self.assertIsNone(package.testzip())
 
     def test_foreign_origin_token_and_host_cannot_write(self):
         for kw in [{'token':False},{'origin':'https://unrelated.invalid'},{'host':'unrelated.invalid'}]:

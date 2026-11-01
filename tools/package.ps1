@@ -88,7 +88,7 @@ if ($catalog.features.PSObject.Properties.Name -contains 'operator-assistant') {
     }
     $operatorData=Join-Path $out 'assistant_module\operator_catalog'
     New-Item -ItemType Directory -Force -Path (Join-Path $operatorData 'server') | Out-Null
-    foreach ($file in @('mod.ini','symbols.fragment.ini','module.json')) {
+    foreach ($file in @('mod.ini','symbols.fragment.ini','module.json','display.example.ini')) {
         Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\$file") -Destination $operatorData
     }
     foreach ($file in @('schema.sql','random.sql','drop.sql','free.sql')) {

@@ -27,7 +27,7 @@ are backed up and cleared to reveal the Unicode definition name.
 Existing holdings of the five defaults are backed up and upgraded in place to
 permanent use; user-operator IDs, slots, custom names and equipped references stay.
 
-Validation includes 19 Python tests, 3 DLL/native fixtures, actual UI operation,
+Validation includes 20 Python tests, 3 DLL/native fixtures, actual UI operation,
 and a fresh SQL fixture database using synthetic accounts. Live gameplay and
 in-game presentation remain manual acceptance gates. The default pack also has
 isolated SQL tests of permanent grants, legacy alias migration, typed pools and
