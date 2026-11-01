@@ -41,6 +41,7 @@ Runner g_runner;
 Plan g_preview;
 bool g_hasPreview=false,g_scanning=false,g_mutating=false,g_pumping=false,g_sortAfter=true;
 bool g_needsRelog=false;
+bool g_sorting=false;
 Kind g_scanReward=Kind::GB;
 int g_keep=2,g_maxSlots=1200;
 DWORD g_interval=150,g_timeout=10000;
@@ -122,7 +123,7 @@ bool SendUnsafe(const uint8_t* bytes,int size) {
 bool Send(const uint8_t* bytes,int size) {
     __try{return SendUnsafe(bytes,size);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_ui.AfterNativeRefresh();}}
+void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_page(g_grid);g_ui.AfterNativeRefresh();}}
 void RedrawNow() {__try{RedrawUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){}}
 std::wstring Label(const Unit& u) {
     auto r=g_rules.find(u.type);
@@ -163,9 +164,9 @@ void BeginScan(Kind reward) {
     g_ui.Rows({});g_scanning=true;g_ui.State(true,false);
     Status(L"正在逐台向服务器核对重复机体；此步骤不会兑换或删除机体。");
 }
-void StartPlan(Plan p,const Snapshot& s) {
+void StartPlan(Plan p,const Snapshot& s,bool sorting=false) {
     g_hasPreview=false;g_ui.State(true,false);
-    try {g_runner.Start(std::move(p),s);g_mutating=true;g_nextSend=0;}
+    try {g_runner.Start(std::move(p),s);g_sorting=sorting;g_mutating=true;g_nextSend=0;}
     catch(const std::exception&){Status(L"预览之后机库已变化，请重新预览。");}
 }
 void BeginSort() {
@@ -174,7 +175,8 @@ void BeginSort() {
     Snapshot s;if(!GetSnapshot(s)){Status(L"请打开机库后重试；容量超出配置上限时请服主核对 MaxSlots。");return;}
     try {
         auto p=sdgo::hangar::Sort(s,g_rules);
-        Status(L"正在整理；锁定、出击中、舰队、租赁与未知机体保留原位。");StartPlan(std::move(p),s);
+        g_api->Log(g_mod,SDGO_LOG_INFO,"sort plan: %u units, %u protected/unknown, %u native swaps",static_cast<unsigned>(s.units.size()),static_cast<unsigned>(p.pinned),static_cast<unsigned>(p.actions.size()));
+        Status(L"正在整理；锁定、出击中、舰队、租赁与未知机体保留原位。");StartPlan(std::move(p),s,true);
     }catch(const std::exception&){Status(L"无法生成安全的排序方案，尚未发送请求。");}
 }
 
@@ -218,7 +220,7 @@ void HandleButton(void* self,void* control) {
     }else if(action==ui::Action::Previous)g_ui.Page(-1);
     else if(action==ui::Action::Next)g_ui.Page(1);
     else if(!Busy()) {
-        if(action==ui::Action::Sort){g_ui.Rows({});g_ui.Open();BeginSort();}
+        if(action==ui::Action::Sort){g_ui.Close();BeginSort();}
         if(action==ui::Action::Open) {
             g_hasPreview=false;g_ui.Rows({});g_ui.State(false,false);
             Status(L"重复机体兑换：先选择奖励并预览。\n每种相同状态至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁、已培养及未知状态机体不兑换。");
@@ -290,13 +292,14 @@ void Pump() {
                 }
                 const auto state=g_runner.state();
                 if(state==State::Complete) {
-                    g_mutating=false;RedrawNow();
-                    Status(L"完成 "+std::to_wstring(g_runner.completed())+L" 笔原生操作，机库已按回包同步，无需重新登录。\r\n奖励按服务器配置发放；道具使用原生奖励领取流程。");
+                    g_mutating=false;CloseUi();RedrawNow();
+                    if(g_sorting && !g_runner.completed())Status(L"可移动机体已按规则排列，无需换槽。\n受保护机体不移动；房间视图未更新请重新登录。");
+                    else Status(L"已确认 "+std::to_wstring(g_runner.completed())+L" 笔"+(g_sorting?L"换槽，已重绘机体管理页。":L"操作，奖励以服务器配置为准。")+L"\n大厅/房间的其他机库视图请重新登录同步。");
                     g_api->Log(g_mod,SDGO_LOG_INFO,"completed %u native operations",static_cast<unsigned>(g_runner.completed()));
                 } else if(state==State::Unknown) {
                     g_mutating=false;g_needsRelog=true;Status(L"操作已暂停。已确认 "+std::to_wstring(g_runner.completed())+L" 笔，最后一笔状态未知。\r\n请重新登录核对；不会自动重试，请勿立即再次兑换。");
                 } else if(state==State::Stopped) {
-                    g_mutating=false;RedrawNow();Status(L"已停止，保留已确认的 "+std::to_wstring(g_runner.completed())+L" 笔结果。需要继续时请重新预览。");
+                    g_mutating=false;CloseUi();RedrawNow();Status(L"已停止，保留已确认的 "+std::to_wstring(g_runner.completed())+L" 笔结果。需要继续时请重新预览。");
                 } else Status(L"正在等待服务器确认 "+std::to_wstring(g_runner.completed())+L" / "+std::to_wstring(g_runner.total())+L"。可停止，不会回滚已确认结果。");
             }
         }

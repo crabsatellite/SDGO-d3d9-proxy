@@ -15,6 +15,7 @@ uint8_t* infoPointer=info.data();uint8_t* profilePointer=profile.data();
 std::vector<Unit> owned;
 std::vector<uint8_t> pending;
 int sends=0,paints=0,gb=0,items=0,nativeClicks=0;
+std::string refreshOrder;
 bool rejected=false;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
 Unit Make(uint64_t uid,uint32_t type,uint16_t slot){
@@ -23,7 +24,9 @@ Unit Make(uint64_t uid,uint32_t type,uint16_t slot){
 }
 uint8_t* __cdecl App(){return app.data();}
 uint8_t* __cdecl Session(){return session.data();}
-void __fastcall Page(void*,void*){++paints;}
+void __fastcall Page(void*,void*){++paints;refreshOrder+='P';}
+void __fastcall View(void*,void*){refreshOrder+='V';}
+void __fastcall Redraw(void*,void*){refreshOrder+='R';}
 void __fastcall Clear(void*,void*){owned.clear();}
 void __fastcall Sync(void*,void*,const uint8_t*){}
 void __fastcall NativeClick(void*,void*,void*){++nativeClicks;}
@@ -43,14 +46,14 @@ SdgoApi api{};
 void Setup(){
     g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
-    pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;
+    pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;refreshOrder.clear();
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
     Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,reinterpret_cast<void*>(0xBAADF00D));
     Put(grid.data(),0,reinterpret_cast<void*>(0x12345678));Put(grid.data(),0x44,panel.data());panel[0x162]=1;
     Put(session.data(),0x14,7);Put(session.data(),0x58,uint32_t{0});Put(session.data(),0x5C,uint32_t{0});
     g_info=&infoPointer;g_profile=&profilePointer;g_grid=grid.data();g_gridVtable=Read<void*>(grid.data());
     g_app=&App;g_session=&Session;g_brief=reinterpret_cast<NativeGet>(&Brief);g_full=reinterpret_cast<NativeGet>(&Full);
-    g_send=reinterpret_cast<NativeSend>(&Send);g_page=reinterpret_cast<NativeVoid>(&Page);g_view=g_page;g_redraw=g_page;
+    g_send=reinterpret_cast<NativeSend>(&Send);g_page=reinterpret_cast<NativeVoid>(&Page);g_view=reinterpret_cast<NativeVoid>(&View);g_redraw=reinterpret_cast<NativeVoid>(&Redraw);
     g_clear=reinterpret_cast<NativeVoid>(&Clear);g_sync=reinterpret_cast<NativeSync>(&Sync);g_thread=GetCurrentThreadId();g_epoch=1;
     g_button=reinterpret_cast<ButtonFn>(&NativeClick);
     api.Log=&Log;g_api=&api;g_scanning=g_mutating=g_hasPreview=g_needsRelog=false;g_detailPending=0;g_runner=Runner{};
@@ -118,6 +121,24 @@ int main(){
     assert(!g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"UnitDeleteBtn"));
     assert(fixture::nativeClicks==1 && fixture::sends==0);
+    // Sorting must leave native unit cells visible, then refresh list, icons
+    // AND page visibility in native order. A no-op plan also stays on the grid.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
+    assert(g_mutating && !g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
+    for(int i=0;i<30 && g_mutating;++i) {
+        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
+    }
+    assert(!g_mutating && !g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
+    assert(fixture::refreshOrder=="VRP" && fixture::paints==1 && fixture::sends>0);
+    const auto sortedSends=fixture::sends;fixture::refreshOrder.clear();
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));g_nextTick=0;Pump();
+    assert(!g_mutating && !g_ui.Exchange() && fixture::sends==sortedSends && fixture::refreshOrder=="VRP");
+    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"无需换槽")!=std::wstring::npos);
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));g_nextTick=0;Pump();
+    assert(!g_mutating && !fixture::sends && !g_ui.Exchange());
     // Exercise the production native page event handler all the way through
     // detail requests, preview, both confirmations and synthetic native replies.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));

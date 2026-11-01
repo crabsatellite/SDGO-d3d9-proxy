@@ -91,6 +91,16 @@ bool PageUi::Attach(void* service) {
     if(buttonWidth_<100 || buttonWidth_>256 || buttonHeight_<16 || buttonHeight_>40)return false;
     const int x=static_cast<int>(sx)+buttonWidth_+8;
     if(x+2*buttonWidth_+8>w)return false; // do not overlap existing native controls
+    // 1330.uir is a full-screen 1024x768 dialog. Its unit grid begins at
+    // UnitLockBtn.x=418, not at x=0. The left unit-detail view is a sibling.
+    auto* lock=Read<void*>(service,0x48);
+    if(!Button(lock,bindings_.buttonVtable) || Read<void*>(lock,0x15C)!=dialog)return false;
+    const float left=Read<float>(lock,0x148);
+    if(!std::isfinite(left) || left<0 || left>sx)return false;
+    contentLeft_=static_cast<int>(left);
+    contentTop_=static_cast<int>(sy)+buttonHeight_+12;
+    contentWidth_=w-contentLeft_-12;
+    if(contentWidth_<3*buttonWidth_+24 || contentTop_+kSummaryLines*22+kRows*28+174>static_cast<size_t>(h))return false;
     auto** skins=Read<uint8_t**>(source,0x1A4);auto** skinsEnd=Read<uint8_t**>(source,0x1A8);
     const auto first=reinterpret_cast<uintptr_t>(skins),last=reinterpret_cast<uintptr_t>(skinsEnd);
     if(!first || last<first || last-first<3*sizeof(void*) || last-first>16*sizeof(void*) || (last-first)%sizeof(void*))return false;
@@ -107,30 +117,35 @@ bool PageUi::Attach(void* service) {
     serviceVtable_=Read<void*>(service);dialogVtable_=Read<void*>(dialog);
     bool ok=Add(L"ModHangarSort",L"一键整理",Action::Sort,x,static_cast<int>(sy),buttonWidth_,buttonHeight_,false) &&
         Add(L"ModHangarOpen",L"重复兑换",Action::Open,x+buttonWidth_+8,static_cast<int>(sy),buttonWidth_,buttonHeight_,false);
+    for(int i=0;ok && i<2;++i) {
+        const auto name=L"ModHangarNotice"+std::to_wstring(i);
+        ok=Add(name.c_str(),L"",Action::None,contentLeft_,h-40+i*18,contentWidth_,16,false);
+        if(ok)controls_.back().notice=true;
+    }
     for(size_t i=0;ok && i<kSummaryLines;++i) {
         const auto name=L"ModHangarStatus"+std::to_wstring(i);
-        ok=Add(name.c_str(),L"",Action::None,12,44+static_cast<int>(i)*22,w-24,22,true);
+        ok=Add(name.c_str(),L"",Action::None,contentLeft_,contentTop_+static_cast<int>(i)*22,contentWidth_,22,true);
     }
     for(size_t i=0;ok && i<kRows;++i) {
         const auto name=L"ModHangarRow"+std::to_wstring(i);
-        ok=Add(name.c_str(),L"",Action::None,12,174+static_cast<int>(i)*28,w-24,26,true);
+        ok=Add(name.c_str(),L"",Action::None,contentLeft_,contentTop_+130+static_cast<int>(i)*28,contentWidth_,26,true);
     }
     const int bottom=h-84;
-    ok=ok && Add(L"ModHangarPrevious",L"上一页",Action::Previous,12,bottom-38,96,26,true) &&
-        Add(L"ModHangarNext",L"下一页",Action::Next,24+buttonWidth_,bottom-38,96,26,true) &&
-        Add(L"ModHangarPage",L"",Action::None,36+2*buttonWidth_,bottom-38,w-48-2*buttonWidth_,26,true) &&
-        Add(L"ModHangarGB",L"预览换 GB",Action::GB,12,bottom,150,26,true) &&
-        Add(L"ModHangarItem",L"预览换经验胶囊",Action::Item,24+buttonWidth_,bottom,200,26,true) &&
-        Add(L"ModHangarConfirm",L"确认兑换",Action::Confirm,12,bottom+36,274,28,true) &&
-        Add(L"ModHangarCancel",L"返回机库",Action::Cancel,24+buttonWidth_,bottom+36,180,28,true);
+    ok=ok && Add(L"ModHangarPrevious",L"上一页",Action::Previous,contentLeft_,bottom-38,96,26,true) &&
+        Add(L"ModHangarNext",L"下一页",Action::Next,contentLeft_+12+buttonWidth_,bottom-38,96,26,true) &&
+        Add(L"ModHangarPage",L"",Action::None,contentLeft_+24+2*buttonWidth_,bottom-38,contentWidth_-24-2*buttonWidth_,26,true) &&
+        Add(L"ModHangarGB",L"预览换 GB",Action::GB,contentLeft_,bottom,150,26,true) &&
+        Add(L"ModHangarItem",L"预览换经验胶囊",Action::Item,contentLeft_+12+buttonWidth_,bottom,200,26,true) &&
+        Add(L"ModHangarConfirm",L"确认兑换",Action::Confirm,contentLeft_,bottom+36,274,28,true) &&
+        Add(L"ModHangarCancel",L"返回机库",Action::Cancel,contentLeft_+12+buttonWidth_,bottom+36,180,28,true);
     if(!ok) {
         for(auto& control:controls_)Write<uint8_t>(control.pointer,0x162,0);
         Detach();return false;
     }
-    status_=L"先选择奖励并预览；预览不会兑换机体。";
+    status_.clear();
     Render(); // prepare every caption and state while all children stay hidden
     published_=true;
-    for(const auto& control:controls_)if(!control.body)Write<uint8_t>(control.pointer,0x162,1);
+    Render();
     return true;
 }
 void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
@@ -181,32 +196,36 @@ void PageUi::Page(int delta) {
     Render();
 }
 Action PageUi::Click(void* pointer) const {
-    for(const auto& c:controls_)if(c.pointer==pointer && Read<uint8_t>(pointer,0x162) && Read<uint8_t>(pointer,0x167))return c.action;
+    for(const auto& c:controls_)if(c.pointer==pointer && Read<uint8_t>(pointer,0x162) && Read<uint8_t>(pointer,0x167))return c.action==Action::Sort && busy_?Action::Cancel:c.action;
     return Action::None;
 }
 void PageUi::Render() {
     if(!Connected())return;
-    const auto summary=Lines(armed_?L"再次确认将兑换清单中的机体，无法撤销。\n请核对奖励、保留份数与全部清单。\n"+status_:status_,static_cast<size_t>((width_-24)/14));
+    const auto summary=Lines(armed_?L"再次确认将兑换清单中的机体，无法撤销。\n请核对奖励、保留份数与全部清单。\n"+status_:status_,static_cast<size_t>(contentWidth_/14));
     const size_t pages=std::max<size_t>(1,(rows_.size()+kRows-1)/kRows);
-    size_t line=0,row=0;
+    size_t line=0,row=0,notice=0;
     for(auto& c:controls_) {
         bool visible=c.body?exchange_:!exchange_;
+        if(c.notice)visible=visible && !status_.empty();
         bool enabled=c.action!=Action::None && !busy_;
+        if(c.action==Action::Sort)enabled=true; // same entry stops a running sort
         if(c.action==Action::Confirm)enabled=!busy_ && confirm_;
         if(c.action==Action::Cancel)enabled=true;
         if(c.action==Action::Previous)enabled=page_>0;
         if(c.action==Action::Next)enabled=page_+1<pages;
-        if(c.body && c.action==Action::None) {
+        if(c.notice)Text(c,notice<summary.size()?summary[notice++]:L"",0xFFE3EEF6);
+        else if(c.body && c.action==Action::None) {
             if(line<kSummaryLines) {Text(c,line<summary.size()?summary[line]:L"",0xFFE3EEF6);++line;}
             else if(row<kRows) {
                 const size_t index=page_*kRows+row++;
                 std::wstring value=index<rows_.size()?std::to_wstring(index+1)+L". "+rows_[index]:L"";
-                const size_t max=static_cast<size_t>((width_-28)/14);
+                const size_t max=static_cast<size_t>((contentWidth_-4)/14);
                 if(value.size()>max)value=value.substr(0,max-1)+L"…";
                 Text(c,value,0xFFE3EEF6);
             }else Text(c,L"清单 "+std::to_wstring(page_+1)+L" / "+std::to_wstring(pages)+L" 页，共 "+std::to_wstring(rows_.size())+L" 台",0xFFE3EEF6);
         }
-        if(c.action==Action::Confirm)Text(c,armed_?L"再次确认兑换":L"确认兑换",enabled?textColor_:0xFF70808A);
+        if(c.action==Action::Sort)Text(c,busy_?L"停止整理":L"一键整理",textColor_);
+        else if(c.action==Action::Confirm)Text(c,armed_?L"再次确认兑换":L"确认兑换",enabled?textColor_:0xFF70808A);
         else if(c.action==Action::Cancel)Text(c,busy_?L"停止后续请求":L"返回机库",textColor_);
         else if(c.action!=Action::None)Text(c,c.text,enabled?textColor_:0xFF70808A);
         if(!visible || !enabled) {

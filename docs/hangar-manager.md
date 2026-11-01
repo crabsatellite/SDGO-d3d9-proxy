@@ -20,6 +20,14 @@ state number identifies menu services; lobby objects have no game-mode field at
 offset `+0C`. Page attachment and received clicks are logged separately from
 successful Mod loading.
 
+Version 0.2.4 keeps the native unit grid visible during sorting and returns to it
+after exchange. Sorting no longer opens the empty duplicate preview. The same
+sort entry becomes a stop button while sorting; status appears below the grid.
+Preview controls follow the actual right-hand grid origin in the full-screen
+native dialog. Refresh follows the original list, icon and page-visibility order.
+Zero changes means eligible units already match the selected order. Other menu
+or room inventory views may retain their cache; log in again to synchronize them.
+
 ## Install and open
 
 This gameplay extension is included in Full framework packages and omitted from
