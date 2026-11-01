@@ -14,7 +14,7 @@ def main():
     files={name:stage/name for name in ['d3d9.dll','sdgo/core.dll','sdgo/symbols/GOnline-54BE1568-00C97000.ini',
         'sdgo/mods/hangar_manager/hangar_manager.dll','sdgo/mods/hangar_manager/mod.ini','sdgo/mods/hangar_manager/units.tsv']}
     packaged={('client/'+name):path for name,path in files.items()}
-    for name in ['install_hangar.ps1','install_client.ps1','export_hangar_rules.py']:
+    for name in ['install_hangar.ps1','install_client.ps1','install_common.ps1','export_hangar_rules.py']:
         packaged[name]=repo/'tools'/name
     packaged['README.zh-CN.md']=repo/'docs/hangar-manager.zh-CN.md'
     packaged['licenses/MinHook-LICENSE.txt']=repo/'third_party/minhook/LICENSE.txt'

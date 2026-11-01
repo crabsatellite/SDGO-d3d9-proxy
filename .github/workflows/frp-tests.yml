@@ -1,0 +1,46 @@
+name: Mod framework and FRP checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Configure Win32
+        run: cmake -S . -B build -A Win32
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Profiles and distribution
+        run: python -m unittest discover -s tests -p "test_frp*.py" -v
+      - name: Categorized mod contracts
+        run: ctest --test-dir build -C Release --output-on-failure -R "(mod_catalog|catalog_gates|package_catalog)_offline"
+      - name: Framework regressions
+        shell: powershell
+        run: |
+          & tests/loader_test.ps1
+          & tests/findwindow_fix_test.ps1
+          & tests/install_test.ps1
+      - name: New-account policy
+        run: ctest --test-dir build -C Release --output-on-failure -R "^new_account_policy$"
+      - name: AI and staging regressions
+        run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|rank_progression_fix_offline|mod_staging_offline)$"
+      - name: Native battle reward integration
+        run: ctest --test-dir build -C Release --output-on-failure -R "^battle_reward_"
+      - name: Room commands and owned random loadouts
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(random|commands)|ai_catalog_provider)_offline"
+      - name: Full room title feature
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(metadata|titles)|title_rules)"
+      - name: FRP runtime and installer
+        shell: powershell
+        run: |
+          & tests/net_route_test.ps1
+          & tests/net_login_test.ps1
+          & tests/agent_udp_pool_test.ps1
+          & tests/frp_install_test.ps1
+      - name: Full release packaging
+        shell: powershell
+        run: '& tools/package.ps1'

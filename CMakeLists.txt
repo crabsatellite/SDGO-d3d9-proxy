@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SDGO_VERSION LIMIT_COUNT 1)
 project(sdgo_mod_framework VERSION ${SDGO_VERSION} LANGUAGES C CXX RC)
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 set(SDGO_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(SDGO_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(SDGO_VERSION_PATCH ${PROJECT_VERSION_PATCH})
@@ -18,7 +20,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Output is staged as two trees that mirror the install targets:
 #   stage/<config>/client/  -> the game folder (next to GOnline.exe): d3d9.dll, sdgo/...
-#   stage/<config>/server/  -> each battle server folder (next to BattleServer.exe): winmm.dll, sdgo/...
+#   stage/<config>/server/  -> Battle/Agent/World host folders: winmm.dll, sdgo/...
 # tools/install_client.ps1 / install_server.ps1 copy them; tools/package.ps1 zips a release.
 set(SDGO_STAGE "${CMAKE_BINARY_DIR}/stage/$<CONFIG>")
 
@@ -71,7 +73,7 @@ add_library(winmm_shim SHARED loader/winmm/winmm_shim.cpp loader/winmm/winmm.def
 set_target_properties(winmm_shim PROPERTIES OUTPUT_NAME winmm)
 target_link_libraries(winmm_shim PRIVATE early_boot)
 sdgo_strict(winmm_shim)
-sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (battle server)")
+sdgo_version_resource(winmm_shim winmm.dll "SDGO mod framework loader (server)")
 sdgo_stage(winmm_shim "server")
 
 # ---- core: sdgo/core.dll ----------------------------------------------------------
@@ -97,11 +99,15 @@ function(sdgo_add_mod id)
     sdgo_strict(${id})
     sdgo_version_resource(${id} ${id}.dll "SDGO mod: ${MOD_DESCRIPTION}")
     sdgo_stage(${id} "${root}/mods/${id}")
+    # Copy on every target build: this refreshes changed source data and also
+    # repairs a stale/corrupted staged file whose timestamp is newer than source.
+    set(mod_data_commands COMMAND "${CMAKE_COMMAND}" -E make_directory "${SDGO_STAGE}/${root}/mods/${id}")
     foreach(file mod.ini ${MOD_FILES})
-        add_custom_command(TARGET ${id} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
+        list(APPEND mod_data_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/${id}/${file}" "${SDGO_STAGE}/${root}/mods/${id}/${file}")
     endforeach()
+    add_custom_target(${id}_data ${mod_data_commands} VERBATIM)
+    add_dependencies(${id} ${id}_data)
 endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
@@ -115,6 +121,66 @@ sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_a
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
              SOURCES mods/hangar_manager/hangar_manager.cpp FILES units.tsv LIBS user32 gdi32)
+sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
+             SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
+sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
+             SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
+             LIBS odbc32 bcrypt FILES config.example.ini)
+
+sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
+sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
+sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
+             SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
+
+
+# Private feature libraries; no room metadata or gameplay state enters the core.
+add_library(room_metadata_common STATIC mods/room_metadata/common/room_metadata_common.cpp)
+target_include_directories(room_metadata_common PUBLIC mods/room_metadata/common)
+sdgo_strict(room_metadata_common)
+add_library(room_titles_client_state STATIC mods/room_titles/client_state.cpp)
+target_include_directories(room_titles_client_state PUBLIC mods/room_titles)
+target_link_libraries(room_titles_client_state PUBLIC room_metadata_common)
+sdgo_strict(room_titles_client_state)
+add_library(room_titles_native_transport STATIC mods/room_titles/native_transport.cpp)
+target_link_libraries(room_titles_native_transport PUBLIC sdgo_api room_metadata_common)
+sdgo_strict(room_titles_native_transport)
+
+sdgo_add_mod(room_titles_agent SERVER DESCRIPTION "room title transport (Agent)"
+             SOURCES mods/room_titles_agent/room_titles_agent.cpp LIBS room_metadata_common)
+sdgo_add_mod(room_titles DESCRIPTION "extended room titles (client)"
+             SOURCES mods/room_titles/room_titles.cpp mods/room_titles/native_ui.cpp
+             LIBS room_titles_native_transport room_titles_client_state user32)
+sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle)"
+             SOURCES mods/room_titles_server/room_titles_server.cpp mods/room_titles_server/room_titles_server_logic.cpp
+             LIBS room_metadata_common bcrypt)
+
+sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
+# Optional catalog provider, same mod id in the two processes. Owner-generated
+# catalog.bin is never staged or bundled by a framework build.
+foreach(role client server)
+    set(target ai_catalog_${role})
+    add_library(${target} SHARED mods/ai_catalog/${role}.cpp)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME ai_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/catalog_${role}/$<CONFIG>")
+    target_link_libraries(${target} PRIVATE sdgo_api)
+    sdgo_strict(${target})
+    sdgo_version_resource(${target} ai_catalog.dll "SDGO mod: AI roster (${role})")
+    sdgo_stage(${target} "${role}/sdgo/mods/ai_catalog")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/${role}.ini"
+            "${SDGO_STAGE}/${role}/sdgo/mods/ai_catalog/mod.ini")
+endforeach()
+add_custom_target(ai_catalog_data ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/client/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SDGO_STAGE}/server/sdgo/mods/ai_catalog"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/client.ini"
+        "${SDGO_STAGE}/client/sdgo/mods/ai_catalog/mod.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/server.ini"
+        "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -126,6 +192,15 @@ add_custom_target(sdgo_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDGO_SYMBOL_FILES} "${SDGO_STAGE}/server/sdgo/symbols/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/config/sdgo.ini" "${SDGO_STAGE}/server/sdgo/"
     COMMENT "Staging symbol files and sdgo.ini"
+)
+
+# The same manifests drive package selection and runtime category/feature gates.
+add_custom_target(sdgo_catalog ALL
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/mod_catalog.py"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}"
+        --output "${SDGO_STAGE}/client/sdgo/catalog.json"
+        --output "${SDGO_STAGE}/server/sdgo/catalog.json"
+    COMMENT "Validating and staging the categorized mod catalog"
 )
 
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
@@ -147,6 +222,20 @@ foreach(fixture SDPlus generic_input_method)
     sdgo_strict(findwindow_fixture_${fixture})
 endforeach()
 
+# Real-core transport tests, never staged into release packages.
+add_executable(net_route_test tests/net_route_test.cpp)
+target_link_libraries(net_route_test PRIVATE sdgo_api ws2_32)
+sdgo_strict(net_route_test)
+add_executable(net_login_test tests/net_login_test.cpp)
+target_link_libraries(net_login_test PRIVATE sdgo_api ws2_32 shell32)
+sdgo_strict(net_login_test)
+add_library(net_route_conflict_mod SHARED tests/net_route_conflict_mod.cpp)
+target_link_libraries(net_route_conflict_mod PRIVATE sdgo_api ws2_32)
+sdgo_strict(net_route_conflict_mod)
+add_executable(agent_udp_pool_test tests/agent_udp_pool_test.cpp)
+target_link_libraries(agent_udp_pool_test PRIVATE sdgo_api ws2_32)
+sdgo_strict(agent_udp_pool_test)
+
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
@@ -164,6 +253,168 @@ if(BUILD_TESTING)
     add_executable(hangar_ui_preview tests/hangar_ui_preview.cpp)
     target_link_libraries(hangar_ui_preview PRIVATE sdgo_api user32 gdi32)
     sdgo_strict(hangar_ui_preview)
+    add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
+    target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
+    sdgo_strict(catalog_conflict_mod)
+    add_executable(ai_catalog_test tests/ai_catalog_test.cpp)
+    target_link_libraries(ai_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(ai_catalog_test)
+    # Keep native fixture calls as hookable calls in optimized builds as well.
+    target_compile_options(ai_catalog_test PRIVATE /Ob0)
+    add_executable(ai_catalog_native_test tests/ai_catalog_native_test.cpp)
+    target_link_libraries(ai_catalog_native_test PRIVATE sdgo_api minhook)
+    sdgo_strict(ai_catalog_native_test)
+    add_executable(ai_catalog_client_map_test EXCLUDE_FROM_ALL tests/ai_catalog_client_map_test.cpp)
+    target_link_libraries(ai_catalog_client_map_test PRIVATE sdgo_api kernel32 shell32)
+    sdgo_strict(ai_catalog_client_map_test)
+    target_compile_options(ai_catalog_client_map_test PRIVATE /Gy /GS- /GR-)
+    target_link_options(ai_catalog_client_map_test PRIVATE /BASE:0x400000 /DYNAMICBASE:NO /NODEFAULTLIB /ENTRY:Entry /IGNORE:4078)
+    # Explicit optional acceptance probe requiring a locally supplied Agent EXE.
+    # It is never staged or run by CI against game files.
+    add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
+    target_link_libraries(native_agent_cash_probe_mod PRIVATE sdgo_api)
+    sdgo_strict(native_agent_cash_probe_mod)
+    # The daily component can be supplied by a later integrated target. Until
+    # then compile its exact committed implementation as a non-staged fixture.
+    if(TARGET daily_rewards)
+        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards)
+    else()
+        add_library(daily_rewards_coexist_fixture SHARED tests/fixtures/daily_rewards_coexist/daily_rewards.cpp)
+        target_link_libraries(daily_rewards_coexist_fixture PRIVATE sdgo_api)
+        set_target_properties(daily_rewards_coexist_fixture PROPERTIES OUTPUT_NAME daily_rewards
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/reward_daily_fixture/$<CONFIG>")
+        sdgo_strict(daily_rewards_coexist_fixture)
+        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards_coexist_fixture)
+    endif()
+    add_executable(battle_rewards_runtime_test tests/battle_rewards_runtime_test.cpp)
+    target_link_libraries(battle_rewards_runtime_test PRIVATE sdgo_api)
+    target_include_directories(battle_rewards_runtime_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_rewards_runtime_test)
+    add_dependencies(battle_rewards_runtime_test battle_rewards sdgo_core ${SDGO_REWARD_DAILY_TEST_TARGET})
+    add_test(NAME battle_reward_runtime_integration COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_rewards_runtime_test.ps1" -Config "$<CONFIG>"
+        -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:${SDGO_REWARD_DAILY_TEST_TARGET}>")
+    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120 RUN_SERIAL TRUE)
+    add_executable(battle_reward_mission_test tests/battle_reward_mission_test.cpp)
+    target_link_libraries(battle_reward_mission_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_mission_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_mission_test)
+    add_test(NAME battle_reward_mission_offline COMMAND battle_reward_mission_test)
+    set_tests_properties(battle_reward_mission_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_stats_test tests/battle_reward_stats_test.cpp)
+    target_link_libraries(battle_reward_stats_test PRIVATE sdgo_api)
+    sdgo_strict(battle_reward_stats_test)
+    add_test(NAME battle_reward_stats_offline COMMAND battle_reward_stats_test)
+    set_tests_properties(battle_reward_stats_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_native_damage_test tests/battle_reward_native_damage_test.cpp)
+    target_link_libraries(battle_reward_native_damage_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_native_damage_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_native_damage_test)
+    add_test(NAME battle_reward_native_damage_offline COMMAND battle_reward_native_damage_test)
+    set_tests_properties(battle_reward_native_damage_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_jobs_test tests/battle_reward_jobs_test.cpp)
+    target_link_libraries(battle_reward_jobs_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_jobs_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_jobs_test)
+    add_test(NAME battle_reward_jobs_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reward_job_interop.py" "$<TARGET_FILE:battle_reward_jobs_test>")
+    set_tests_properties(battle_reward_jobs_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(battle_reward_cash_notify_test tests/battle_reward_cash_notify_test.cpp)
+    target_link_libraries(battle_reward_cash_notify_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_cash_notify_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_cash_notify_test)
+    add_test(NAME battle_reward_cash_notify_offline COMMAND battle_reward_cash_notify_test)
+    set_tests_properties(battle_reward_cash_notify_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_boss_test tests/battle_reward_boss_test.cpp)
+    target_link_libraries(battle_reward_boss_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_boss_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_boss_test)
+    add_test(NAME battle_reward_boss_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reward_boss_native_probe.py" "$<TARGET_FILE:battle_reward_boss_test>")
+    set_tests_properties(battle_reward_boss_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_executable(battle_reward_combat_test tests/battle_reward_combat_test.cpp)
+    target_link_libraries(battle_reward_combat_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_combat_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_combat_test)
+    add_test(NAME battle_reward_combat_offline COMMAND battle_reward_combat_test)
+    set_tests_properties(battle_reward_combat_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_runtime_state_test tests/battle_reward_runtime_state_test.cpp)
+    target_link_libraries(battle_reward_runtime_state_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_runtime_state_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_runtime_state_test)
+    add_test(NAME battle_reward_runtime_state_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_state_probe.py" "$<TARGET_FILE:battle_reward_runtime_state_test>")
+    set_tests_properties(battle_reward_runtime_state_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(battle_reward_plan_test tests/battle_reward_plan_test.cpp)
+    target_link_libraries(battle_reward_plan_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_plan_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_plan_test)
+    add_test(NAME battle_reward_plan_offline COMMAND battle_reward_plan_test)
+    set_tests_properties(battle_reward_plan_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_bridge_test tests/battle_reward_bridge_test.cpp)
+    target_link_libraries(battle_reward_bridge_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_bridge_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_bridge_test)
+    add_test(NAME battle_reward_bridge_offline COMMAND battle_reward_bridge_test)
+    set_tests_properties(battle_reward_bridge_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_policy_test tests/battle_reward_policy_test.cpp)
+    target_link_libraries(battle_reward_policy_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_policy_test)
+    add_test(NAME battle_reward_policy_offline COMMAND battle_reward_policy_test)
+    set_tests_properties(battle_reward_policy_offline PROPERTIES TIMEOUT 30)
+    add_test(NAME battle_reward_cpp_parity COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reward_cpp_parity.py" --no-build --exe "$<TARGET_FILE:battle_reward_policy_test>")
+    set_tests_properties(battle_reward_cpp_parity PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_test(NAME battle_reward_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_battle_reward*.py" -v)
+    set_tests_properties(battle_reward_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_test(NAME battle_reward_delivery_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_reward*.py" -v)
+    set_tests_properties(battle_reward_delivery_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
+
+    add_executable(rank_progression_fix_test tests/rank_progression_fix_test.cpp)
+    target_link_libraries(rank_progression_fix_test PRIVATE sdgo_api ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(rank_progression_fix_test)
+    add_test(NAME rank_progression_fix_offline COMMAND rank_progression_fix_test)
+    set_tests_properties(rank_progression_fix_offline PROPERTIES TIMEOUT 30)
+    add_executable(rank_progression_db_test tests/rank_progression_db_test.cpp)
+    target_link_libraries(rank_progression_db_test PRIVATE ole32 oleaut32 bcrypt uuid)
+    sdgo_strict(rank_progression_db_test)
+    add_library(ai_catalog_provider_fixture SHARED tests/ai_catalog_provider_fixture.cpp)
+    set_target_properties(ai_catalog_provider_fixture PROPERTIES OUTPUT_NAME ai_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/provider_fixture/$<CONFIG>/ai_catalog")
+    sdgo_strict(ai_catalog_provider_fixture)
+    add_executable(ai_catalog_provider_test tests/ai_catalog_provider_test.cpp)
+    target_link_libraries(ai_catalog_provider_test PRIVATE sdgo_api)
+    sdgo_strict(ai_catalog_provider_test)
+    add_dependencies(ai_catalog_provider_test ai_catalog_provider_fixture)
+    add_test(NAME ai_catalog_provider_offline COMMAND ai_catalog_provider_test $<TARGET_FILE:ai_catalog_provider_fixture>)
+    set_tests_properties(ai_catalog_provider_offline PROPERTIES TIMEOUT 30)
+
+    add_executable(room_commands_test tests/room_commands_test.cpp)
+    target_link_libraries(room_commands_test PRIVATE sdgo_api)
+    sdgo_strict(room_commands_test)
+    add_test(NAME room_commands_offline COMMAND room_commands_test)
+    set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
+
+    add_executable(room_random_test tests/room_random_test.cpp)
+    target_link_libraries(room_random_test PRIVATE sdgo_api bcrypt)
+    sdgo_strict(room_random_test)
+    add_test(NAME room_random_offline COMMAND room_random_test)
+    set_tests_properties(room_random_offline PROPERTIES TIMEOUT 30)
+
+    # Explicitly invoked read-only host probe; not a CTest or staged executable.
+    add_executable(room_random_inventory_probe tests/room_random_inventory_probe.cpp mods/room_random/inventory.cpp)
+    target_link_libraries(room_random_inventory_probe PRIVATE sdgo_api odbc32)
+    sdgo_strict(room_random_inventory_probe)
+
+    add_library(catalog_gate_probe SHARED tests/catalog_gate_probe.cpp)
+    target_link_libraries(catalog_gate_probe PRIVATE sdgo_api)
+    sdgo_strict(catalog_gate_probe)
+    add_test(NAME mod_catalog_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_catalog.py" -v)
+    set_tests_properties(mod_catalog_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
@@ -174,6 +425,18 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME ai_catalog_integration COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
+        add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(catalog_gates_offline PROPERTIES TIMEOUT 60)
+        add_test(NAME package_catalog_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_catalog_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(package_catalog_offline PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         foreach(check loader findwindow_fix)
             add_test(NAME ${check}_offline COMMAND "${SDGO_POWERSHELL}"
                 -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/${check}_test.ps1"
@@ -183,7 +446,8 @@ if(BUILD_TESTING)
         add_test(NAME installer_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_test.ps1"
             -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(installer_offline PROPERTIES TIMEOUT 60)
+        # Exercises repeated client/Battle/World updates in child PowerShell processes.
+        set_tests_properties(installer_offline PROPERTIES TIMEOUT 180)
         add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
@@ -211,4 +475,89 @@ if(BUILD_TESTING)
     else()
         message(STATUS "Lua simulation disabled; set SDGO_LUA50_SOURCE to include it")
     endif()
+endif()
+
+# Optional full-title adapters use the current shared command grammar.
+foreach(mode coop pvp)
+    add_executable(${mode}_title_rules_test tests/${mode}_title_rules_test.cpp)
+    target_link_libraries(${mode}_title_rules_test PRIVATE sdgo_api)
+    sdgo_strict(${mode}_title_rules_test)
+endforeach()
+
+# Offline room-title tests and real-core isolated Agent bridge.
+add_executable(room_metadata_common_test tests/room_metadata_common_test.cpp)
+target_link_libraries(room_metadata_common_test PRIVATE room_metadata_common)
+sdgo_strict(room_metadata_common_test)
+
+add_executable(room_metadata_allocation_test tests/room_metadata_allocation_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
+target_link_libraries(room_metadata_allocation_test PRIVATE room_metadata_common)
+sdgo_strict(room_metadata_allocation_test)
+
+add_executable(room_titles_client_state_test tests/room_titles_client_state_test.cpp)
+target_link_libraries(room_titles_client_state_test PRIVATE room_titles_client_state)
+sdgo_strict(room_titles_client_state_test)
+
+add_executable(room_titles_transport_test tests/room_titles_transport_test.cpp)
+target_link_libraries(room_titles_transport_test PRIVATE sdgo_api room_metadata_common)
+sdgo_strict(room_titles_transport_test)
+
+add_executable(room_titles_native_ui_test tests/room_titles_native_ui_test.cpp mods/room_titles/native_ui.cpp)
+target_link_libraries(room_titles_native_ui_test PRIVATE sdgo_api user32)
+sdgo_strict(room_titles_native_ui_test)
+
+add_executable(room_titles_client_test tests/room_titles_client_test.cpp)
+target_link_libraries(room_titles_client_test PRIVATE room_titles_client_state room_titles_native_transport user32)
+sdgo_strict(room_titles_client_test)
+
+add_executable(room_titles_server_test tests/room_titles_server_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
+target_include_directories(room_titles_server_test PRIVATE mods/room_titles_server)
+target_link_libraries(room_titles_server_test PRIVATE room_metadata_common)
+sdgo_strict(room_titles_server_test)
+
+add_executable(room_titles_server_native_test tests/room_titles_server_native_test.cpp mods/room_titles_server/room_titles_server_logic.cpp)
+target_include_directories(room_titles_server_native_test PRIVATE mods/room_titles_server)
+target_link_libraries(room_titles_server_native_test PRIVATE sdgo_api room_metadata_common bcrypt)
+sdgo_strict(room_titles_server_native_test)
+
+add_executable(room_title_native_test tests/room_title_native_test.cpp)
+target_link_libraries(room_title_native_test PRIVATE bcrypt)
+sdgo_strict(room_title_native_test)
+
+add_executable(room_titles_agent_test tests/room_titles_agent_test.cpp)
+target_link_libraries(room_titles_agent_test PRIVATE sdgo_api room_metadata_common)
+sdgo_strict(room_titles_agent_test)
+
+add_library(room_titles_agent_conflict_mod SHARED tests/room_titles_agent_test.cpp)
+target_compile_definitions(room_titles_agent_conflict_mod PRIVATE ROOM_TITLES_AGENT_CONFLICT_MOD=1)
+target_link_libraries(room_titles_agent_conflict_mod PRIVATE sdgo_api)
+sdgo_strict(room_titles_agent_conflict_mod)
+
+
+if(BUILD_TESTING)
+    foreach(test room_metadata_common room_metadata_allocation room_titles_client_state room_titles_transport room_titles_native_ui room_titles_client room_titles_server room_titles_server_native coop_title_rules pvp_title_rules)
+        add_test(NAME ${test}_offline COMMAND ${test}_test)
+        set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    if(SDGO_POWERSHELL)
+        add_test(NAME room_titles_agent_offline COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/room_titles_agent_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(room_titles_agent_offline PROPERTIES TIMEOUT 90)
+    endif()
+    set(SDGO_ROOM_TITLE_NATIVE_HOST "" CACHE FILEPATH "Optional known BattleServer for bounded constructor fixture")
+    if(SDGO_ROOM_TITLE_NATIVE_HOST)
+        add_test(NAME room_title_native_offline COMMAND room_title_native_test "${SDGO_ROOM_TITLE_NATIVE_HOST}")
+        set_tests_properties(room_title_native_offline PROPERTIES TIMEOUT 30)
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
+    sdgo_strict(new_account_policy_test)
+    add_test(NAME new_account_policy COMMAND new_account_policy_test)
+    set_tests_properties(new_account_policy PROPERTIES TIMEOUT 30)
+    # Opt-in SQL fixture: needs an isolated container and local credentials.
+    add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
+    target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(new_account_sql_test)
 endif()

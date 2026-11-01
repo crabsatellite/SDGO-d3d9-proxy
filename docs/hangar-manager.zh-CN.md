@@ -22,6 +22,10 @@
 
 ## 安装
 
+本 Mod 归入「玩法扩展」，标记为 Beta，仅安装到客户端。Full 框架包包含它，Base 包不包含；
+可通过全局分类、`[features] hangar-manager=0` 或 `[mods] hangar_manager=0` 单独控制。
+完整框架包使用普通客户端安装脚本；下面的独立增量包安装方式保留已有核心和其他 Mod。
+
 关闭**目标客户端**，解压本包后执行：
 
 ```powershell
