@@ -4,6 +4,7 @@
  * Loading chain:
  *   GOnline.exe      --static import--> d3d9.dll  (loader shim, next to the exe)
  *   BattleServer.exe --static import--> winmm.dll (loader shim, next to the exe)
+ *   AgentServer.exe / WorldServer.exe -> winmm.dll (same server loader)
  *     --early CRT hook--> sdgo/core.dll  (this API)
  *       --mod.ini manifests--> sdgo/mods/<id>/<id>.dll
  * Reference: docs/framework.md.

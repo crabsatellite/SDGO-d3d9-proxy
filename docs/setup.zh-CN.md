@@ -14,6 +14,7 @@
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | 原生 Agent 中继宿主 |
+| WorldServer.exe | `WorldServer-548A86E3-0010C000` | 原生 World 结算宿主 |
 
 安装脚本会打印你的 exe 的 host key。其它版本也能装，但框架会记录"没有匹配的 symbol 文件"并关闭所有
 mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
@@ -71,6 +72,17 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 ```
 
 默认角色仍为 Battle。服主和玩家的配置分发见 [FRP 分发指南](frp-distribution.zh-CN.md)。
+
+### World 服务器
+
+WorldServer 基础修复使用同一安装器的 `-Role World`，先停止目标 WorldServer：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
+```
+
+详见[军衔修复 Mod](rank-progression-fix.zh-CN.md)，此修复无需客户端组件。
+卸载 World 宿主时也应指定相同角色。
 
 ## 卸载
 
