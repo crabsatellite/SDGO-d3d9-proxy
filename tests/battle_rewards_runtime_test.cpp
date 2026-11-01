@@ -82,6 +82,21 @@ constexpr std::array<std::array<ptrdiff_t, 6>, 10> kDailyFields = {{
     {{-0x760, -0x20, -0x860, -0x10, -0x840, -0x834}},
 }};
 
+// Independently traced EBP sources for packet +1E, +24, +2A and +30.
+// Packet +36 is the event bucket in kDailyFields. Only these GB rows change.
+constexpr std::array<std::array<ptrdiff_t, 4>, 10> kGDisplayFields = {{
+    {{-0x758, -0x10, -0x76C, -0x744}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x74C, -0x08, -0x760, -0x73C}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+}};
+
 constexpr std::array<const char*, 10> kAugmentSymbols = {{
     "battle.rewards.augment.personal",
     "battle.rewards.augment.team",
@@ -480,6 +495,8 @@ std::unique_ptr<FrameFixture> PrepareFrame(MatchFixture* match, unsigned site,
     Put(frame, fields[3], static_cast<uint16_t>(2));
     Put(frame, fields[4], static_cast<uint16_t>(3));
     Put(frame, fields[5], static_cast<uint16_t>(4));
+    for (unsigned i = 0; i < 4; ++i)
+        Put(frame, kGDisplayFields[site][i], static_cast<uint16_t>(16 + i));
     return result;
 }
 
@@ -493,6 +510,9 @@ void CheckFrame(const FrameFixture& frame_fixture, unsigned site,
     CHECK(Get<uint16_t>(frame, fields[3]) == (daily ? 13 : 2));
     CHECK(Get<uint16_t>(frame, fields[4]) == 0);
     CHECK(Get<uint16_t>(frame, fields[5]) == (daily ? 37 : 4));
+    CHECK(Get<uint16_t>(frame, kGDisplayFields[site][0]) == expected_g);
+    for (unsigned i = 1; i < 4; ++i)
+        CHECK(Get<uint16_t>(frame, kGDisplayFields[site][i]) == 0);
 }
 
 bool HasPacket(uint32_t account, uint32_t current_mb) {
