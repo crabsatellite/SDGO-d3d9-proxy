@@ -40,27 +40,11 @@ For the same three-minute, four-human, base-ten and double-time conditions:
 | PvP win: three kills, 8,000 damage | 21,296 | 90 |
 | Same PvP win with MVP | 26,620 | 250 |
 
-## Run the preview
+## Unified control surface
 
-Python 3.10+ from a source checkout; no SQL, game, account or server is required:
-
-```powershell
-python -m unittest discover -s tests -p "test_battle_reward_model.py" -v
-python tools/reward_preview.py --scenario owner/rewards/examples/pvp-mvp.json
-python tools/reward_preview.py --workspace build/reward-preview --port 0
-```
-
-The last command prints an available loopback URL ending in `/rewards`. The page
-can preview payouts and persist a multiplier/rule revision in its own workspace.
-The panel reports waiting until the actual native/worker heartbeat is healthy and
-uses the matching policy. Saving in a connected owner workspace updates real
-settlement policy; the offline scenario calculator itself never writes wallets.
-
-An assistant maintaining the existing `json_response` module-list convention can
-mount `assistant_modules.rewards.attach(server, workspace)` on its current port.
-It preserves other routes and requires its own session token, same-origin requests
-and expected policy revision for configuration changes. The owner startup entry can compose the installed assistant factory on the same
-port; it does not patch an already running process.
+The reward preview, policy editor and worker controls are registered providers of
+[SDGO Mod Manager](mod-manager.md). They share its local API, session and configuration
+checks. The retired standalone reward HTTP server is not part of the package.
 
 ## Settlement integration contract
 

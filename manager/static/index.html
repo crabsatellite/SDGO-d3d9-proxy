@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDGO Mod Manager</title>
+<link rel="stylesheet" href="/ui.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="manager-shell">
+  <aside class="manager-nav" data-ui-art="plating">
+    <a class="brand" href="/" data-ui-mark><span class="brand-text"><b>SDGO</b><span>MOD HANGAR</span></span></a>
+    <div class="mode-badge"><i class="ui-led is-on"></i><span id="mode-label">日常管理</span></div>
+    <nav class="nav-groups">
+      <div class="ui-nav-label">HANGAR</div>
+      <button class="nav-item ui-nav-item selected" id="nav-mods" data-ui-icon="mods">游戏功能</button>
+      <div class="ui-nav-label provider-label">MANAGEMENT</div>
+      <div id="provider-nav"></div>
+      <div class="ui-nav-label">SYSTEM</div>
+      <button class="nav-item ui-nav-item" id="nav-services" data-ui-icon="services">后台任务</button>
+      <button class="nav-item ui-nav-item" id="nav-archive" data-ui-icon="archive">修复归档</button>
+    </nav>
+    <div class="nav-bottom">
+      <button id="change-mode" class="ui-btn is-ghost is-small" data-ui-icon="developer">显示开发信息</button>
+      <a id="ui-kit-link" class="ui-btn is-ghost is-small" href="/ui-kit.html" target="_blank" rel="noopener" data-ui-icon="settings" hidden>UI 组件库</a>
+      <button id="exit-manager" class="ui-btn is-ghost is-small" data-ui-icon="exit">退出管理器</button>
+      <small>游戏仍使用原来的启动方式</small>
+    </div>
+  </aside>
+  <div class="manager-main ui-auto">
+    <header class="manager-header">
+      <div class="header-copy">
+        <small class="eyebrow ui-eyebrow" id="eyebrow">你的单机版</small>
+        <h1 id="page-title" class="ui-title">我的 Mod</h1>
+      </div>
+      <div class="host-tools">
+        <span class="host-label" data-ui-icon="host">TARGET</span>
+        <select id="host-select" class="ui-select" aria-label="选择客户端"></select>
+        <button id="add-host" class="ui-btn is-blue" data-ui-icon="add">添加客户端</button>
+      </div>
+    </header>
+    <div id="manager-message" class="ui-log" role="status"></div>
+    <main id="content"></main>
+  </div>
+</div>
+<dialog id="path-dialog" class="ui-dialog">
+  <form method="dialog">
+    <span class="ui-eyebrow">TARGET HOST</span>
+    <h2 id="path-title">添加客户端</h2>
+    <p class="ui-muted">选择含有游戏 EXE 的目录。配置只保存在本机。</p>
+    <label class="ui-field"><span>目录路径</span><input id="host-path" class="ui-input" placeholder="D:\Games\SDGO" required></label>
+    <div class="dialog-actions ui-dialog-actions">
+      <button value="cancel" class="ui-btn is-ghost">取消</button>
+      <button id="confirm-host" value="default" class="ui-btn is-primary">添加</button>
+    </div>
+  </form>
+</dialog>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

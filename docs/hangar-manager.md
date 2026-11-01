@@ -17,8 +17,11 @@ Close the target client, extract that addon, then run:
 powershell -ExecutionPolicy Bypass -File install_hangar.ps1 -GameDir "D:\Games\SDGO"
 ```
 
-In the hangar, click **整理机库** (sort) or **重复兑换…** (duplicate exchange), or
-press **F8** to open the manager. Start with windowed mode for manual acceptance.
+On the in-game **unit management** page, click **一键整理** (sort) or **重复兑换**
+(duplicate exchange) beside the native lock/delete buttons. Reward selection,
+paged previews, both confirmations and stopping remain inside the same game page.
+Closing it invalidates the preview. There is no desktop popup, global toolbar or
+F8 shortcut, and the unified Manager does not need to stay open.
 Disable it using `[features] hangar-manager=0` or `[mods] hangar_manager=0` in
 `sdgo/sdgo.ini`; the gameplay category switch also applies.
 
@@ -45,19 +48,22 @@ already confirmed operations are not rolled back.
 ## Refresh and verification limits
 
 Successful native replies update the game's hangar data, then the Mod redraws it,
-allowing normal operations without relogging. **刷新显示** only redraws the visible
-hangar; it does not fetch the whole inventory from the server. Login inventory
+allowing normal operations without relogging. Completion and returning to the grid
+only redraw the visible hangar; they do not fetch the whole inventory from the server. Login inventory
 pagination cannot safely be reused as a complete cache reset. If a result is
 uncertain, further operations stay blocked until the cache/session resets; relog.
 
-Offline planner, native-adapter and installer fixtures pass. They use synthetic
+Offline planner, native-adapter, native-page and installer fixtures pass. Page tests
+cover host-owned child controls, layout bounds, pagination, confirmation, restoring
+original visibility and invalidating stale pages. They use synthetic
 inventories and do not prove live-game refresh or reward delivery. Manual acceptance
 should begin with sorting, then known expendable duplicates for both reward choices,
 followed by relogging to check persistence. No real account is modified by the tests.
 
 ## Settings and owner rules
 
-In `sdgo/mods/hangar_manager/mod.ini`, `[settings]` supports:
+Edit everyday preferences in the unified Mod Manager. The underlying
+`sdgo/mods/hangar_manager/mod.ini` `[settings]` supports:
 
 | Key | Default | Meaning |
 |---|---|---|

@@ -4,9 +4,14 @@ Core fixes and optional extensions for SD Gundam Online clients and private serv
 All mods share one framework for build verification, loading, configuration and updates.
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
+**One entry: [SDGO Mod Manager](docs/mod-manager.md).** Daily management includes clients,
+servers, shop/operators/capsules, rewards and networking. Automatic fixes live in the
+archive; developer details expand separately. Each feature can copy an AI debugging
+or GitHub issue handoff. [Repair PRs must disclose the actual AI models used](docs/contributing.zh-CN.md).
+
 **Start with core fixes, then choose your extensions.** Beta is a release channel, independent of category.
 
-[Install and configure](docs/setup.md) · [Latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [Developer API](docs/framework.md)
+[Install and configure](docs/setup.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest) · [Developer API](docs/framework.md)
 
 ## Core fixes
 
@@ -48,12 +53,14 @@ and random-unit gameplay belong in this category.
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
+| Collection capsule (Beta) | Spend 100,000 GP for a never-acquired initial form; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) | Fixed/custom machine CRUD, native templates, prices, weights and PNG portrait framing; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
+| Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
 The [capsule editor](docs/capsule-catalog.md) is part of master. Owners configure their own
@@ -65,13 +72,18 @@ Upload a finished PNG and drag or resize its crop frame to preview the native
 card. Image restoration is performed separately; the editor and player runtime
 have no AI model or GPU dependency.
 
-In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
+On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)
+beside the native lock/delete buttons. Reward selection, paged previews, both confirmations
+and stopping stay inside that page. Preferences remain in the unified Mod Manager.
 Identical untrained copies default to two kept. Exchange excludes trained units;
 locked, active, battleship-assigned, rental and unknown-state units are protected.
 Successful native operations
 update the visible hangar without relogging; an unconfirmed result stops the batch
 and requires relogging. Real-game acceptance remains manual. See the
 [hangar guide](docs/hangar-manager.md) for installation, preview rules and reward handling.
+
+Daily double rewards need only a BattleServer update; players keep their current clients.
+See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-acceptance).
 
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
@@ -178,6 +190,8 @@ For development and troubleshooting; disabled by default.
 |---|---|---|---|---|
 | Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
 | Capsule price probe (Experimental) | Bounded read-only diagnostics for capsule list price refresh; disabled by default | `capsule_price_probe` | Clients | [Use](docs/capsule-price-probe.md) |
+
+| Native GameTest (Experimental) | Run assertions inside isolated native game instances | `game_test_client`, `game_test_server` | Clients + Battle servers | [Use](docs/game-test.md) |
 <!-- /mod-category:development -->
 
 ## Install and use

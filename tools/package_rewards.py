@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import re
 import zipfile
 from package_frp import file_version, validate_markdown_links
 
@@ -13,11 +14,10 @@ OWNER_FILES = (
     "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "sql/battle_reward_wallet.sql",
     "examples/pvp-mvp.json", "examples/mission-clear.json",
 )
-TOOLS = ("reward_assistant.py", "reward_preview.py", "reward_worker.py", "install_battle_rewards.py",
-         "Start-Battle-Rewards.ps1", "Stop-Battle-Rewards.ps1")
+TOOLS = ("install_battle_rewards.py",)
 
 
-def contents(repo, binaries):
+def contents(repo, binaries, include_manager=True):
     version = tuple(int(n) for n in (repo / "VERSION").read_text().strip().split(".")) + (0,)
     files = {}
     def add(name, source):
@@ -31,37 +31,46 @@ def contents(repo, binaries):
         add("owner/rewards/" + name, repo / "owner/rewards" / name)
     for name in TOOLS:
         add("tools/" + name, repo / "tools" / name)
-    for path in sorted((repo / "tools/assistant_modules/rewards").iterdir()):
-        if path.name in ("__init__.py", "ui.html"):
-            add("tools/assistant_modules/rewards/" + path.name, path)
+    if include_manager:
+        add("SDGO Mod Manager.exe", binaries.parent / "manager/SDGO Mod Manager.exe")
     for name in ("install_server.ps1", "install_common.ps1"):
         add(name, repo / "tools" / name)
     for name in ("battle-rewards.md", "battle-rewards.zh-CN.md", "battle-reward-design.md", "battle-reward-design.zh-CN.md"):
         add("docs/" + name, repo / "docs" / name)
+    # Reference guides remain usable from a standalone reward kit too.
+    for name in ("mod-manager.md","mod-manager.zh-CN.md","contributing.zh-CN.md"):
+        source=repo/"docs"/name
+        text=source.read_text(encoding="utf-8")
+        def link(match):
+            target=match[1]
+            if ":" in target or target.startswith("#"):return match[0]
+            path,_,anchor=target.partition("#")
+            relative=(source.parent/path).resolve().relative_to(repo.resolve()).as_posix()
+            return "](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/"+relative+("#"+anchor if anchor else "")+")"
+        files["docs/"+name]=re.sub(r"\]\(([^)]+)\)",link,text).encode("utf-8")
     files["README.md"] = (
         "# Battle contribution rewards (Beta)\n\n"
         "Owner toolkit for the native BattleServer Mod. No game files, credentials or private runtime configuration are included.\n\n"
         "Read [deployment and acceptance](docs/battle-rewards.md) before applying.\n"
-        "Python is required on the owner computer; players do not run this wallet worker.\n"
+        "Open SDGO Mod Manager.exe and choose Battle rewards. No separate reward UI or Python installation is needed.\n"
     ).encode()
     add("server/winmm.dll", binaries / "winmm.dll")
     add("server/sdgo/core.dll", binaries / "core.dll")
     add("server/sdgo/sdgo.ini", repo / "config/sdgo.ini")
     add("server/sdgo/symbols/BattleServer-548A891D-0046C000.ini", repo / "symbols/BattleServer-548A891D-0046C000.ini")
-    for name in ("mod.ini", "config.example.ini"):
+    for name in ("mod.ini", "config.example.ini", "manager.json"):
         add("server/sdgo/mods/battle_rewards/" + name, repo / "mods/battle_rewards" / name)
     add("server/sdgo/mods/battle_rewards/battle_rewards.dll", binaries / "battle_rewards.dll")
     add("VERSION", repo / "VERSION")
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         add(name, repo / name)
     add("licenses/MinHook-LICENSE.txt", repo / "third_party/minhook/LICENSE.txt")
-    files["requirements-rewards.txt"] = b"pyodbc>=5,<6\n"
     validate_markdown_links(files)
     return files
 
 
 def package(repo, binaries, out, directory_only=False):
-    files = contents(repo, binaries)
+    files = contents(repo, binaries, include_manager=not directory_only)
     archive = out.with_name(out.name + ".zip")
     if out.exists() or archive.exists():
         raise FileExistsError("Reward package output already exists")

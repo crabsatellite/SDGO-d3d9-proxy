@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "match_ai",
+  "title": "对战 AI · 客户端",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "description": "显示并运行对战 AI 机体，需要配套服务器支持。",
+  "settings": [
+    {
+      "id": "log_errors",
+      "key": "LogErrors",
+      "label": "记录游戏错误",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "log_diagnostics",
+      "key": "LogDiagnostics",
+      "label": "记录诊断信息",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable",
+  "mechanism": "客户端在配套对战模式实例化 AI 机体、处理显示/复活与原生 AI 调用。服务端 pvp_ai 提供对应席位和结算身份。"
+}

@@ -78,6 +78,18 @@ inline bool SameLayout(const Snapshot& a,const Snapshot& b) {
     }
     return true;
 }
+// Confirmation is stricter than acknowledgement matching: a stable slot layout
+// does not imply unchanged protection, active unit or customization state.
+inline bool SamePreview(const Snapshot& a,const Snapshot& b) {
+    if(!SameLayout(a,b) || a.activeSlot!=b.activeSlot)return false;
+    for(const auto& u:a.units) {
+        const auto* v=ById(b,u.uid);
+        if(u.level!=v->level || u.rental!=v->rental || u.ship!=v->ship ||
+           u.lock!=v->lock || u.special!=v->special || u.fullReady!=v->fullReady)return false;
+        if(u.fullReady && Signature(u)!=Signature(*v))return false;
+    }
+    return true;
+}
 inline Snapshot Applied(Snapshot s,const Action& a) {
     if (a.kind!=Kind::Swap) {
         s.units.erase(std::remove_if(s.units.begin(),s.units.end(),[&](const Unit& u){return u.uid==a.first;}),s.units.end());

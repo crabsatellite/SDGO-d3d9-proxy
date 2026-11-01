@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "hangar_manager",
+  "title": "机库整理与回收",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "presentation": "configurable",
+  "description": "在游戏的机体管理页整理机库、预览并确认兑换重复机体。此处只调整偏好。",
+  "mechanism": "游戏原生机体管理页提供整理与重复兑换，预览和两次确认均在页内完成；客户端用原生请求和服务器回执逐笔核对，不需要 Manager 常驻。保留份数由本地偏好选择，奖励由服务器决定。",
+  "settings": [
+    {
+      "id": "keepcopies",
+      "key": "KeepCopies",
+      "label": "至少保留机体份数",
+      "type": "integer",
+      "default": 2,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 20
+    },
+    {
+      "id": "sortafterexchange",
+      "key": "SortAfterExchange",
+      "label": "回收后整理机库",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "requestintervalms",
+      "key": "RequestIntervalMs",
+      "label": "请求间隔（毫秒）",
+      "type": "integer",
+      "default": 150,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 50,
+      "maximum": 10000
+    },
+    {
+      "id": "replytimeoutms",
+      "key": "ReplyTimeoutMs",
+      "label": "回应超时（毫秒）",
+      "type": "integer",
+      "default": 10000,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 1000,
+      "maximum": 60000
+    },
+    {
+      "id": "maxslots",
+      "key": "MaxSlots",
+      "label": "机库读取上限",
+      "type": "integer",
+      "default": 1200,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    {
+      "id": "rulesfile",
+      "key": "RulesFile",
+      "label": "机体规则文件",
+      "type": "string",
+      "default": "units.tsv",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ]
+}

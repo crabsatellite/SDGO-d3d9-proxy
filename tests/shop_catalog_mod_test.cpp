@@ -42,11 +42,11 @@ int wmain(int argc, wchar_t** argv)
     nt->OptionalHeader.SizeOfImage = 0x0010C000;
     SdgoApi api = {}; api.size = sizeof(api); api.version = 1;
     api.host_base = header.data(); api.ModDirectory = Directory; api.SettingString = Setting; api.Log = Log;
-    const bool applied = entry && entry(&api, nullptr) == 1 && g_messages > 0;
+    const bool registered = entry && entry(&api, nullptr) == 1 && g_messages > 0;
     nt->FileHeader.TimeDateStamp = 0;
     const bool rejected = entry && entry(&api, nullptr) == 0;
     // Only the fresh credential copy created by this test executable is removed.
     DeleteFileW(copy.c_str());
-    printf("SHOP CATALOG ACTUAL DLL %s (matching World ABI fixture, real isolated ODBC; unknown host refused)\n", applied && rejected ? "PASS" : "FAIL");
-    return applied && rejected ? 0 : 1;
+    printf("SHOP CATALOG ACTUAL DLL %s (matching World ABI fixture; no SQL at startup; unknown host refused)\n", registered && rejected ? "PASS" : "FAIL");
+    return registered && rejected ? 0 : 1;
 }

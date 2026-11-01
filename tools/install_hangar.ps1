@@ -95,6 +95,7 @@ if (Test-Path -LiteralPath $manifestPath) {
     if ($enabled.Success) { $manifest=$manifest.Replace('[mod]','[mod]'+[Environment]::NewLine+'enabled='+$enabled.Groups[1].Value) }
 }
 Copy-Item -LiteralPath (Join-Path $sourceMod 'hangar_manager.dll') -Destination (Join-Path $targetMod 'hangar_manager.dll') -Force
+Copy-Item -LiteralPath (Join-Path $sourceMod 'manager.json') -Destination (Join-Path $targetMod 'manager.json') -Force
 $rules=Join-Path $targetMod 'units.tsv'
 if ($RefreshRules -or -not (Test-Path -LiteralPath $rules)) {
     if (Test-Path -LiteralPath $rules) { Copy-Item -LiteralPath $rules -Destination ($rules+'.'+$backupTag+'.bak') }

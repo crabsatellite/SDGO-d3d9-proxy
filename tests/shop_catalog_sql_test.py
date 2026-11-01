@@ -244,7 +244,9 @@ def main():
         harness = args.exe.resolve().with_name("shop_catalog_mod_test.exe")
         dll = subprocess.run([str(harness), str(args.dll.resolve()), str(native_ini.resolve()), str(args.output.resolve())],
                              capture_output=True, timeout=45)
-        check(dll.returncode == 0, "actual_DLL_applies_to_isolated_SQL_and_rejects_unknown_host")
+        check(dll.returncode == 0, "actual_DLL_registers_without_startup_application_and_rejects_unknown_host")
+        t.execute("SELECT COUNT(*) FROM dbo.tbls_StoreItems p JOIN dbo.sdgo_ShopCatalog s ON s.ProductId=p.f_productid WHERE s.CatalogId=N'integration' AND p.f_display='1'")
+        check(t.fetchone()[0] == 0, "host_startup_never_republishes_disabled_shop_offers")
     if args.package_root:
         # Inert World PE, real installer/helper and restricted test DB only.
         import shop_install_test as install_test

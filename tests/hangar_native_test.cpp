@@ -1,4 +1,5 @@
 #include "../mods/hangar_manager/hangar_manager.cpp"
+#include "hangar_page_fixture.h"
 #include <array>
 #include <cassert>
 #include <iostream>
@@ -39,6 +40,7 @@ int __fastcall Send(void*,void*,int connection,const uint8_t* data,int size,int 
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 SdgoApi api{};
 void Setup(){
+    g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
     pending.clear();sends=paints=gb=items=0;rejected=false;
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
@@ -99,5 +101,33 @@ int main(){
     fixture::Setup();fixture::info[0x20]=0;assert(!GetSnapshot(invalid) && fixture::sends==0);
     fixture::Setup();fixture::Put(fixture::mode.data(),0x0C,reinterpret_cast<void*>(1));assert(!Visible() && !GetSnapshot(invalid));
     fixture::Setup();fixture::owned[1].lock=1;s=fixture::Capture();assert(ById(s,102)->lock==1);fixture::Run(sdgo::hangar::Sort(s,g_rules));assert(ById(fixture::Capture(),102)->slot==3);
+    // Exercise the production native page event handler all the way through
+    // detail requests, preview, both confirmations and synthetic native replies.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarOpen"));
+    assert(g_ui.Exchange() && fixture::sends==0);
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarGB"));
+    for(int i=0;i<20 && g_scanning;++i) {
+        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
+    }
+    assert(!g_scanning && g_hasPreview && g_preview.removed==1 && !g_mutating && fixture::gb==0);
+    const auto beforeConfirm=fixture::sends;
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
+    assert(g_ui.Armed() && !g_mutating && fixture::sends==beforeConfirm);
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
+    assert(g_mutating && fixture::sends==beforeConfirm);
+    for(int i=0;i<30 && g_mutating;++i) {
+        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
+    }
+    assert(!g_mutating && fixture::gb==400 && fixture::owned.size()==4);
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));assert(!g_ui.Exchange());
+    // A second confirmation must never bypass the current native snapshot.
+    g_ui.Open();g_scanReward=Kind::GB;Preview(Duplicates(fixture::Capture(),g_rules,1,Kind::GB,false));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));assert(g_ui.Armed());
+    fixture::owned[0].lock=1;const auto beforeChange=fixture::sends;
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
+    assert(!g_hasPreview && !g_mutating && fixture::sends==beforeChange && !g_ui.Armed());
+    g_ui.Open();g_ui.Arm(true);page_fixture::dialog[0x162]=0;g_nextTick=0;Pump();
+    assert(!g_ui.Exchange() && !g_ui.Armed());
     std::cout<<"HANGAR NATIVE ADAPTER FIXTURE PASSED (production snapshot, sends, native acknowledgements, GB/item, detail freshness, logout, hidden/battle gates)\n";
 }

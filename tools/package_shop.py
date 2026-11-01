@@ -62,9 +62,9 @@ def main():
             pe32(args.build/"Release/shop_catalog_apply.exe")
             copy(args.build/"Release/shop_catalog_apply.exe", "payload/shop_catalog/shop_catalog_apply.exe")
             copy(ROOT/"tools/shop_catalog.py", "host-tools/shop_catalog.py")
-            gui=args.build/"shop-ui/SdgoShopManager.exe"
-            if not gui.is_file(): raise ValueError("Build the owner UI first: powershell -File tools/build_shop_ui.ps1")
-            copy(gui, "SdgoShopManager.exe")
+            gui=args.build/"manager/SDGO Mod Manager.exe"
+            if not gui.is_file(): raise ValueError("Build the unified Mod Manager first")
+            copy(gui, "SDGO Mod Manager.exe")
         copy(ROOT/"tools/install_shop.ps1", "Install.ps1")
         copy(ROOT/("docs/shop-labels.zh-CN.md" if role == "Labels" else "docs/shop-catalog.zh-CN.md"), "README.zh-CN.md")
         copy(ROOT/"docs/shop-validation.zh-CN.md", "shop-validation.zh-CN.md")

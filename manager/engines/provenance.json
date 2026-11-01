@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "scope": "business logic only; legacy UI and launchers are not copied",
+  "sources": [
+    {
+      "module": "manager/engines/capsules/capsule_catalog.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "3b9b7a945842a1e449358948a8979f49c3c1e98616b858e75bbe747477df7e6e"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_assets.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "53956f970d761d16417da9738d312e6609cb327d87f8a1382fca42ec52b4e654"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_client_compile.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "29c2451334cc95081053c7e13b1b1b450c856c607697cb4c34454116f65a4a6c"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_deployment.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "d14ee817a61b911d3176008b6d3982666e710059ed533f2d3c8aa15760f2ab39"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_server_runtime.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "7f176311a6571395d8afa074000eb58a81b58fe89694a0782e9fa9ff116e8c97"
+    },
+    {
+      "module": "manager/engines/capsules/init_capsules.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "149d4b666ee6d6d0565d73f15e8db67e1ec8dc1712e594ab85cdb66e307b8937"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_ui.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "b71f71c16cd69a2331c262f0dc2fdc3cb7f12006c0ddf113ea4b988bb2c10dc0"
+    },
+    {
+      "module": "manager/engines/capsules/install_capsule_client.ps1",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "2b52b73a626f2cbcc08f4e54880842ec309900cc283280364d7968b1b80f0488"
+    },
+    {
+      "module": "manager/engines/operators/assets.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "dc24a901f8b0e72ae277834d163c0f93496de927f2156c0bb647b2b0f57bcd21"
+    },
+    {
+      "module": "manager/engines/operators/model.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "3a7df0a03790c8db9a88a0a97943f1111d1971f93f78c7ee8c296c4b7f34118c"
+    },
+    {
+      "module": "manager/engines/operators/presets.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "1aff7d878e110a93135ec4de45afae6ed554cfcfdffbd11e72c1bfd0e381ba6c"
+    },
+    {
+      "module": "manager/engines/operators/server.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "44c8667309cf11d927f897d024c1df8c034f7bfefe5b13e6793090a46cb66407"
+    },
+    {
+      "module": "manager/engines/operators/workspace.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "f79c84092546c9ce077f64ef21cfbc4df90c48a87f702d0ed239f76e4afa9307"
+    },
+    {
+      "module": "manager/engines/operators/__init__.py",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "4c8ccf9af474aacf2ae8bcf2b6b60fe9afb41ec718a704e2435439db7021a76e"
+    },
+    {
+      "module": "manager/engines/operators/resources/mod.ini",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "0cf9830caf6f2817467081feb0d9f4b3b2dcd5fec293b46f4fe2c8436ca530f1"
+    },
+    {
+      "module": "manager/engines/operators/resources/symbols.fragment.ini",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "7e1bdfc61a7538ba54323532b0e9c5e6ecb2bd8b9c8e36b67a8c23964aa3f8d1"
+    },
+    {
+      "module": "manager/engines/operators/Install-Operator.ps1",
+      "source_branch": "feature/operator-manager",
+      "original_sha256": "6666e3ac6572e47323db72c3a0039e2e712df223eb4b2e87990f4b60ffe15739"
+    },
+    {
+      "module": "manager/engines/shop/Models.cs",
+      "source_branch": "feature/shop-catalog",
+      "original_sha256": "030cb5611e50f84016a65fe746b70f89df00632d8efb8df2c683c93a3633b598"
+    },
+    {
+      "module": "manager/engines/shop/Repository.cs",
+      "source_branch": "feature/shop-catalog",
+      "original_sha256": "761290846e48f40b0df7d142a02195d90acb53e8f4f2d63f0b5f5df5ce6f300c"
+    },
+    {
+      "module": "manager/engines/shop/Service.cs",
+      "source_branch": "feature/shop-catalog",
+      "original_sha256": "60eaa760c8c277ec727502e5d4626e8fb512d5ee45a845dbc0762dd3f24ef162"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_ui_layout.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "fbab735fbf9bc3401ef13fb945ee147407eaa889f39efc26584d173db8d5ce10"
+    }
+  ]
+}

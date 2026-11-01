@@ -7,55 +7,18 @@ the original G delivery path and an idempotent native MB wallet worker. Owners c
 change the base multiplier from the assistant; players retain their normal client
 and launcher. Authenticated gameplay, HUD and reconnect acceptance remain manual.
 
-## Owner installation
+## Unified owner interface
 
-Use `rewards/` in the full framework package or the standalone owner kit. Python
-3.10+, Windows PowerShell and the owner's existing SQL Server access are required:
+Open **SDGO Mod Manager.exe** and choose Battle rewards. Select the existing reward
+workspace, native server INI, stopped BattleServer target and extracted framework/
+reward kit. Review the installation plan before applying it. The installer keeps
+configuration, symbols and recovery receipts, and does not issue test money to real accounts.
 
-```powershell
-python -m pip install -r requirements-rewards.txt
-python tools/install_battle_rewards.py --package-root . --battle-dir "D:/SDGO/Server/BattleServer1" --workspace "D:/SDGO-Owner/Rewards" --server-ini "D:/SDGO/Server/WorldServer/WorldServer.ini"
-```
-
-This first invocation is read-only. Close the selected BattleServer yourself,
-review the plan, then repeat with `--apply`. The INI must contain both `DB Game`
-and `DB StoreBilling`; secrets stay on the owner computer. Install each relevant
-BattleServer with the same owner workspace.
-
-The installer updates the bundled loader/core/Mod, retains other mods and settings,
-merges symbol definitions, exports the owner's mission Boss identities and installs
-only versioned reward-ledger objects. It does not edit native reward tables, replace
-the native wallet procedure or grant test money. Receipts/backups describe changes
-and failures. Runtime global category/feature/mod switches retain their authority.
-
-## Start the owner control plane
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Start-Battle-Rewards.ps1 -Workspace "D:/SDGO-Owner/Rewards" -StoreServerIni "D:/SDGO/Server/WorldServer/WorldServer.ini"
-```
-
-The entry publishes policy, starts its wallet worker hidden and prints the local
-assistant URL. Start the game server normally. Keep the owner entry running;
-closing only the browser tab does not stop delivery. The panel reports connected
-only after fresh matching native policy, hook/network readiness and wallet health.
-
-The base multiplier reloads for later settlement snapshots without restarting the
-BattleServer. A match uses one frozen policy/event/human-count snapshot. AI matches
-use the PvP tier; extra humans compound `1.1^(humans-1)`. The loaded `daily_rewards`
-component supplies its configured one/two event factor once. Pilot/unit experience
-remains owned by that component. With no loaded daily component the factor is one.
-
-The native G field is limited to 65,535. Under the default policy and worst-case
-twelve humans/double time, the safe base ceiling is **10.440894**. Unsafe rules are
-rejected with an unhealthy status, never clipped or wrapped. The panel exposes the
-safe limit for the currently configured policy.
-
-For a shared port, supply `-AssistantRoot` and `-AssistantWorkspace`, plus the
-installed factory's workspace inputs (`-AssistantClient`, `-AssistantSnapshot`,
-`-AssistantModuleBinary`, `-AssistantServerIni` or `-AssistantOption`). The existing
-factory must export `Workspace` and `make_server(workspace, port=0)`, or the explicit
-factory options can select alternatives. This starts a composed instance; it does
-not patch or kill an already running assistant. An occupied port is rejected.
+Start the Manager-owned wallet service in the same panel, then start the game server
+normally. Edit multipliers, policy and previews there. Python, a separate reward page
+and per-feature launch scripts are no longer user requirements. The Manager reports
+real native/worker health; saving a file does not imply a live connection. See the
+[Manager guide](mod-manager.md).
 
 ## Delivery and recovery
 
@@ -68,9 +31,7 @@ notified; normal login/store cash queries refresh their authoritative balance.
 
 Keep queued jobs and wallet receipts during recovery. Stop only the owned worker:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Stop-Battle-Rewards.ps1 -Workspace "D:/SDGO-Owner/Rewards"
-```
+Use Stop Manager-owned wallet service in the reward panel.
 
 After closing the selected BattleServer, disable `battle_rewards=0` under `[mods]`
 or plan a scoped uninstall with `tools/install_battle_rewards.py --battle-dir ...

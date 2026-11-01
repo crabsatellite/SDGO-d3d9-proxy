@@ -32,11 +32,12 @@ def package(stage, output):
     if output.exists(): raise FileExistsError("output already exists")
     files = {}
     for role in ("client", "server"):
-        for name in ("mod.ini", "ai_catalog.dll"):
+        for name in ("mod.ini", "ai_catalog.dll", "manager.json"):
             relative = f"{role}/sdgo/mods/ai_catalog/{name}"
             files[relative] = (stage / relative).read_bytes()
         relative = f"{role}/sdgo/symbols/{HOST[role]}"
         files[relative] = fragment((stage / relative).read_bytes(), SECTIONS[role])
+    files["SDGO Mod Manager.exe"]=(stage/"manager/SDGO Mod Manager.exe").read_bytes()
     for mod in ("coop_ai", "pvp_ai"):
         relative = f"server/sdgo/mods/{mod}/{mod}.dll"
         files[relative] = (stage / relative).read_bytes()
