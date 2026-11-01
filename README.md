@@ -17,6 +17,7 @@ Each fix can be disabled separately.
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | IME input fix | Correct the length of committed IME text | `ime_fix` | Clients | [Use](docs/ime-fix.md) |
+| Activity capsule currency | Correct machine 9301's coin label to match native billing | `capsule_currency_fix` | Clients | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix | Restore window lookup needed by input methods alongside existing plugins | `findwindow_fix` | Clients | [Use](docs/findwindow-fix.md) |
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
@@ -52,7 +53,17 @@ and random-unit gameplay belong in this category.
 | Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
+| Capsule catalog editor (Beta) | Fixed/custom machine CRUD, native templates, prices, weights and PNG portrait framing; paired client/server configuration | `capsule_catalog` | Clients + owner SQL adapter | [Use](docs/capsule-catalog.md) |
 <!-- /mod-category:gameplay -->
+
+The [capsule editor](docs/capsule-catalog.md) is part of master. Owners configure their own
+paths and database connection locally, then distribute a generated player package.
+Players install it once and use the normal game launcher. Other Mods can reuse the
+[catalog, compiler and deployment interfaces](docs/capsule-integration.md) rather than
+writing separate client tables or overlapping native file hooks.
+Upload a finished PNG and drag or resize its crop frame to preview the native
+card. Image restoration is performed separately; the editor and player runtime
+have no AI model or GPU dependency.
 
 In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
 Identical untrained copies default to two kept. Exchange excludes trained units;
@@ -65,7 +76,8 @@ and requires relogging. Real-game acceptance remains manual. See the
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
 cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
-holdings migrate in place, preserving equipped references and personal nicknames.
+holdings migrate in place, preserving equipped references. These five use fixed
+Chinese names without a naming prompt; other operators retain personal naming.
 The owner applies server rules and distributes a matching client update; players
 keep their normal launcher. The module registers products for the storefront to
 price and list. In-game display, claiming and settlement still need manual acceptance.
@@ -167,6 +179,7 @@ For development and troubleshooting; disabled by default.
 | Tool | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
+| Capsule price probe (Experimental) | Bounded read-only diagnostics for capsule list price refresh; disabled by default | `capsule_price_probe` | Clients | [Use](docs/capsule-price-probe.md) |
 <!-- /mod-category:development -->
 
 ## Install and use

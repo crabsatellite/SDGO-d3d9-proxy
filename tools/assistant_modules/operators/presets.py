@@ -11,6 +11,12 @@ LEGACY_ALIASES = {60003: "Nozomi(PlanMix)", 60013: "Mizuki(EXP)", 60018: "Aya(R_
 TABLES = ("tbl_MixTreeFile", "tbl_Units", "tbl_PaintItem", "tbl_StickerItem", "tbl_EtcItems")
 
 
+def fixed_name_ids(catalog, *, include_disabled=False):
+    if catalog.get('default_pack_version') != VERSION:return set()
+    return {o['id'] for o in catalog['operators'] if o['id'] in NAMES and o['managed']
+            and (o['enabled'] or include_disabled)}
+
+
 def available(snapshot):
     return all((Path(snapshot)/"GOnlineGame"/("dbo."+name+".json")).is_file() for name in TABLES)
 

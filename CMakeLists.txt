@@ -196,6 +196,13 @@ add_custom_target(ai_catalog_data ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/mods/ai_catalog/server.ini"
         "${SDGO_STAGE}/server/sdgo/mods/ai_catalog/mod.ini")
 
+sdgo_add_mod(capsule_catalog DESCRIPTION "native capsule catalog overlay"
+             SOURCES mods/capsule_catalog/capsule_catalog.cpp mods/capsule_catalog/capsule_runtime.cpp)
+sdgo_add_mod(capsule_currency_fix DESCRIPTION "activity capsule currency display fix"
+             SOURCES mods/capsule_currency_fix/capsule_currency_fix.cpp mods/capsule_currency_fix/capsule_currency_logic.cpp)
+sdgo_add_mod(capsule_price_probe DESCRIPTION "read-only capsule price UI diagnostics"
+             SOURCES mods/capsule_price_probe/capsule_price_probe.cpp)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -220,6 +227,21 @@ add_custom_target(sdgo_catalog ALL
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+
+add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_runtime_harness PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_runtime_harness)
+add_executable(capsule_client_native_stream_test tests/capsule_client_native_stream_test.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_native_stream_test PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_native_stream_test)
+add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_currency_fix_test.cpp
+               mods/capsule_currency_fix/capsule_currency_logic.cpp)
+target_include_directories(capsule_currency_fix_test PRIVATE mods/capsule_currency_fix)
+sdgo_strict(capsule_currency_fix_test)
+add_executable(capsule_price_probe_test mods/capsule_price_probe/capsule_price_probe_test.cpp)
+sdgo_strict(capsule_price_probe_test)
 
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.
@@ -253,6 +275,17 @@ sdgo_strict(agent_udp_pool_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
+if(BUILD_TESTING)
+    foreach(test capsule_currency_fix capsule_price_probe)
+        add_test(NAME ${test}_offline COMMAND ${test}_test)
+        set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_test(NAME capsule_configuration COMMAND "${CMAKE_COMMAND}" -E env
+        "CAPSULE_RUNTIME_HARNESS=$<TARGET_FILE:capsule_client_runtime_harness>"
+        "${Python3_EXECUTABLE}" -B -X utf8 -m unittest discover -s tests -p "test_capsule*.py" -q)
+    set_tests_properties(capsule_configuration PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 180)
+endif()
 find_program(SDGO_SHOP_POWERSHELL NAMES powershell pwsh)
 if(SDGO_SHOP_POWERSHELL)
     add_custom_target(shop_owner_ui ALL
@@ -297,7 +330,7 @@ if(BUILD_TESTING)
     add_executable(operator_catalog_test tests/operator_catalog_test.cpp)
     target_link_libraries(operator_catalog_test PRIVATE sdgo_api)
     sdgo_strict(operator_catalog_test)
-    foreach(case RANGE 0 2)
+    foreach(case RANGE 0 3)
         add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
                  "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
     endforeach()

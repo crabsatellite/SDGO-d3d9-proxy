@@ -100,7 +100,7 @@ if ($catalog.features.PSObject.Properties.Name -contains 'operator-assistant') {
     foreach ($file in @('mod.ini','symbols.fragment.ini','module.json','display.example.ini')) {
         Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\$file") -Destination $operatorData
     }
-    foreach ($file in @('schema.sql','random.sql','drop.sql','free.sql')) {
+    foreach ($file in @('schema.sql','random.sql','drop.sql','free.sql','naming.sql')) {
         Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\server\$file") -Destination (Join-Path $operatorData 'server')
     }
 }
