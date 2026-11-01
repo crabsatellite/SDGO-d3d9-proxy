@@ -21,7 +21,7 @@ The configuration is shared by two consumers:
 
 | Consumer | Output and behavior |
 |---|---|
-| Client runtime | Verified overlays for four capsule GDTs, card sprites/textures and the exact capsule list price UI resource |
+| Client runtime | Verified overlays for six shared capsule GDTs, card sprites/textures and the exact capsule list price UI resource |
 | Server adapter | Configuration SQL and Mod-owned prize selection; native charging, delivery and refund routes remain in use |
 
 The same `catalog_revision` must reach both sides. An exported JSON alone is not
