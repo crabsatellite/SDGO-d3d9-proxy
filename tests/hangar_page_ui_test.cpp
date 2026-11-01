@@ -44,6 +44,12 @@ int main() {
     Put(service.data(),0,reinterpret_cast<void*>(0xBAD));ui.Close();assert(!ui.Ready());
     Setup();failAdd=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready());
     Setup();failSkin=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready() && !Shown(L"ModHangarSort"));
+    // Match Init's exception path after the first button was fully constructed.
+    // A later skin failure must never publish either partial button.
+    Setup();throwSkinAt=4;bool threw=false;
+    try {ui.Attach(service.data(),Bind());}catch(const std::exception&){threw=true;ui.Detach();}
+    assert(threw && !ui.Ready() && !Shown(L"ModHangarSort") && !Shown(L"ModHangarOpen"));
+    assert(Shown(L"UnitDeleteBtn"));
     Setup();auto& source=*children.at(L"UnitDeleteBtn");source.skins.pop_back();SetSkins(source);
     assert(!ui.Attach(service.data(),Bind()) && creates==0);
     Setup();Put(dialog.data(),0x154,400);assert(!ui.Attach(service.data(),Bind()) && creates==0);

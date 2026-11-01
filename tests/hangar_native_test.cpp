@@ -14,7 +14,7 @@ std::array<uint8_t,0x80> session{};
 uint8_t* infoPointer=info.data();uint8_t* profilePointer=profile.data();
 std::vector<Unit> owned;
 std::vector<uint8_t> pending;
-int sends=0,paints=0,gb=0,items=0;
+int sends=0,paints=0,gb=0,items=0,nativeClicks=0;
 bool rejected=false;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
 Unit Make(uint64_t uid,uint32_t type,uint16_t slot){
@@ -26,6 +26,7 @@ uint8_t* __cdecl Session(){return session.data();}
 void __fastcall Page(void*,void*){++paints;}
 void __fastcall Clear(void*,void*){owned.clear();}
 void __fastcall Sync(void*,void*,const uint8_t*){}
+void __fastcall NativeClick(void*,void*,void*){++nativeClicks;}
 void __fastcall Brief(void*,void*,void* out,uint16_t slot){
     memset(out,0,25);
     for(const auto& u:owned)if(u.slot==slot){
@@ -42,7 +43,7 @@ SdgoApi api{};
 void Setup(){
     g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
-    pending.clear();sends=paints=gb=items=0;rejected=false;
+    pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
     Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,static_cast<void*>(nullptr));
     Put(grid.data(),0,reinterpret_cast<void*>(0x12345678));Put(grid.data(),0x44,panel.data());panel[0x162]=1;
@@ -51,6 +52,7 @@ void Setup(){
     g_app=&App;g_session=&Session;g_brief=reinterpret_cast<NativeGet>(&Brief);g_full=reinterpret_cast<NativeGet>(&Full);
     g_send=reinterpret_cast<NativeSend>(&Send);g_page=reinterpret_cast<NativeVoid>(&Page);g_view=g_page;g_redraw=g_page;
     g_clear=reinterpret_cast<NativeVoid>(&Clear);g_sync=reinterpret_cast<NativeSync>(&Sync);g_thread=GetCurrentThreadId();g_epoch=1;
+    g_button=reinterpret_cast<ButtonFn>(&NativeClick);
     api.Log=&Log;g_api=&api;g_scanning=g_mutating=g_hasPreview=g_needsRelog=false;g_detailPending=0;g_runner=Runner{};
     g_rules.clear();for(uint32_t i=1;i<=4;++i){Rule r;r.unit=i*10;r.rank=static_cast<int>(i);r.subrank=2;r.gb=static_cast<int>(i*400);r.item=2220008;r.amount=static_cast<int>(i*3);r.name=L"Synthetic unit";g_rules[r.unit]=r;}
 }
@@ -101,6 +103,11 @@ int main(){
     fixture::Setup();fixture::info[0x20]=0;assert(!GetSnapshot(invalid) && fixture::sends==0);
     fixture::Setup();fixture::Put(fixture::mode.data(),0x0C,reinterpret_cast<void*>(1));assert(!Visible() && !GetSnapshot(invalid));
     fixture::Setup();fixture::owned[1].lock=1;s=fixture::Capture();assert(ById(s,102)->lock==1);fixture::Run(sdgo::hangar::Sort(s,g_rules));assert(ById(fixture::Capture(),102)->slot==3);
+    // Failed Mod initialization leaves the original unit-management actions usable.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());page_fixture::failSkin=true;
+    assert(!g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"UnitDeleteBtn"));
+    assert(fixture::nativeClicks==1 && fixture::sends==0);
     // Exercise the production native page event handler all the way through
     // detail requests, preview, both confirmations and synthetic native replies.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));

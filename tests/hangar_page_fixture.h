@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ inline std::vector<std::unique_ptr<std::array<void*,3>>> nodes;
 inline int creates=0;
 inline void* buttonVtable=reinterpret_cast<void*>(0x123400);
 inline bool failAdd=false,failSkin=false;
+inline int skinCalls=0,throwSkinAt=0;
 inline void SetSkins(Child& child) {
     child.skinPointers.clear();
     for(const auto& skin:child.skins)child.skinPointers.push_back(skin->memory.data());
@@ -73,6 +75,8 @@ inline void __fastcall Text(void* owner,void*,int index,const NativeString* valu
     assert(false);
 }
 inline void __fastcall Skin(void* owner,void*,const NativeString* path,uint8_t mode,uint32_t x,uint32_t y) {
+    ++skinCalls;
+    if(throwSkinAt && skinCalls==throwSkinAt)throw std::runtime_error("synthetic skin initialization failure");
     if(failSkin)return;
     for(auto& entry:children)if(entry.second->memory.data()==owner){AddSkin(*entry.second,Copy(path),mode,x,y);return;}
     assert(false);
@@ -81,7 +85,7 @@ inline Bindings Bind() {
     return {reinterpret_cast<Bindings::Add>(&Add),reinterpret_cast<Bindings::Find>(&Find),reinterpret_cast<Bindings::Text>(&Text),buttonVtable,reinterpret_cast<Bindings::Skin>(&Skin)};
 }
 inline void Setup(void* existingService=nullptr) {
-    children.clear();nodes.clear();dialog={};service={};creates=0;failAdd=failSkin=false;
+    children.clear();nodes.clear();dialog={};service={};creates=skinCalls=throwSkinAt=0;failAdd=failSkin=false;
     head={head.data(),head.data(),nullptr};Put(dialog.data(),0x23C,head.data());
     Put(dialog.data(),0,static_cast<void*>(reinterpret_cast<void*>(0x87654300)));
     Put(dialog.data(),0x154,600);Put(dialog.data(),0x158,700);Put<uint8_t>(dialog.data(),0x162,1);

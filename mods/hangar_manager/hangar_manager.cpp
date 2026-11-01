@@ -197,7 +197,10 @@ void __fastcall Init(void* self,void*) {
     }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI initialization failed");}
 }
 void HandleButton(void* self,void* control) {
-    if(!Visible() || !g_ui.Owns(self))return;
+    // An unsupported/incomplete Mod page must not swallow native lock/delete
+    // events. The original service continues to own its original controls.
+    if(!g_ui.Owns(self)){g_button(self,control);return;}
+    if(!Visible())return;
     const auto action=g_ui.Click(control);
     if(action==ui::Action::None) {
         if(!g_ui.Exchange() && !Busy())g_button(self,control);

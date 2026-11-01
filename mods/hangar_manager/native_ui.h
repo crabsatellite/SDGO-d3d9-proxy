@@ -64,7 +64,7 @@ private:
     int buttonWidth_=0,buttonHeight_=0;
     int width_=0,height_=0;
     size_t page_=0;
-    bool exchange_=false,busy_=false,confirm_=false,armed_=false;
+    bool exchange_=false,busy_=false,confirm_=false,armed_=false,published_=false;
     bool Add(const wchar_t*,const wchar_t*,Action,int,int,int,int,bool);
     void Text(Control&,const std::wstring&,uint32_t color);
     void Render();
