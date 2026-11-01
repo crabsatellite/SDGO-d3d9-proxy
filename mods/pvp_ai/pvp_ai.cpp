@@ -36,6 +36,7 @@
 
 #include "sdgo/sdgo_api.h"
 #include "sdgo/ai_scoring.h"
+#include "sdgo/pvp_ai_observer.h"
 
 namespace
 {
@@ -67,6 +68,8 @@ namespace
     constexpr size_t kPilotLifeCost = 0x20;
     constexpr size_t kUnitLifeCost = 0x08;
     constexpr size_t kUnitMaxHp = 0x04;
+    constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
+    constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
     constexpr uint32_t kAiPilotBit = 0x80000000u;
 
     // The dispatcher keeps a copy of the room in its frame (ebp - 0x328AC); its team checks
@@ -125,6 +128,12 @@ namespace
     } g_settings;
 
     std::atomic<unsigned> g_random{0};
+    PVOID volatile g_observerCallback = nullptr;
+    PVOID volatile g_observerUser = nullptr;
+    volatile LONG g_observerRegistration = 0;
+    volatile LONG g_observerSequence = 0;
+    volatile LONG g_observerFaultLogged = 0;
+    PVOID volatile g_observerActiveRooms[64] = {};
 
     unsigned NextRandom()
     {
@@ -481,6 +490,147 @@ namespace
         return *reinterpret_cast<uint32_t*>(pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride);
     }
 
+    SdgoPvpAiObserverCallbackV1 ObserverCallback()
+    {
+        if (InterlockedCompareExchange(&g_observerRegistration, 2, 2) != 2)
+            return nullptr;
+        return reinterpret_cast<SdgoPvpAiObserverCallbackV1>(
+            InterlockedCompareExchangePointer(&g_observerCallback, nullptr, nullptr));
+    }
+
+    bool ObserverRequested(uint8_t* room)
+    {
+        if (!room || !IsPvpMode(room[kRoomMode]))
+            return false;
+        const RoomView view = ViewRoom(room);
+        if (!view.titled)
+            return false;
+        const Plan plan = ParseTitle(view.title);
+        return plan.enabled && (plan.enemies != 0 || plan.allies != 0);
+    }
+
+    bool ObserverRoomActive(uint8_t* room)
+    {
+        if (!room || !ObserverCallback())
+            return false;
+        for (auto& active : g_observerActiveRooms)
+            if (InterlockedCompareExchangePointer(&active, nullptr, nullptr) == room)
+                return true;
+        return false;
+    }
+
+    void ObserverEmit(
+        uint32_t type, uint8_t* room, uint32_t status = 0, bool requireRequest = true)
+    {
+        SdgoPvpAiObserverCallbackV1 callback = ObserverCallback();
+        if (!callback || !room || (requireRequest && !ObserverRequested(room)))
+            return;
+
+        SdgoPvpAiObserverEventV1 event = {};
+        event.size = sizeof(event);
+        event.version = SDGO_PVP_AI_OBSERVER_VERSION;
+        event.type = type;
+        event.status = status;
+        event.sequence = static_cast<uint32_t>(InterlockedIncrement(&g_observerSequence));
+        LARGE_INTEGER counter = {};
+        QueryPerformanceCounter(&counter);
+        event.qpc = static_cast<uint64_t>(counter.QuadPart);
+        event.thread_id = GetCurrentThreadId();
+        event.room_cookie = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
+        event.host_pilot_id = *reinterpret_cast<uint32_t*>(room + kRoomHost);
+        event.score_team_1 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam1);
+        event.score_team_2 = *reinterpret_cast<int32_t*>(room + kRoomScoreTeam2);
+        event.room_type = room[kRoomType];
+        event.mode = room[kRoomMode];
+
+        const RoomView view = ViewRoom(room);
+        event.humans_team_1 = static_cast<uint8_t>((std::min)(view.humans[1], 255));
+        event.humans_team_2 = static_cast<uint8_t>((std::min)(view.humans[2], 255));
+        event.ai_team_1 = static_cast<uint8_t>((std::min)(view.ai[1], 255));
+        event.ai_team_2 = static_cast<uint8_t>((std::min)(view.ai[2], 255));
+        memcpy(event.title, view.title, sizeof(event.title));
+
+        for (int slot = 0; slot < kSlots; ++slot) {
+            SdgoPvpAiObserverSlotV1& output = event.slots[slot];
+            output.slot = static_cast<uint8_t>(slot);
+            output.pilot_id = SlotPilotId(room, slot);
+            if (!output.pilot_id)
+                continue;
+            output.unit_or_npc_id = PilotUnitId(room, slot);
+            output.team = SlotTeam(room, slot);
+            output.colour = room[kSlotInfo + slot * kSlotInfoStride + kSlotInfoColour];
+            output.is_ai = (output.pilot_id & kAiPilotBit) ? 1 : 0;
+            ++event.active_slots;
+        }
+
+        __try {
+            callback(
+                &event,
+                InterlockedCompareExchangePointer(&g_observerUser, nullptr, nullptr));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedCompareExchangePointer(
+                &g_observerCallback, nullptr, reinterpret_cast<PVOID>(callback));
+            if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "disabled PvP observer after its callback raised an exception");
+        }
+    }
+
+    void ObserverForgetRoom(uint8_t* room)
+    {
+        if (!ObserverCallback())
+            return;
+        for (auto& active : g_observerActiveRooms)
+            InterlockedCompareExchangePointer(&active, nullptr, room);
+    }
+
+    void ObserverMarkBattleActive(uint8_t* room)
+    {
+        if (!ObserverCallback() || !ObserverRequested(room))
+            return;
+        bool hasAi = false;
+        for (int slot = 0; slot < kSlots && !hasAi; ++slot)
+            hasAi = (SlotPilotId(room, slot) & kAiPilotBit) != 0;
+        if (!hasAi)
+            return;
+        for (auto& active : g_observerActiveRooms)
+            if (InterlockedCompareExchangePointer(&active, nullptr, nullptr) == room)
+                return;
+        for (auto& active : g_observerActiveRooms)
+            if (InterlockedCompareExchangePointer(&active, room, nullptr) == nullptr) {
+                ObserverEmit(SDGO_PVP_AI_EVENT_BATTLE_ACTIVE, room);
+                return;
+            }
+    }
+
+    void GuardedObserverEmit(
+        uint32_t type, uint8_t* room, uint32_t status = 0, bool requireRequest = true)
+    {
+        __try {
+            ObserverEmit(type, room, status, requireRequest);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "ignored exception while copying a PvP observer snapshot");
+        }
+    }
+
+    void GuardedObserverForget(uint8_t* room)
+    {
+        __try {
+            ObserverForgetRoom(room);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
+    void GuardedObserverMarkActive(uint8_t* room)
+    {
+        __try {
+            ObserverMarkBattleActive(room);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (InterlockedCompareExchange(&g_observerFaultLogged, 1, 0) == 0)
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "ignored exception while observing an active PvP battle");
+        }
+    }
+
     // The respawn colour of a team (slot info +0x434, copied to pilot +0x39 by the human setup):
     // the colour of a human on that team, else the other colour than the humans of the other
     // team. The clients pick start points by colour, not by team.
@@ -778,9 +928,15 @@ namespace
     {
         int result = g_setupHumans(proc, room, a, b, c);
         if (result == 0 && room) {
+            GuardedObserverForget(room);
+            GuardedObserverEmit(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED, room);
             DWORD code = 0;
-            if (!GuardedAddPvpAi(room, &code))
+            if (!GuardedAddPvpAi(room, &code)) {
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while adding AI players; this battle has none", code);
+                GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_FAILED, room, code);
+            } else {
+                GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_COMPLETE, room);
+            }
         }
         return result;
     }
@@ -875,9 +1031,6 @@ namespace
     // Diagnostic (LogBattle): in a PvP room with AI pilots, the team scores (room +0x2EEE4 team 1, +0x2EEE8
     // team 2; a kill adds to the killer pilot's team in 0x0047BD30) whenever they change, and
     // the human pilots going down and coming back.
-    constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
-    constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
-
     struct RoomWatch
     {
         uint8_t* room;
@@ -954,6 +1107,8 @@ namespace
         int result = g_roomTick(room, now);
         if (room && !GuardedRespawn(room, now))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while respawning AI pilots");
+        if (room)
+            GuardedObserverMarkActive(room);
         return result;
     }
 
@@ -1001,9 +1156,14 @@ namespace
 
     void __fastcall BattleEnd(uint8_t* room, void* /*edx*/, uint16_t a, uint16_t b, int now)
     {
+        const bool observed = ObserverRoomActive(room);
         g_battleEnd(room, a, b, now);
+        if (observed)
+            GuardedObserverEmit(SDGO_PVP_AI_EVENT_BATTLE_END, room, 0, false);
         if (room && !GuardedRemove(room))
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while removing the AI pilots at battle end");
+        if (room)
+            GuardedObserverForget(room);
     }
 
     template <typename Fn>
@@ -1012,6 +1172,21 @@ namespace
         out = reinterpret_cast<Fn>(g_api->Symbol(g_mod, symbol));
         return out != nullptr;
     }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiRegisterObserverV1(
+    const SdgoPvpAiObserverSinkV1* sink)
+{
+    if (!sink || sink->size < sizeof(*sink) ||
+        sink->version != SDGO_PVP_AI_OBSERVER_VERSION || !sink->callback)
+        return 0;
+    if (InterlockedCompareExchange(&g_observerRegistration, 1, 0) != 0)
+        return 0;
+    InterlockedExchangePointer(&g_observerUser, sink->user);
+    InterlockedExchangePointer(
+        &g_observerCallback, reinterpret_cast<PVOID>(sink->callback));
+    InterlockedExchange(&g_observerRegistration, 2);
+    return 1;
 }
 
 // The check detours run in the middle of the dispatcher: each keeps every register and the

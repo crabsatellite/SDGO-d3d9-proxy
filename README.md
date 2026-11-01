@@ -73,6 +73,7 @@ For development and troubleshooting; disabled by default.
 | Tool | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
+| Native GameTest (Experimental) | Run assertions inside isolated native game instances | `game_test_client`, `game_test_server` | Clients + Battle servers | [Use](docs/game-test.md) |
 <!-- /mod-category:development -->
 
 ## Install and use

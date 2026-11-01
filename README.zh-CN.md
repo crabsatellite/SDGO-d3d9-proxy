@@ -70,6 +70,7 @@
 | 工具 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 发包日志 | 记录发包，辅助协议排错 | `net_probe` | 客户端 | [使用说明](docs/net-probe.md) |
+| GameTest（Experimental） | 在独立的原生游戏实例里运行断言 | `game_test_client`、`game_test_server` | 客户端 + 战斗服务器 | [使用说明](docs/game-test.zh-CN.md) |
 <!-- /mod-category:development -->
 
 ## 安装与使用

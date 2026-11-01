@@ -70,6 +70,13 @@ if (@($catalog.features.PSObject.Properties | Where-Object { $_.Value.toolkit -e
     & python (Join-Path $PSScriptRoot 'package_frp.py') --out (Join-Path $out 'frp') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'FRP toolkit packaging failed' }
 }
+if (@($catalog.features.PSObject.Properties | Where-Object { $_.Name -eq 'game-test' }).Count) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools'), (Join-Path $out 'sdk\include\sdgo') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'game_test.py') -Destination (Join-Path $out 'tools')
+    foreach ($header in @('sdgo_api.h','game_test.h','pvp_ai_observer.h','pvp_ai_client_observer.h')) {
+        Copy-Item -LiteralPath (Join-Path $repo "include\sdgo\$header") -Destination (Join-Path $out 'sdk\include\sdgo')
+    }
+}
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)

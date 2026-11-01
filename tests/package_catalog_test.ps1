@@ -52,12 +52,21 @@ try {
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','net_probe','net_route','agent_udp_pool'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','net_probe','net_route','agent_udp_pool','game_test_client','game_test_server'))
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
+        foreach ($required in @('tools/game_test.py','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "GameTest package lacks $required" }
+        }
+        foreach ($relative in @('client/sdgo/mods/game_test_client/mod.ini','server/sdgo/mods/game_test_server/mod.ini')) {
+            $manifestReader = New-Object IO.StreamReader ($fullArchive.GetEntry($relative).Open())
+            try { $manifestText = $manifestReader.ReadToEnd() } finally { $manifestReader.Dispose() }
+            if ($manifestText -notmatch '(?m)^enabled=0\s*$') { throw "GameTest must ship disabled: $relative" }
+        }
+        if ($fullArchive.Entries.FullName -match 'private/account\.ini|gametest/run\.ini|real-native-') { throw 'Private runtime files entered the package' }
     } finally { $fullArchive.Dispose() }
 
     $baseFolder = Join-Path $work 'base-unpacked'; $customFolder = Join-Path $work 'custom-unpacked'

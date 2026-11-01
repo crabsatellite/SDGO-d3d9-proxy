@@ -16,6 +16,11 @@ For people who build the framework or write mods. Installing is covered in the
 
 ## How the framework gets into the process
 
+For tests that require the actual game rather than offline fixtures, see
+[Native GameTest](game-test.md). Its optional provider ABI runs assertions on
+the native main thread in separately copied instances and exports JSON/JUnit
+results. The development Mods remain disabled in ordinary packages.
+
 ```
 GOnline.exe      ── static import ──> d3d9.dll   (loader/d3d9)
 BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
