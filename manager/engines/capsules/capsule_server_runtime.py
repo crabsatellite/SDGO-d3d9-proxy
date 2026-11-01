@@ -1172,5 +1172,3 @@ def main():
         return
     manifest = build(args.bundle, args.output)
     print(json.dumps(manifest, ensure_ascii=False, sort_keys=True))
-
-

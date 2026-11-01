@@ -53,7 +53,7 @@ and random-unit gameplay belong in this category.
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
 | AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
-| Collection capsule (Beta) | Spend 100,000 GP for a never-acquired initial form; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
+| Collection capsule (Beta) | Activity machine: 100,000 GP for a never-acquired initial form, weighted by rank; configure and distribute through Mod Manager | `collection_capsule` | World server + client machine resources | [Use](docs/collection-capsule.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) | Default Medium (Lv12), room-selected Easy/Medium/Hard; Hard EX, team tactics, shield defence and legal player SP/parts/items. Requires matching PvP components. | `battle_ai`, `battle_ai_server` | Battle servers + all participants | [Use](docs/battle-ai.md) |
@@ -63,14 +63,14 @@ and random-unit gameplay belong in this category.
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
-The [capsule editor](docs/capsule-catalog.md) is part of master. Owners configure their own
+The [capsule panel in Mod Manager](docs/capsule-catalog.md) is part of master. Owners configure their own
 paths and database connection locally, then distribute a generated player package.
 Players install it once and use the normal game launcher. Other Mods can reuse the
 [catalog, compiler and deployment interfaces](docs/capsule-integration.md) rather than
 writing separate client tables or overlapping native file hooks.
 Upload a finished PNG and drag or resize its crop frame to preview the native
-card. Image restoration is performed separately; the editor and player runtime
-have no AI model or GPU dependency.
+card. The distributed Mod uses the owner’s existing client artwork; this project
+does not bundle restored game artwork, original game archives or AI models.
 
 On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)
 beside the native lock/delete buttons. Reward selection, paged previews, both confirmations

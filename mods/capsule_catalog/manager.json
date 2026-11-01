@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "capsule_catalog",
+  "title": "扭蛋机目录",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "settings": [],
+  "presentation": "configurable",
+  "provider": "capsules"
+}

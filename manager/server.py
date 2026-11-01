@@ -45,7 +45,8 @@ def make_server(workspace, port=0):
                         raise PermissionError('请求不属于当前 Manager 会话')
                     if self.headers.get('Content-Type', '').split(';')[0] != 'application/json': raise ValueError('需要 JSON 请求')
                     length = int(self.headers.get('Content-Length', '0'))
-                    if not 0 < length <= 16 * 1024 * 1024: raise ValueError('请求大小无效')
+                    limit = 64 * 1024 * 1024 if path.startswith('/api/providers/capsules/') else 16 * 1024 * 1024
+                    if not 0 < length <= limit: raise ValueError('请求大小无效')
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict): raise ValueError('请求必须是 JSON 对象')
                 if method == 'GET' and path in ('/', '/ui-kit.html'):

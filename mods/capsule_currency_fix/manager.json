@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "capsule_currency_fix",
+  "title": "活动扭蛋币种显示修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "settings": [],
+  "presentation": "automatic_fix"
+}

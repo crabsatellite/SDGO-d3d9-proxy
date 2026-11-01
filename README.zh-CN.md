@@ -48,7 +48,7 @@
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战；[长房名组合用法](#long-room-title-commands) | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
 | AI 机体目录（Beta，独立附加包） | 用服主生成的配套数据扩充 LV1–LV5 机体池，关闭并重启后恢复原池；[长房名组合用法](#long-room-title-commands) | `ai_catalog` | 对战服务器 + 所有参战客户端 | [使用说明](docs/ai-catalog.zh-CN.md) |
 | 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
-| 收藏扭蛋（Beta） | 十万 GP 抽取未曾获得的初始形态；通过 Mod Manager 配置和分发 | `collection_capsule` | World 服务器 + 客户端机台资源 | [使用说明](docs/collection-capsule.zh-CN.md) |
+| 收藏扭蛋（Beta） | 活动机台十万 GP 抽未曾获得的初始形态，按等级加权；Mod Manager 配置和分发 | `collection_capsule` | World 服务器 + 客户端机台资源 | [使用说明](docs/collection-capsule.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合；[长房名组合用法](#long-room-title-commands) | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） | 默认 Medium（Lv12），房名选择三档；Hard EX、协同战术、盾面防御及玩家同规则 SP/部件/道具。需配套 PvP 组件。 | `battle_ai`、`battle_ai_server` | 对战服务器 + 所有玩家 | [使用说明](docs/battle-ai.md) |
@@ -58,11 +58,11 @@
 | 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
-[扭蛋机编辑器](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
+[Mod Manager 扭蛋面板](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
 生成玩家安装包分发；玩家安装一次后照常启动游戏。其他 Mod 可复用
 [目录、编译和安装接口](docs/capsule-integration.md)，共同生成同一份目录，避免各自覆盖客户端表或重复挂接文件读取。
-上传处理好的 PNG 后可拖动、拉角和缩放取景框，预览原生扭蛋卡。AI 恢复单独离线处理；
-编辑器与玩家运行时都不包含 AI 模型或显卡依赖。
+可上传自己的 PNG 并拖动、拉角和缩放取景框，预览原生扭蛋卡。默认使用本地原版素材；
+仓库不发布高清化游戏图片、游戏原始资源包或 AI 模型。玩家仍直接使用游戏原生扭蛋页面。
 
 进入游戏「**机体管理**」页，在「机体锁定/解除」「机体解体」旁点击「**一键整理**」「**重复兑换**」。
 兑换奖励选择、分页预览、再次确认和停止都在当前游戏页内完成；偏好设置在统一 Mod Manager。

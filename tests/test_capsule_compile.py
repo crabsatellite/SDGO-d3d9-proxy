@@ -96,6 +96,8 @@ class NativeFormatTests(unittest.TestCase):
         native_coin = bytearray(114)
         struct.pack_into("<I", native_coin, 5, 102)
         original = {
+            "0031": encode_gdt(614, []),
+            "0099": encode_gdt(179, []),
             "0033": encode_gdt(1019, [bytes(native_fixed)]),
             "0101": encode_gdt(114, [bytes(native_coin)], extra=6),
             "0154": encode_gdt(231, [], extra=30),

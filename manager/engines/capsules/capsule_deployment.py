@@ -479,11 +479,11 @@ def _merge_mod_ini(package_raw, existing_raw):
         return package_raw
     old = _ini_values(existing_raw, "existing capsule mod.ini")
     merged = package_raw
-    enabled = old.get("mod", {}).get("enabled")
-    if enabled is not None:
-        merged = _set_ini_value(
-            merged, "mod", "enabled", enabled, "package capsule mod.ini"
-        )
+    # Applying a complete capsule runtime explicitly activates this feature.
+    # A generic framework installation may have left its data-less stub off.
+    merged = _set_ini_value(
+        merged, "mod", "enabled", "1", "package capsule mod.ini"
+    )
     for key, value in old.get("settings", {}).items():
         merged = _set_ini_value(
             merged, "settings", key, value, "package capsule mod.ini"
@@ -700,6 +700,8 @@ def _validate_compiled(runtime_output, revision):
         "overlay.zdx",
         "overlay.zpk",
         "data/0033.gdt",
+        "data/0031.gdt",
+        "data/0099.gdt",
         "data/0101.gdt",
         "data/0154.gdt",
         "data/0155.gdt",
@@ -719,7 +721,7 @@ def _validate_compiled(runtime_output, revision):
     overlay_zpk = runtime.get("runtime", "overlay_zpk_sha256", fallback="")
     if overlay_zdx != hashes["overlay.zdx"] or overlay_zpk != hashes["overlay.zpk"]:
         raise ValueError("Compiled runtime.ini overlay hashes differ")
-    for table in ("0033", "0101", "0154", "0155"):
+    for table in ("0031", "0033", "0099", "0101", "0154", "0155"):
         expected_path = f"data/{table}.gdt"
         configured = runtime.get("gdt", table, fallback="").replace("\\", "/")
         configured_hash = runtime.get("gdt", f"{table}_sha256", fallback="")
@@ -844,6 +846,9 @@ def _build_package(
             "player/client/sdgo/mods/capsule_catalog/mod.ini"
         ),
     }
+    contract = "sdgo/mods/capsule_catalog/manager.json"
+    if _safe_join(framework_stage, contract).is_file():
+        stage_files[contract] = "player/client/" + contract
     installer = Path(__file__).with_name("install_capsule_client.ps1")
     installer = _assert_existing_components_no_reparse(installer)
     if not installer.is_file():
@@ -860,6 +865,9 @@ def _build_package(
             b"if errorlevel 1 pause\r\n"
         )
     stage_hashes = {}
+    provider = _safe_join(framework_stage, 'sdgo/mods/capsule_catalog/capsule_catalog.dll')
+    if not provider.is_file() or b'SDGO_CAPSULE_REGISTRY_6TABLE_V2' not in provider.read_bytes():
+        raise ValueError('请更新配套共享机台组件：当前活动海报和历史领取箱需要新版六表 provider')
     for source_relative in stage_files:
         source = _safe_join(framework_stage, source_relative)
         if not source.is_file():
@@ -1263,6 +1271,9 @@ class _ClientTransaction:
             ini_raw = target_ini.read_bytes()
         else:
             ini_raw = package_ini
+        ini_raw = _set_ini_value(
+            ini_raw, "mods", "capsule_catalog", "1", "existing sdgo.ini"
+        )
         if self.foreign_loader:
             values = _ini_values(ini_raw, "existing sdgo.ini")
             configured = values.get("loader", {}).get("chain_d3d9", "")

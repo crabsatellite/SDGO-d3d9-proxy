@@ -1095,6 +1095,7 @@ async function loadPortraitVariant() {
   if (p.dirty) return;
   if (result.catalog_revision !== state.revision) throw new Error("配置已变化，请刷新页面后再编辑头像");
   if (result.image_data_url) await setPortraitImage(result.image_data_url, result.crop);
+  else $("#portrait-source-info").textContent = "未上传 PNG，当前使用原版素材";
   const preview = $("#portrait-preview");
   preview.classList.toggle("hidden", !result.card_data_url);
   if (result.card_data_url) preview.src = result.card_data_url;

@@ -149,6 +149,33 @@ class ManagerTests(unittest.TestCase):
         for url in ('/operators','/rewards','/api/operators','/api/bootstrap','/app.exe','/panels/../workspace.json'):
             self.assertNotEqual(self.call('GET',url)[0],200)
 
+    def test_capsule_png_routes_use_the_manager_session_and_portable_catalog(self):
+        from manager_capsule_fixture import fixture_catalog
+        from PIL import Image
+        path=self.root/'capsules.json';storage.atomic(path,storage.json_bytes(fixture_catalog()))
+        provider=self.workspace.providers['capsules'];provider.configure({'catalog':str(path)})
+        status,state=self.call('GET','/api/providers/capsules/api/bootstrap')
+        self.assertEqual(status,200)
+        before=state['catalog_revision']
+        output=io.BytesIO();Image.new('RGBA',(326,128),(50,100,160,255)).save(output,'PNG')
+        payload={'unit_id':1,'variant':0,'png_base64':base64.b64encode(output.getvalue()).decode('ascii'),
+                 'crop':[0,0,326,128],'expected_revision':before,'apply_to_both':True}
+        status,_=self.call('POST','/api/providers/capsules/api/portraits/save',payload,{'X-ModManager-Token':'wrong'})
+        self.assertEqual(status,403)
+        status,saved=self.call('POST','/api/providers/capsules/api/portraits/save',payload)
+        self.assertEqual(status,200);self.assertNotEqual(saved['catalog_revision'],before)
+        status,portrait=self.call('GET','/api/providers/capsules/api/portraits?unit_id=1&variant=1')
+        self.assertEqual(status,200);self.assertTrue(portrait['overridden'])
+        self.assertTrue(portrait['image_data_url'].startswith('data:image/png;base64,'))
+        status,_=self.call('POST','/api/providers/capsules/api/portraits/reset',
+            {'unit_id':1,'variant':0,'expected_revision':before})
+        self.assertEqual(status,409)
+        status,reset=self.call('POST','/api/providers/capsules/api/portraits/reset',
+            {'unit_id':1,'variant':0,'expected_revision':saved['catalog_revision']})
+        self.assertEqual(status,200)
+        self.assertNotIn('0',json.loads(path.read_text())['portrait_overrides']['1'])
+        self.assertNotEqual(self.call('GET','/api/portraits?unit_id=1&variant=0')[0],200)
+
     def test_config_preserves_unknown_keys_comments_and_newlines(self):
         self.advanced();host=self.workspace.settings['hosts'][0]['id'];details=self.workspace.details(host,'findwindow_fix')
         self.workspace.configure(host,'findwindow_fix',{'trace':True},details['revisions'])

@@ -134,7 +134,11 @@ def make_stage(root):
         encoding="utf-8",
     )
     (stage / "sdgo/mods/capsule_catalog/capsule_catalog.dll").write_bytes(
-        b"CAPSULE MOD DLL"
+        b"CAPSULE MOD DLL SDGO_CAPSULE_REGISTRY_6TABLE_V2"
+    )
+    (stage / "sdgo/mods/capsule_catalog/manager.json").write_text(
+        '{"schema_version":1,"id":"capsule_catalog","settings":[]}',
+        encoding="utf-8",
     )
     (stage / "sdgo/mods/capsule_catalog/mod.ini").write_text(
         "[mod]\nid=capsule_catalog\nname=Capsule catalog runtime\n"
@@ -165,6 +169,8 @@ def make_runtime(root, catalog, runtime_revision=None, placements_revision=None)
     (runtime / "assets/sprs").mkdir(parents=True)
     files = {}
     payloads = {
+        "data/0031.gdt": b"item-categories",
+        "data/0099.gdt": b"activity",
         "data/0033.gdt": b"fixed",
         "data/0101.gdt": b"coin",
         "data/0154.gdt": b"custom",
@@ -192,7 +198,7 @@ def make_runtime(root, catalog, runtime_revision=None, placements_revision=None)
                 f"{table}=data\\{table}.gdt\n"
                 f"{table}_sha256={files[f'data/{table}.gdt']}"
             )
-            for table in ("0033", "0101", "0154", "0155")
+            for table in ("0031", "0033", "0099", "0101", "0154", "0155")
         )
         + f"\n\n[ui]\n1161=ui\\1161.uir\n1161_sha256={files['ui/1161.uir']}"
         + "\n\n[counts]\nfixed=1\ncoin=0\ncustom=1\ncandidates=1\n",
@@ -459,6 +465,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((package / "player/symbol-fragment.ini").is_file())
         self.assertTrue((package / "player/package-manifest.json").is_file())
         self.assertTrue((package / "player/Install-Client.ps1").is_file())
+        self.assertTrue((package / "player/client/sdgo/mods/capsule_catalog/manager.json").is_file())
         self.assertTrue((package / "player/Install-Client.cmd").is_file())
         full_symbols = (
             package

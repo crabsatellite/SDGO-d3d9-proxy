@@ -8,12 +8,11 @@ there is no capsule-specific state added to the core C ABI.
 
 ## Catalog and edits
 
-`tools/capsule_catalog.py` owns schema version 1, validation, acquisition analysis,
-initialization, mutations and semantic export. Add `tools` to the owner tool's
-module path and use:
+`manager/engines/capsules/capsule_catalog.py` owns schema version 1, validation, acquisition analysis,
+initialization, mutations and semantic export. The `tools` imports are compatibility shims; use the Manager business package:
 
 ```python
-from capsule_catalog import read_json, validate, mutate, digest, export_bundle
+from manager.engines.capsules.capsule_catalog import read_json, validate, mutate, digest, export_bundle
 
 catalog = read_json(catalog_path)
 validate(catalog)
@@ -51,11 +50,11 @@ outputs from different catalogs.
 | `capsule_server_runtime` | Build install/verify/rollback SQL from the semantic server export |
 | `capsule_ui.CatalogStore` | CRUD, import, template and unit queries; expected-revision checks on writes; compile/apply callbacks |
 | `capsule_deployment.DeploymentTarget` | Build a revision-aligned distributable package, back up and apply configured targets |
-| `package_capsule_editor.py` | Package public tools/configuration without local credentials or test-environment scripts |
+| `tools/package.ps1` | Package Mod code and the unified Manager without owner state or game assets |
 
 ```python
 from pathlib import Path
-from capsule_deployment import DeploymentTarget
+from manager.engines.capsules.capsule_deployment import DeploymentTarget
 
 target = DeploymentTarget(
     client_target=Path(owner_game),
@@ -73,16 +72,16 @@ capsule DLL before replacement. Never stop a game by name to bypass these checks
 On SQL Server 2014, the adapter uses the ODBC transaction as the outer transaction;
 after commit it requires `@@TRANCOUNT = 0`. Verify persistence with a new connection.
 
-The HTTP UI binds to loopback. Queries include `/api/bootstrap`, `/api/machine`,
+The Manager owns the loopback HTTP server. Under `/api/providers/capsules`, queries include `/api/bootstrap`, `/api/machine`,
 `/api/units` and `/api/catalog/download`. Changes and `/api/export`, `/api/compile`,
 `/api/apply` carry `expected_revision`; stale edits are rejected. Reuse `CatalogStore`
 when embedding another UI rather than calling private installation helpers.
 
 ## Resource and native boundaries
 
-The runtime accepts only `0033`, `0101`, `0154` and `0155` capsule GDT overlays,
+The runtime accepts only `0031`, `0033`, `0099`, `0101`, `0154` and `0155` shared capsule GDT overlays,
 declared SPR/TXR resources and the exact extra `uirs/1161.uir` overlay. The checksum
-bridge is scoped to the four declared GDT streams; UI resources do not widen it.
+bridge is scoped to the six declared GDT streams; UI resources do not widen it.
 All declared bytes must match their manifest hashes before hooks are enabled.
 
 Generated SPR/TXR IDs currently use 60000–65535. Other Mods must avoid that range
@@ -114,11 +113,17 @@ requiring identical PNG compression across machines or Pillow versions.
 4 MiB per PNG, 32 MiB total, finite in-bounds crops with the native 163:64 aspect.
 Only verified A/B/C frame families accept overrides. `Assets.card` composes the
 uploaded crop with native chrome and rarity treatment; unedited native poses keep
-their original SPR references. Compiler version 7 records upload hashes/crops.
+their original SPR references. Compiler version 8 records upload hashes/crops.
 
-The editor exposes `GET /api/portraits?unit_id=...&variant=...` and revision-checked
+The Manager provider exposes `GET /api/providers/capsules/api/portraits?unit_id=...&variant=...` and revision-checked
 `POST /api/portraits/preview`, `/save`, `/reset`. Preview does not persist. Save
 accepts `apply_to_both`; reset removes only the selected pose. These routes use
 the same loopback, origin and CSRF protections as machine edits. There is no AI
-engine, model download or GPU dependency in this workflow; external image tools
-supply an ordinary PNG.
+engine, model download or GPU dependency in this workflow. This project ships no
+restored game artwork; optional owner-provided PNGs are ordinary configuration data.
+
+The shared provider also preserves `0031` item categories and `0099` activity
+machines installed by the collection feature. Compiler version 8 includes their
+extension fingerprint in its cache key, retaining posters and historical unit
+items while ordinary pools are edited. Ordinary and collection packages build
+from the same native provider sources; do not install competing file hooks.

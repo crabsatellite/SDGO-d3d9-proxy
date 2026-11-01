@@ -93,6 +93,12 @@ public:
     }
 };
 
+struct ActivityReward {
+    std::int64_t dropBoxSerial = 0;
+    std::int32_t itemCategory = 0;
+    std::int32_t amount = 0;
+};
+
 struct DrawRow {
     struct I64 {
         DBSTATUS status = DBSTATUS_E_UNAVAILABLE;
@@ -104,17 +110,9 @@ struct DrawRow {
         DBLENGTH length = 0;
         LONG value = 0;
     };
-    struct U8 {
-        DBSTATUS status = DBSTATUS_E_UNAVAILABLE;
-        DBLENGTH length = 0;
-        BYTE value = 0;
-    };
-
-    I64 userUnitNumber;
-    I32 unitId;
-    I32 slotIndex;
-    I64 serialNumber;
-    U8 customLevelMax;
+    I64 dropBoxSerial;
+    I32 itemCategory;
+    I32 amount;
 };
 
 inline bool ExactColumns(IRowset* rows) {
@@ -126,13 +124,17 @@ inline bool ExactColumns(IRowset* rows) {
     DBCOLUMNINFO* info = nullptr;
     OLECHAR* strings = nullptr;
     const HRESULT result = columns->GetColumnInfo(&count, &info, &strings);
-    bool valid = SUCCEEDED(result) && count == 5 && info;
-    constexpr DBTYPE types[] = {DBTYPE_I8, DBTYPE_I4, DBTYPE_I4, DBTYPE_I8, DBTYPE_UI1};
-    constexpr DBLENGTH sizes[] = {8, 4, 4, 8, 1};
+    bool valid = SUCCEEDED(result) && count == 3 && info;
+    constexpr DBTYPE types[] = {DBTYPE_I8, DBTYPE_I4, DBTYPE_I4};
+    constexpr DBLENGTH sizes[] = {8, 4, 4};
+    constexpr const wchar_t* names[] = {
+        L"DropBoxSerial", L"ItemCategory", L"Amount"};
     if (valid) {
         for (DBORDINAL index = 0; index < count; ++index) {
             if (info[index].iOrdinal != index + 1 || info[index].wType != types[index] ||
-                info[index].ulColumnSize != sizes[index]) {
+                info[index].ulColumnSize != sizes[index] || !info[index].pwszName ||
+                CompareStringOrdinal(
+                    info[index].pwszName, -1, names[index], -1, TRUE) != CSTR_EQUAL) {
                 valid = false;
                 break;
             }
@@ -149,17 +151,13 @@ inline bool ExactValue(const DrawRow::I64& value) {
 inline bool ExactValue(const DrawRow::I32& value) {
     return value.status == DBSTATUS_S_OK && value.length == sizeof(value.value);
 }
-inline bool ExactValue(const DrawRow::U8& value) {
-    return value.status == DBSTATUS_S_OK && value.length == sizeof(value.value);
-}
-
-inline bool ReadOneRow(IRowset* rows, PickOutput& output) {
+inline bool ReadOneRow(IRowset* rows, ActivityReward& output) {
     if (!ExactColumns(rows)) return false;
     ComPtr<IAccessor> accessors;
     if (FAILED(rows->QueryInterface(
             __uuidof(IAccessor), reinterpret_cast<void**>(accessors.put())))) return false;
 
-    DBBINDING bindings[5] = {};
+    DBBINDING bindings[3] = {};
     auto bind = [&](std::size_t index, DBTYPE type, DBLENGTH size, DBBYTEOFFSET status,
                     DBBYTEOFFSET length, DBBYTEOFFSET value) {
         auto& item = bindings[index];
@@ -173,21 +171,17 @@ inline bool ReadOneRow(IRowset* rows, PickOutput& output) {
         item.cbMaxLen = size;
         item.wType = type;
     };
-    bind(0, DBTYPE_I8, 8, offsetof(DrawRow, userUnitNumber.status),
-         offsetof(DrawRow, userUnitNumber.length), offsetof(DrawRow, userUnitNumber.value));
-    bind(1, DBTYPE_I4, 4, offsetof(DrawRow, unitId.status),
-         offsetof(DrawRow, unitId.length), offsetof(DrawRow, unitId.value));
-    bind(2, DBTYPE_I4, 4, offsetof(DrawRow, slotIndex.status),
-         offsetof(DrawRow, slotIndex.length), offsetof(DrawRow, slotIndex.value));
-    bind(3, DBTYPE_I8, 8, offsetof(DrawRow, serialNumber.status),
-         offsetof(DrawRow, serialNumber.length), offsetof(DrawRow, serialNumber.value));
-    bind(4, DBTYPE_UI1, 1, offsetof(DrawRow, customLevelMax.status),
-         offsetof(DrawRow, customLevelMax.length), offsetof(DrawRow, customLevelMax.value));
+    bind(0, DBTYPE_I8, 8, offsetof(DrawRow, dropBoxSerial.status),
+         offsetof(DrawRow, dropBoxSerial.length), offsetof(DrawRow, dropBoxSerial.value));
+    bind(1, DBTYPE_I4, 4, offsetof(DrawRow, itemCategory.status),
+         offsetof(DrawRow, itemCategory.length), offsetof(DrawRow, itemCategory.value));
+    bind(2, DBTYPE_I4, 4, offsetof(DrawRow, amount.status),
+         offsetof(DrawRow, amount.length), offsetof(DrawRow, amount.value));
 
-    DBBINDSTATUS statuses[5] = {};
+    DBBINDSTATUS statuses[3] = {};
     HACCESSOR accessor = DB_NULL_HACCESSOR;
     const HRESULT created = accessors->CreateAccessor(
-        DBACCESSOR_ROWDATA, 5, bindings, sizeof(DrawRow), &accessor, statuses);
+        DBACCESSOR_ROWDATA, 3, bindings, sizeof(DrawRow), &accessor, statuses);
     if (FAILED(created)) {
         if (accessor != DB_NULL_HACCESSOR)
             accessors->ReleaseAccessor(accessor, nullptr);
@@ -226,17 +220,15 @@ inline bool ReadOneRow(IRowset* rows, PickOutput& output) {
     if (accessor == DB_NULL_HACCESSOR ||
         FAILED(accessors->ReleaseAccessor(accessor, nullptr)))
         valid = false;
-    valid = valid && ExactValue(row.userUnitNumber) && ExactValue(row.unitId) &&
-            ExactValue(row.slotIndex) && ExactValue(row.serialNumber) &&
-            ExactValue(row.customLevelMax);
-    if (!valid || row.userUnitNumber.value <= 0 || row.unitId.value <= 0 ||
-        row.slotIndex.value < 0 || row.serialNumber.value <= 0) return false;
+    valid = valid && ExactValue(row.dropBoxSerial) && ExactValue(row.itemCategory) &&
+            ExactValue(row.amount);
+    if (!valid || row.dropBoxSerial.value <= 0 ||
+        row.itemCategory.value < kUnitCategoryBegin ||
+        row.itemCategory.value >= kUnitCategoryEnd || row.amount.value != 1) return false;
 
-    output.userUnitNumber = row.userUnitNumber.value;
-    output.unitId = row.unitId.value;
-    output.slotIndex = row.slotIndex.value;
-    output.serialNumber = row.serialNumber.value;
-    output.customLevelMax = row.customLevelMax.value;
+    output.dropBoxSerial = row.dropBoxSerial.value;
+    output.itemCategory = row.itemCategory.value;
+    output.amount = row.amount.value;
     return true;
 }
 
@@ -291,7 +283,7 @@ public:
             reinterpret_cast<void**>(transactions_.put())));
     }
 
-    int Draw(std::int32_t account, std::int32_t machine, PickOutput& output) {
+    int Draw(std::int32_t account, std::int32_t machine, ActivityReward& output) {
         if (!commands_ || !transactions_ || account <= 0 || machine <= 0) return kDatabaseFailure;
         Transaction transaction(transactions_.get());
         if (!transaction.Begin()) return kDatabaseFailure;
@@ -328,7 +320,11 @@ public:
         if (FAILED(parameterInfo->SetParameterInfo(3, ordinals, definitions)))
             return kDatabaseFailure;
 
-        PickInput parameters = {-1, account, machine};
+        struct DrawParameters {
+            std::int32_t result;
+            std::int32_t account;
+            std::int32_t machine;
+        } parameters = {-1, account, machine};
         DBBINDING bindings[3] = {};
         for (std::size_t index = 0; index < 3; ++index) {
             bindings[index].iOrdinal = static_cast<DBORDINAL>(index + 1);
@@ -366,7 +362,7 @@ public:
             nullptr, __uuidof(IRowset), &values, &affected,
             reinterpret_cast<IUnknown**>(rows.put()));
 
-        PickOutput pending = {};
+        ActivityReward pending = {};
         bool rowValid = false;
         if (SUCCEEDED(executed) && rows) rowValid = ReadOneRow(rows.get(), pending);
         rows.reset(); // SQL Server publishes procedure return parameters after rowset release.

@@ -179,7 +179,7 @@ def export_configuration(db, output: Path) -> dict:
 
     cursor = db.cursor()
     try:
-        for table in ("tbl_Units", "tbl_MachinePrice"):
+        for table in ("tbl_Units", "tbl_MachinePrice", "tbl_ItemMachinePrice", "tbl_ItemCategory"):
             cursor.execute("SELECT * FROM dbo.[" + table + "]")
             keys = [column[0] for column in cursor.description]
             rows = [dict(zip(keys, row)) for row in cursor.fetchall()]
@@ -192,6 +192,12 @@ FROM sdgo_collection_capsule.ImportedForms f JOIN sdgo_collection_capsule.UnitSo
             keys = [column[0] for column in cursor.description]
             imported = [dict(zip(keys, row)) for row in cursor.fetchall()]
         save("collection.imported-forms.json", imported)
+        owned = []
+        if cursor.execute("SELECT CASE WHEN OBJECT_ID(N'sdgo_collection_capsule.OwnedUnitItems',N'U') IS NULL THEN 0 ELSE 1 END").fetchone()[0]:
+            cursor.execute('SELECT UnitID,CategoryID,Name FROM sdgo_collection_capsule.OwnedUnitItems')
+            keys = [column[0] for column in cursor.description]
+            owned = [dict(zip(keys, row)) for row in cursor.fetchall()]
+        save('collection.unit-items.json', owned)
     finally:
         cursor.close()
     meta = {"schema_version": 1, "scope": "public unit and machine definitions only; no player data",

@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import capsule_catalog as catalog_lib
 import capsule_ui
+from tests import capsule_http_fixture
 from capsule_client_compile import COMPILER_VERSION
 
 
@@ -456,6 +457,9 @@ class CapsuleUiHttpTests(unittest.TestCase):
         self.assertIsNone(last["native_location"])
 
     def test_versioned_client_compile_and_verified_reuse(self):
+        fingerprint_patch = patch("manager.engines.capsules.capsule_client_compile.extension_fingerprint", return_value="a"*64)
+        fingerprint_patch.start()
+        self.addCleanup(fingerprint_patch.stop)
         client = self.root / "client"
         client.mkdir()
         lookup = self.root / "lookup.json"
@@ -495,6 +499,7 @@ class CapsuleUiHttpTests(unittest.TestCase):
                 {
                     "catalog_revision": revision,
                     "compiler_version": COMPILER_VERSION,
+                    "preserved_extensions_signature": "a"*64,
                     "counts": {
                         "fixed": 1,
                         "coin": 0,
@@ -515,7 +520,7 @@ class CapsuleUiHttpTests(unittest.TestCase):
 
         with patch.object(
             capsule_ui, "_compile_catalog", side_effect=fake_compile
-        ) as compiler:
+        ) as compiler, patch("manager.engines.capsules.capsule_client_compile.extension_fingerprint", return_value="a"*64):
             first = store.compile(
                 revision, {"kind": "fixed_machines", "id": 101}
             )
@@ -532,15 +537,18 @@ class CapsuleUiHttpTests(unittest.TestCase):
             / "compiled-bundle"
             / "runtime"
             / revision[:16]
-            / f"client-v{COMPILER_VERSION}",
+            / f"client-v{COMPILER_VERSION}-aaaaaaaaaaaa",
         )
         self.assertFalse(list((Path(first["output"]).parent).glob("*.pending")))
 
         (Path(first["output"]) / "payload.bin").write_bytes(b"tampered")
-        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+        with self.assertRaisesRegex(ValueError, "hash mismatch"), patch("manager.engines.capsules.capsule_client_compile.extension_fingerprint", return_value="a"*64):
             store.compile(revision)
 
     def test_apply_callback_capability_security_failure_and_success(self):
+        fingerprint_patch = patch("manager.engines.capsules.capsule_client_compile.extension_fingerprint", return_value="a"*64)
+        fingerprint_patch.start()
+        self.addCleanup(fingerprint_patch.stop)
         client = self.root / "apply-client"
         client.mkdir()
         lookup = self.root / "apply-lookup.json"
@@ -596,6 +604,7 @@ class CapsuleUiHttpTests(unittest.TestCase):
                 {
                     "catalog_revision": revision,
                     "compiler_version": COMPILER_VERSION,
+                    "preserved_extensions_signature": "a"*64,
                     "counts": {
                         "fixed": 1,
                         "coin": 0,
@@ -613,7 +622,7 @@ class CapsuleUiHttpTests(unittest.TestCase):
 
         with patch.object(
             capsule_ui, "_compile_catalog", side_effect=fake_compile
-        ) as compiler:
+        ) as compiler, patch("manager.engines.capsules.capsule_client_compile.extension_fingerprint", return_value="a"*64):
             result = app.dispatch_post(
                 "/api/apply",
                 {

@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "1" * 64
-GDT_NAMES = ("0033", "0101", "0154", "0155")
+GDT_NAMES = ("0031", "0033", "0099", "0101", "0154", "0155")
 
 
 def sha(path):
@@ -79,7 +79,7 @@ def write_bundle(folder, *, duplicate=False, bad_range=False, asset_id=60000,
     if with_ui and declare_ui:
         lines += ["", "[ui]", "1161=ui\\1161.uir",
                   f"1161_sha256={sha(folder / 'ui/1161.uir')}"]
-    lines += ["", "[counts]", "fixed=104", "coin=78", "custom=2", "candidates=156"]
+    lines += ["", "[counts]", "fixed=104", "coin=78", "custom=2", "candidates=156", "activity=0"]
     (folder / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
@@ -136,7 +136,7 @@ class CapsuleClientRuntimeTests(unittest.TestCase):
             result = self.run_harness(temp)
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertIn("CHECKSUM_GATE 1", result.stdout)
-            self.assertIn(f"OK {REVISION} 6", result.stdout)
+            self.assertIn(f"OK {REVISION} 8", result.stdout)
             self.assertIn("FIND gdrs\\0033.gdt 1", result.stdout)
             self.assertIn("FIND sprs\\60000.spr 1", result.stdout)
             self.assertIn("FIND txrs\\60000.txr 1", result.stdout)

@@ -26,6 +26,7 @@ namespace capsule_catalog
         uint32_t coinCount = 0;
         uint32_t customCount = 0;
         uint32_t candidateCount = 0;
+        uint32_t activityCount = 0;
         std::unordered_map<std::wstring, OverlayEntry> entries;
 
         const OverlayEntry* Find(const std::wstring& nativePath) const;
