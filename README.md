@@ -16,7 +16,7 @@ Beta and Experimental labels indicate release channels.
 | Feature | Overview | Documentation |
 |---|---|---|
 | IME input fix <!-- catalog: `ime_fix` --> | Input compatibility | [Use](docs/ime-fix.md) |
-| Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Currency display compatibility | [Use](docs/capsule-currency-fix.md) |
+| Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Correct the known 9301 list and confirmation currency; install and restart required | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Input method compatibility | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Client startup compatibility | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Relay logging compatibility | [Use](docs/agent-relay-log-fix.md) |

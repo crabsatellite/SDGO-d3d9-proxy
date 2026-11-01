@@ -1,6 +1,7 @@
 # Parallel development and Mod Manager integration
 
 - Start new work from current `origin/master` in an isolated branch/worktree. Preserve other worktrees, running game services and real player/configuration data.
+- Before starting or restarting native Battle hosts, read the enabled ports in `tbl_ChannelInfo` and `ServerStartUp/ServerStartUp.xml`. A folder's existence does not enable its channel; derive the launch set from the selected server's configuration rather than assume BattleServer1-7 are all enabled. Do not relax the native Unit Support Info row-count check to conceal an unregistered channel.
 - All user-facing Mod configuration belongs in **SDGO Mod Manager**. Do not add another configuration EXE, HTTP server, per-Mod launcher or process-owning script.
 - Player-facing gameplay actions belong in the game's relevant native page. Manager owns installation, configuration, management APIs and Mod background work; it is not the gameplay UI. Hangar sorting and duplicate exchange belong in the **unit management / 机体管理** page, without a separate desktop window, global floating toolbar or required hotkey. Preserve preview/confirmation and native server acknowledgements. If another action's in-game placement is unclear, agree on it with the user before implementing that UI.
 - Every Mod must ship `manager.json`. Register readable labels, storage keys, validation and activation rules. Everyday player/server-owner operations use `audience=user`; only raw identifiers and diagnostics use `audience=developer`.

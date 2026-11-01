@@ -14,12 +14,15 @@ from ctypes import wintypes
 import datetime as dt
 import hashlib
 import json
+import ipaddress
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
 import stat
+import socket
+import struct
 import string
 import subprocess
 import sys
@@ -227,7 +230,12 @@ def overlay_observer(root: Path, stage: Path) -> None:
         raise GameTestError(f"stage lacks native observer Mod: {observer_source}")
 
     copy_file_if_missing(stage_client / "d3d9.dll", root / "d3d9.dll")
-    copy_file_if_missing(stage_client / "sdgo" / "core.dll", root / "sdgo" / "core.dll")
+    # The current test Mod can require a newer manifest loader. Bind the
+    # staged core in this isolated copy; leave the normal template untouched.
+    staged_core=stage_client / "sdgo" / "core.dll"
+    if not staged_core.is_file():
+        raise GameTestError(f"stage lacks framework core: {staged_core}")
+    shutil.copy2(staged_core,root / "sdgo" / "core.dll")
     copy_file_if_missing(stage_client / "sdgo" / "sdgo.ini", root / "sdgo" / "sdgo.ini")
 
     observer_target = root / "sdgo" / "mods" / TEST_MOD
@@ -290,6 +298,54 @@ def random_account() -> tuple[str, str]:
     )
 
 
+def configure_test_network(root: Path, policy: str) -> None:
+    if policy == 'preserve':return
+    if policy != 'direct':raise GameTestError('unknown test network policy')
+    # Owner routing can override explicit command-line endpoints. Only the
+    # copied translator is disabled; the source client is never changed.
+    manifest = root/'sdgo/mods/net_route/mod.ini'
+    if manifest.exists():
+        config=read_ini(manifest);config['mod']['enabled']='0';write_ini(manifest,config)
+    path=root/'sdgo/sdgo.ini';settings=read_ini(path)
+    if not settings.has_section('mods'):settings.add_section('mods')
+    settings['mods']['net_route']='0';write_ini(path,settings)
+
+
+def owned_tcp_peers(pid: int) -> list[dict]:
+    if os.name != 'nt':return []
+    api=ctypes.WinDLL('iphlpapi',use_last_error=True)
+    get=api.GetExtendedTcpTable
+    get.argtypes=[ctypes.c_void_p,ctypes.POINTER(wintypes.DWORD),wintypes.BOOL,wintypes.ULONG,ctypes.c_int,wintypes.ULONG]
+    get.restype=wintypes.DWORD
+    size=wintypes.DWORD(0)
+    result=get(None,ctypes.byref(size),False,2,5,0)
+    if result not in (0,122) or not 4<=size.value<=4*1024*1024:return []
+    data=ctypes.create_string_buffer(size.value)
+    if get(data,ctypes.byref(size),False,2,5,0):return []
+    count=struct.unpack_from('<I',data.raw)[0]
+    if count>(size.value-4)//24:return []
+    peers=[]
+    for i in range(count):
+        state,local,local_port,remote,remote_port,owner=struct.unpack_from('<6I',data.raw,4+i*24)
+        if owner==pid and state==5:
+            peers.append({'local_ipv4':socket.inet_ntoa(struct.pack('<I',local)),
+                'local_port':socket.ntohs(local_port&65535),'remote_ipv4':socket.inet_ntoa(struct.pack('<I',remote)),
+                'remote_port':socket.ntohs(remote_port&65535)})
+    return peers
+
+
+def verify_direct_peer(metadata: dict, pid: int) -> dict | None:
+    expected=metadata['plan']['target_host'];port=metadata['plan']['login_port']
+    peers=owned_tcp_peers(pid)
+    match=next((p for p in peers if p['remote_ipv4']==expected and p['remote_port']==port),None)
+    if match is None:return None
+    proof={'verified':True,'pid':pid,'remote_ipv4':expected,'remote_port':port,'observed':peers}
+    receipt=ini_parser();receipt['run']={'id':metadata['run_id']}
+    receipt['network']={'verified':'1','pid':str(pid),'ipv4':expected,'port':str(port)}
+    write_ini(Path(metadata['client']['root'])/'sdgo/gametest/network-verified.ini',receipt)
+    return proof
+
+
 def default_account_profile() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
@@ -311,11 +367,31 @@ def load_account_profile(path: Path) -> configparser.ConfigParser:
         password = parser["account"]["password"]
     except KeyError as error:
         raise GameTestError(f"persistent test account profile is invalid: {path}") from error
-    if not re.fullmatch(r"[A-Za-z0-9]{10}", username):
-        raise GameTestError("persistent test account username must be 10 ASCII alphanumeric characters")
-    if not re.fullmatch(r"[A-Za-z0-9]{12}", password):
-        raise GameTestError("persistent test account password must be 12 ASCII alphanumeric characters")
+    validate_account_credentials(parser, username, password)
     return parser
+
+
+def validate_account_credentials(parser, username: str, password: str) -> None:
+    existing = parser.get('registration', 'state', fallback='') == 'existing_account'
+    password_format = parser.get('account', 'password_format', fallback='plain')
+    if existing:
+        if not re.fullmatch(r'[A-Za-z0-9_]{1,14}', username):
+            raise GameTestError('existing account username exceeds the native ASCII account field')
+        if password_format == 'md5':
+            if not re.fullmatch(r'[A-Fa-f0-9]{32}', password):
+                raise GameTestError('existing account MD5 credential must contain exactly 32 hex characters')
+        elif password_format == 'plain':
+            if not password or len(password) > 64 or not password.isascii() or any(c in password for c in '\r\n\0'):
+                raise GameTestError('existing account password does not fit the native account input')
+        else:
+            raise GameTestError('unknown existing account password format')
+    else:
+        if password_format != 'plain':
+            raise GameTestError('imported MD5 credentials require an explicitly existing account profile')
+        if not re.fullmatch(r'[A-Za-z0-9]{10}', username):
+            raise GameTestError('persistent test account username must be 10 ASCII alphanumeric characters')
+        if not re.fullmatch(r'[A-Za-z0-9]{12}', password):
+            raise GameTestError('persistent test account password must be 12 ASCII alphanumeric characters')
 
 
 def create_account_profile(path: Path) -> configparser.ConfigParser:
@@ -351,11 +427,26 @@ def parse_mode_sequence(value: str) -> tuple[int, ...]:
     return modes
 
 
-def required_flow_cases(mode_sequence: str) -> tuple[str, ...]:
+def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
+                        battleship_only: bool = False, gift_requests_only: bool = False,
+                        deck_only: bool = False) -> tuple[str, ...]:
     modes = parse_mode_sequence(mode_sequence)
+    if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only))) > 1:
+        raise GameTestError('choose only one account preparation operation')
+    if bootstrap_only:
+        return FLOW_CASES[:3]
+    if gift_requests_only:
+        return FLOW_CASES[:3] + ('setup.gift_requests',)
+    if deck_only:
+        return FLOW_CASES[:3] + ('flow.battleship','setup.deck')
+    prefix = FLOW_CASES[:3]
+    if battleship_only or any(mode in (6,7) for mode in modes):
+        prefix += ('flow.battleship',)
+    if battleship_only:
+        return prefix
     if len(modes) == 1:
-        return FLOW_CASES
-    return FLOW_CASES[:3] + tuple(
+        return prefix + FLOW_CASES[3:]
+    return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
     )
 
@@ -464,8 +555,12 @@ def write_job(
         "account_path": "private/account.ini",
         "retry_count": str(plan["retry_count"]),
         "expect_first_fail": "1" if plan["expect_first_fail"] else "0",
-        "required_cases": ",".join(required_flow_cases(plan["mode_sequence"])),
+        "required_cases": ",".join(required_flow_cases(plan["mode_sequence"], plan.get('bootstrap_only', False),
+            plan.get('battleship_only',False),plan.get('gift_requests_only',False),plan.get('deck_only',False))),
     }
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only'):
+        if plan.get(flag):run['run'][flag] = '1'
+    if 'network_policy' in plan:run['run']['network_policy']=plan['network_policy']
     write_ini(directory / "run.ini", run)
 
 
@@ -474,13 +569,19 @@ def read_public_plan(root: Path) -> dict:
     try:
         run = parser["run"]
         mode_sequence = ",".join(str(mode) for mode in parse_mode_sequence(run["mode_sequence"]))
+        bootstrap_only = run.get('bootstrap_only', '0') == '1'
+        battleship_only = run.get('battleship_only', '0') == '1'
+        gift_requests_only = run.get('gift_requests_only', '0') == '1'
+        deck_only = run.get('deck_only', '0') == '1'
+        if any(run.get(flag,'0') not in ('0','1') for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only')):
+            raise ValueError('invalid preparation flag')
         if (
             run["role"] != "client"
             or run["suite"] != "pvp-ai"
             or run["normal_flow"] != "1"
             or run["server_channel_selection"] != "native_automatic"
             or run["account_path"] != "private/account.ini"
-            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence))
+            or run["required_cases"] != ",".join(required_flow_cases(mode_sequence, bootstrap_only,battleship_only,gift_requests_only,deck_only))
             or run["auto_nickname"] != "account_name"
             or run["exit_tutorial"] != "1"
             or run["first_unit_draw"] != "1"
@@ -489,7 +590,7 @@ def read_public_plan(root: Path) -> dict:
             raise ValueError("run contract does not describe the required normal client flow")
         host, port = run["endpoint"].rsplit(":", 1)
         process_entry = run["process_entry"]
-        return {
+        plan = {
             "target_host": host,
             "login_port": int(port),
             "target_server": run["target_server"],
@@ -507,8 +608,25 @@ def read_public_plan(root: Path) -> dict:
             "acknowledge_game_windows": run["acknowledge_game_windows"] == "1",
             "launcher_path": "" if process_entry == GAME_EXE else process_entry,
         }
+        for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only)):
+            if value:plan[flag] = True
+        if 'network_policy' in run:
+            if run['network_policy'] not in ('direct','preserve'):raise ValueError('invalid network policy')
+            plan['network_policy']=run['network_policy']
+        return plan
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid normal-flow run.ini: {error}") from error
+
+
+def validate_deck_profile(parser: configparser.ConfigParser) -> None:
+    try:
+        values = [parser['deck'][f'unit_uid{i}'] for i in range(4)]
+        if any(not re.fullmatch(r'[0-9]+',value) or not 0 < int(value) < 2**64 for value in values):
+            raise ValueError('invalid unit UID')
+        if len({int(value) for value in values}) != 4:
+            raise ValueError('duplicate unit UID')
+    except (KeyError,ValueError) as error:
+        raise GameTestError('deck preparation requires four distinct real unit UIDs in the private deck profile') from error
 
 
 def validate_private_account(root: Path, plan: dict) -> Path:
@@ -522,10 +640,11 @@ def validate_private_account(root: Path, plan: dict) -> Path:
         raw_lock_path = parser["runner"]["lock_path"]
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid private GameTest account file: {error}") from error
-    if not re.fullmatch(r"[A-Za-z0-9]{10}", username):
-        raise GameTestError("private GameTest username is not 10 ASCII alphanumeric characters")
-    if not re.fullmatch(r"[A-Za-z0-9]{12}", password):
-        raise GameTestError("private GameTest password is not 12 ASCII alphanumeric characters")
+    validate_account_credentials(parser, username, password)
+    if plan.get('deck_only'):
+        validate_deck_profile(parser)
+    if parser.get('registration', 'state', fallback='') == 'existing_account' and (retry_count != 1 or expect_first_fail):
+        raise GameTestError('existing account imports cannot use registration retries')
     if retry_count != plan["retry_count"] or expect_first_fail != plan["expect_first_fail"]:
         raise GameTestError("private GameTest registration plan disagrees with run.ini")
     lock_path = Path(raw_lock_path)
@@ -630,8 +749,17 @@ def prepare(
     account_profile: Path | None = None,
     create_test_account: bool = False,
     sfx_only: bool = False,
+    bootstrap_only: bool = False,
+    battleship_only: bool = False,
+    gift_requests_only: bool = False,
+    deck_only: bool = False,
+    network_policy: str = 'direct',
 ) -> dict:
     client_template = client_template.resolve()
+    if network_policy not in ('direct','preserve'):raise GameTestError('invalid network policy')
+    if network_policy=='direct':
+        try:target_host=str(ipaddress.IPv4Address(target_host))
+        except ipaddress.AddressValueError as error:raise GameTestError('direct tests require an explicit IPv4 login endpoint') from error
     stage = stage.resolve()
     run_dir = run_dir.resolve()
     if not client_template.is_dir() or not (client_template / GAME_EXE).is_file():
@@ -661,7 +789,11 @@ def prepare(
         default_retry_count = 2 if pending_first_login else 1
         resolved_retry_count = default_retry_count if retry_count is None else retry_count
         resolved_expect_first_fail = False if expect_first_fail is None else expect_first_fail
+        if profile.get('registration', 'state', fallback='') == 'existing_account' and (resolved_retry_count != 1 or resolved_expect_first_fail):
+            raise GameTestError('existing account imports cannot use registration retries')
 
+    if deck_only:
+        validate_deck_profile(profile)
     plan = make_plan(
         target_host,
         login_port,
@@ -673,6 +805,10 @@ def prepare(
         expected_ai,
         launcher_path,
     )
+    required_flow_cases(mode_sequence,bootstrap_only,battleship_only,gift_requests_only,deck_only)
+    plan['network_policy']=network_policy
+    for flag,value in (('bootstrap_only',bootstrap_only),('battleship_only',battleship_only),('gift_requests_only',gift_requests_only),('deck_only',deck_only)):
+        if value:plan[flag] = True
     run_dir.parent.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     preparing = run_dir.parent / f".gametest-preparing-{token}"
@@ -686,6 +822,7 @@ def prepare(
     try:
         shutil.copytree(client_template, client, ignore=copy_ignore)
         overlay_observer(client, stage)
+        configure_test_network(client,network_policy)
         recording = configure_sfx_only(client) if sfx_only else None
         write_job(client, run_id, plan, profile, profile_path)
 
@@ -697,7 +834,8 @@ def prepare(
         metadata = {
             "schema": SCHEMA_VERSION,
             "run_id": run_id,
-            "suite": "pvp-ai-normal-flow",
+            "suite": ('account-bootstrap' if bootstrap_only else 'battleship-acquisition' if battleship_only
+                      else 'gift-mail-requests' if gift_requests_only else 'battleship-deck' if deck_only else 'pvp-ai-normal-flow'),
             "status": "prepared",
             "created_utc": utc_now(),
             "source": {
@@ -768,6 +906,9 @@ def validate_metadata(run_dir: Path) -> dict:
     if not isinstance(plan, dict):
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root)
+    for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only'):
+        if (type(plan.get(flag, False)) is not bool or plan.get(flag, False) != public_plan.get(flag, False)):
+            raise GameTestError('run.json cannot change the required bootstrap or battle scope')
     for key, value in public_plan.items():
         if plan.get(key) != value:
             raise GameTestError(f"run.json plan disagrees with run.ini for {key}")
@@ -1132,6 +1273,11 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             deadline = time.monotonic() + max(0.0, timeout)
             status = "running"
             while time.monotonic() < deadline:
+                if metadata['plan'].get('network_policy')=='direct' and not metadata['execution'].get('network_verified'):
+                    proof=verify_direct_peer(metadata,game_process['pid'])
+                    if proof:
+                        metadata['execution']['network_verified']=proof
+                        atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
                 if has_run_end(events):
                     status = "completed"
                     break
@@ -1434,8 +1580,15 @@ def build_report(run_dir: Path) -> dict:
                 }.get(execution_status, f"unexpected execution status: {execution_status!r}")
             )
     launch_status = "fail" if launch_errors else ("pending" if launch_pending else "pass")
+    if execution is not None and execution.get('status')=='completed' and metadata['plan'].get('network_policy')=='direct':
+        proof=execution.get('network_verified',{})
+        if (proof.get('verified') is not True or proof.get('pid')!=execution.get('game_pid') or
+            proof.get('remote_ipv4')!=metadata['plan']['target_host'] or proof.get('remote_port')!=metadata['plan']['login_port']):
+            launch_errors.append('the actual native login TCP peer was not verified against the requested endpoint')
+            launch_status='fail'
 
-    required_cases = required_flow_cases(metadata["plan"]["mode_sequence"])
+    required_cases = required_flow_cases(metadata["plan"]["mode_sequence"], metadata['plan'].get('bootstrap_only', False),
+        metadata['plan'].get('battleship_only',False),metadata['plan'].get('gift_requests_only',False),metadata['plan'].get('deck_only',False))
     native = evaluate_events(
         Path(metadata["client"]["events"]),
         metadata["run_id"],
@@ -1521,6 +1674,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
     prepare_parser.add_argument("--sfx-only", action="store_true",
                                 help="mute BGM and enable effects only in the isolated client")
+    prepare_parser.add_argument('--bootstrap-only', action='store_true',
+                                help='test real login and onboarding only; does not claim PvP acceptance')
+    prepare_parser.add_argument('--battleship-only', action='store_true',help='acquire the initial battleships through native tutorial business')
+    prepare_parser.add_argument('--gift-requests-only', action='store_true',help='send configured native mail gift requests; server processing is verified separately')
+    prepare_parser.add_argument('--deck-only', action='store_true',help='save and select a native battleship deck using four genuinely owned unit UIDs from the private account profile')
+    prepare_parser.add_argument('--network-policy',choices=('direct','preserve'),default='direct',
+                                help='direct disables inherited endpoint routes only in the test copy; preserve explicitly tests owner routes')
     prepare_parser.add_argument(
         "--expect-first-fail",
         action=argparse.BooleanOptionalAction,
@@ -1571,6 +1731,11 @@ def main(argv: list[str] | None = None) -> int:
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
                 sfx_only=args.sfx_only,
+                bootstrap_only=args.bootstrap_only,
+                battleship_only=args.battleship_only,
+                gift_requests_only=args.gift_requests_only,
+                deck_only=args.deck_only,
+                network_policy=args.network_policy,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

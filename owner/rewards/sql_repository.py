@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import uuid
+from datetime import datetime, timezone
+from . import progression
 
 
 SCHEMA_PATH = Path(__file__).with_name("sql") / "battle_reward_wallet.sql"
@@ -84,6 +86,9 @@ class RewardWalletRepository:
         try:
             for batch in split_batches(script):
                 cursor.execute(batch)
+            progress_script = SCHEMA_PATH.with_name("battle_reward_progression.sql").read_text(encoding="utf-8-sig")
+            for batch in split_batches(progress_script):
+                cursor.execute(batch)
             scope = self._read_scope(cursor)
             self.connection.commit()
             return scope
@@ -97,6 +102,35 @@ class RewardWalletRepository:
             return self._read_scope(cursor)
         finally:
             self.connection.rollback()
+
+    def apply_progression(self, job, policy) -> int:
+        progression.validate(policy)
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(
+                "EXEC dbo.SdgoBattleProgressApply @MatchId=?,@AccountNumber=?,@ExpectedScope=?,"
+                "@SourceHash=?,@PolicyRevision=?,@CompletedUtc=?,@Qualified=?,@FirstMb=?,"
+                "@DailyTarget=?,@DailyMb=?,@WeeklyTarget=?,@WeeklyMb=?",
+                job["match_id"], job["account_number"], str(job["expected_scope"]), job["source_hash"],
+                job["policy_revision"], datetime.fromtimestamp(job["completed_unix"], timezone.utc).replace(tzinfo=None),
+                progression.qualifying(job, policy), policy["daily_first_mb"], policy["daily_matches"],
+                policy["daily_mb"], policy["weekly_matches"], policy["weekly_mb"])
+            bonus = None
+            while True:
+                if cursor.description and [c[0] for c in cursor.description] == ["BonusMb"]:
+                    rows = cursor.fetchall()
+                    if len(rows) != 1 or type(rows[0][0]) is not int or not 0 <= rows[0][0] <= 300000:
+                        raise ValueError("Invalid progression receipt")
+                    bonus = rows[0][0]
+                if not cursor.nextset():
+                    break
+            if bonus is None:
+                raise ValueError("Missing progression receipt")
+            self.connection.commit()
+            return bonus
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def current_mb(self, account_number: int) -> int:
         """Read the current MB balance through the game's native procedure."""
@@ -144,7 +178,8 @@ class RewardWalletRepository:
     def _read_scope(cursor) -> uuid.UUID:
         row = cursor.execute(
             "SELECT ScopeId FROM dbo.SdgoBattleRewardWalletMeta "
-            "WHERE Singleton=1 AND SchemaVersion=1"
+            "WHERE Singleton=1 AND SchemaVersion=1 "
+            "AND OBJECT_ID(N'dbo.SdgoBattleProgressApply',N'P') IS NOT NULL"
         ).fetchone()
         if row is None:
             raise RuntimeError("battle reward wallet schema is not installed")

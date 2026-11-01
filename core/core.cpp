@@ -10,6 +10,7 @@
 
 #include "hooks.h"
 #include "log.h"
+#include "ini_string.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/room_commands.h"
 #include "symbols.h"
@@ -61,9 +62,7 @@ namespace
 
     std::wstring IniString(const std::wstring& path, const wchar_t* section, const wchar_t* key, const wchar_t* def)
     {
-        wchar_t buffer[2048] = {};
-        GetPrivateProfileStringW(section, key, def, buffer, 2048, path.c_str());
-        return buffer;
+        return sdgo::ReadIniString(path, section, key, def);
     }
 
     std::vector<std::string> SplitList(const std::wstring& text)

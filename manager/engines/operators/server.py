@@ -74,6 +74,25 @@ def install_fixed_name_guard(cur):
     cur.execute(text)
 
 
+def apply_default_mission_parts(cur,catalog):
+    from .presets import fixed_name_ids
+    enabled=fixed_name_ids(catalog)
+    backups={r[0]:r[1] for r in cur.execute('SELECT OperatorID,OriginalGParts FROM dbo.sdgo_OperatorMissionPartsBackup')}
+    for identity,original in backups.items():
+        if identity not in enabled:
+            cur.execute('UPDATE dbo.tbl_OperatorData SET GParts=? WHERE OperatorID=?',original,identity)
+    changed=0
+    for identity in sorted(enabled):
+        row=cur.execute('SELECT GParts FROM dbo.tbl_OperatorData WHERE OperatorID=?',identity).fetchone()
+        if row is None:raise ValueError('默认副官任务部件登记不存在：'+str(identity))
+        if identity not in backups:
+            cur.execute('INSERT dbo.sdgo_OperatorMissionPartsBackup VALUES(?,?)',identity,row[0])
+        if row[0]!=1:
+            cur.execute('UPDATE dbo.tbl_OperatorData SET GParts=1 WHERE OperatorID=?',identity)
+            changed+=1
+    return changed
+
+
 def migrate_default_entitlements(cur, catalog):
     """Replace old default-officer entitlements in place; equipped IDs stay valid."""
     if catalog.get('default_pack_version') != 1:return 0
@@ -283,13 +302,15 @@ def apply_catalog(catalog, server_ini):
         entitlements=migrate_default_entitlements(cur,catalog)
         fixed_names_changed=migrate_fixed_default_names(cur,catalog)
         install_fixed_name_guard(cur)
+        mission_parts_changed=apply_default_mission_parts(cur,catalog)
         cur.execute("COMMIT TRANSACTION")
         return {"revision": rev, "managed_operators": len(managed), "storefront_changes": False,
                 "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": bool(legacy_aliases or fixed_names_changed),
                 "non_default_nicknames_changed":False,
                 "legacy_script_aliases_cleared":legacy_aliases,
                 "existing_default_entitlements_upgraded":entitlements,
-                "fixed_default_names_applied":fixed_names_changed}
+                "fixed_default_names_applied":fixed_names_changed,
+                "default_mission_parts_enabled":mission_parts_changed}
     except Exception:
         try:
             cn.cursor().execute("IF XACT_STATE()<>0 ROLLBACK TRANSACTION")

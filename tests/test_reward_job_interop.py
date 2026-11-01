@@ -157,7 +157,7 @@ def main():
             "Healthy": "1",
             "HeartbeatUnix": status["HeartbeatUnix"],
             "ScopeId": str(SCOPE),
-            "Revision": "sdgo-native-gc-ledger-v1",
+            "Revision": "sdgo-native-gc-ledger-v2",
             "LastError": "",
             "Processed": "1",
             "Replays": "0",
@@ -171,6 +171,11 @@ def main():
             ini_bytes("wallet", status)
         )
         run_native(executable, "stale", runtime)
+        v2 = runtime / 'v2'
+        run_native(executable, 'emit-v2', v2)
+        job = read_job(next((v2/'outbox').glob('*.ini')))
+        assert job['mb'] == 0 and job['completed_unix'] == 1793008800
+        assert job['active_seconds'] == 180 and job['contributed'] is True
         print(
             "native publish -> Python wallet worker -> native receipt/health "
             "interop passed"

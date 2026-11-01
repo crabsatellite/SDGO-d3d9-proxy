@@ -83,6 +83,7 @@ public:
         const char* room_title;
         uint16_t room_mode;
         uint32_t map_id;
+        bool password_is_md5 = false;
     };
 
     bool Bind(const SdgoApi* api, SdgoMod* mod, const Config& config)
@@ -146,10 +147,13 @@ public:
             return false;
         __try {
             char passwordHash[33] = {};
-            passwordMd5Hex_(
-                config_.password,
-                passwordHash,
-                static_cast<int>(strlen(config_.password)));
+            if (config_.password_is_md5)
+                memcpy(passwordHash, config_.password, 32);
+            else
+                passwordMd5Hex_(
+                    config_.password,
+                    passwordHash,
+                    static_cast<int>(strlen(config_.password)));
             passwordHash[32] = '\0';
 
             uint8_t packet[0x4D] = {};
@@ -599,6 +603,12 @@ private:
             return false;
         const size_t usernameLength = strlen(config_.username);
         const size_t passwordLength = strlen(config_.password);
+        if (config_.password_is_md5) {
+            if (passwordLength != 32) return false;
+            for (const unsigned char* p = reinterpret_cast<const unsigned char*>(config_.password); *p; ++p)
+                if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || (*p >= 'A' && *p <= 'F')))
+                    return false;
+        }
         // The original packet owns 15 bytes for the account including NUL and
         // hashes any nonempty password to a fixed 32-byte MD5 hex string.
         return usernameLength > 0 && usernameLength <= 14 && passwordLength > 0;

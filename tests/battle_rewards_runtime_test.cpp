@@ -82,6 +82,21 @@ constexpr std::array<std::array<ptrdiff_t, 6>, 10> kDailyFields = {{
     {{-0x760, -0x20, -0x860, -0x10, -0x840, -0x834}},
 }};
 
+// Independently traced EBP sources for packet +1E, +24, +2A and +30.
+// Packet +36 is the event bucket in kDailyFields. Only these GB rows change.
+constexpr std::array<std::array<ptrdiff_t, 4>, 10> kGDisplayFields = {{
+    {{-0x758, -0x10, -0x76C, -0x744}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x74C, -0x08, -0x760, -0x73C}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x744, -0x08, -0x754, -0x734}},
+    {{-0x74C, -0x08, -0x75C, -0x73C}},
+}};
+
 constexpr std::array<const char*, 10> kAugmentSymbols = {{
     "battle.rewards.augment.personal",
     "battle.rewards.augment.team",
@@ -480,6 +495,8 @@ std::unique_ptr<FrameFixture> PrepareFrame(MatchFixture* match, unsigned site,
     Put(frame, fields[3], static_cast<uint16_t>(2));
     Put(frame, fields[4], static_cast<uint16_t>(3));
     Put(frame, fields[5], static_cast<uint16_t>(4));
+    for (unsigned i = 0; i < 4; ++i)
+        Put(frame, kGDisplayFields[site][i], static_cast<uint16_t>(16 + i));
     return result;
 }
 
@@ -493,6 +510,9 @@ void CheckFrame(const FrameFixture& frame_fixture, unsigned site,
     CHECK(Get<uint16_t>(frame, fields[3]) == (daily ? 13 : 2));
     CHECK(Get<uint16_t>(frame, fields[4]) == 0);
     CHECK(Get<uint16_t>(frame, fields[5]) == (daily ? 37 : 4));
+    CHECK(Get<uint16_t>(frame, kGDisplayFields[site][0]) == expected_g);
+    for (unsigned i = 1; i < 4; ++i)
+        CHECK(Get<uint16_t>(frame, kGDisplayFields[site][i]) == 0);
 }
 
 bool HasPacket(uint32_t account, uint32_t current_mb) {
@@ -514,17 +534,8 @@ bool WaitPacket(uint32_t account, uint32_t current_mb,
 
 bool ReplacePolicyWithBaseFive(const fs::path& runtime) {
     const fs::path path = runtime / L"reward-policy.ini";
-    std::string text = ReadText(path);
-    const std::string base = "Base=10\r\n";
-    const size_t base_pos = text.find(base);
-    const std::string label = "PolicyRevision=";
-    const size_t revision_pos = text.find(label);
-    if (base_pos == std::string::npos || revision_pos == std::string::npos ||
-        revision_pos + label.size() + 64 > text.size()) {
-        return false;
-    }
-    text.replace(base_pos, base.size(), "Base=5\r\n");
-    text.replace(revision_pos + label.size(), 64, 64, 'c');
+    const std::string text = ReadText(runtime / L"reward-policy-base-five.ini");
+    if (text.empty()) return false;
     const fs::path temporary = path.parent_path() / L"reward-policy.fixture.tmp";
     {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
@@ -590,7 +601,12 @@ void BasicCases(const fs::path& runtime) {
     CHECK(WaitPacket(2501, 1003));
 
     CHECK(ReplacePolicyWithBaseFive(runtime));
-    CHECK(WaitStatus(runtime, std::string(64, 'c')));
+    const std::string alternate = ReadText(runtime / L"reward-policy-base-five.ini");
+    const std::string revision_label = "PolicyRevision=";
+    const size_t revision_at = alternate.find(revision_label);
+    CHECK(revision_at != std::string::npos);
+    if (revision_at != std::string::npos)
+        CHECK(WaitStatus(runtime, alternate.substr(revision_at + revision_label.size(), 64)));
 
     auto frozen_frame = PrepareFrame(matches[0].get(), 0, 1, 1);
     InvokeSite(reinterpret_cast<void*>(kSiteFunctions[0]),
@@ -627,6 +643,23 @@ void DailyCase() {
     CHECK(WaitPacket(5001, 1006));
 }
 
+void ProgressionCase() {
+    std::vector<std::unique_ptr<MatchFixture>> matches;
+    std::vector<std::unique_ptr<FrameFixture>> frames;
+    const uint32_t balances[] = {4125, 4250, 31375, 31500};
+    for (unsigned i = 0; i < 4; ++i) {
+        auto match = std::make_unique<MatchFixture>();
+        PrepareMatch(match.get(), 0x5000u + i, 1700004000u + i, 6001);
+        RecordCombat(match.get(), 0);
+        auto frame = PrepareFrame(match.get(), 0, 0, 0);
+        InvokeSite(reinterpret_cast<void*>(kSiteFunctions[0]), frame->Frame());
+        CheckFrame(*frame, 0, 13310, false);
+        CHECK(WaitPacket(6001, balances[i]));
+        matches.push_back(std::move(match));
+        frames.push_back(std::move(frame));
+    }
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -637,7 +670,7 @@ int wmain(int argc, wchar_t** argv) {
     const fs::path runtime = fs::absolute(argv[1]);
     const std::wstring mode = argv[2];
     const bool daily = mode == L"daily";
-    if (!daily && mode != L"basic") return 2;
+    if (!daily && mode != L"basic" && mode != L"progression") return 2;
 
     wchar_t executable[32768] = {};
     GetModuleFileNameW(nullptr, executable,
@@ -655,7 +688,9 @@ int wmain(int argc, wchar_t** argv) {
     VerifyPatchedSites(daily);
     CHECK(WaitStatus(runtime, "\"policy_loaded\": true"));
 
-    if (daily)
+    if (mode == L"progression")
+        ProgressionCase();
+    else if (daily)
         DailyCase();
     else
         BasicCases(runtime);

@@ -173,10 +173,12 @@ log_level=0
 
 $allPassed = $false
 try {
-    foreach ($entry in @(
+    $rewardCases = @(
         @{ Name = "basic"; Daily = $false },
         @{ Name = "daily"; Daily = $true }
-    )) {
+    )
+    if ($env:SDGO_REWARD_SQL_INTEGRATION -eq '1') { $rewardCases += @{ Name='progression'; Daily=$false } }
+    foreach ($entry in $rewardCases) {
         $fixture = New-Case $entry.Name $entry.Daily
         Write-Host "== real core battle rewards $($entry.Name)"
         $output = & python -B (Join-Path $PSScriptRoot "battle_rewards_runtime_worker.py") `
