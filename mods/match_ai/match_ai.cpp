@@ -187,6 +187,7 @@ namespace
     ObjectIdFromPilotFn g_originalObjectIdFromPilot = nullptr;
     SetSlotColourFn g_originalSetSlotColour = nullptr;
     FindObjectFn g_findObject = nullptr;
+    FindObjectFn g_originalFindObject = nullptr;
     GameNewFn g_gameNew = nullptr;
     CameraUpdateFn g_originalTrackingUpdate = nullptr;
     IsPlayerObjectFn g_originalIsPlayerObject = nullptr;
@@ -955,6 +956,35 @@ namespace
 
     alignas(16) uint8_t g_scriptModeStandIn[0x620] = {};
     int g_lockFaults = 0;
+    thread_local void* g_targetSearchUm = nullptr;
+    constexpr uint32_t kSearchParticipantLimit = 12;
+    const Bot* BotByObject(void* um, uint32_t objectId);
+    void* g_targetTeamOriginal = nullptr;
+    void* g_targetParticipants = nullptr;
+
+    // Integer/TLS-only helper: the site detour preserves integer registers and
+    // flags, and this function does not touch x87 or SIMD state.
+    int __cdecl ParticipantSearchActive() { return g_targetSearchUm != nullptr; }
+    __declspec(naked) void TargetTeamGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            call ParticipantSearchActive
+            test eax, eax
+            jz native_team_path
+            popad
+            popfd
+            // The earlier NPC-only pass stored its weaker fallback here.
+            // Do not retain it when every real participant fails eligibility.
+            mov dword ptr [ebp-3Ch], 0
+            jmp dword ptr [g_targetParticipants]
+        native_team_path:
+            popad
+            popfd
+            jmp dword ptr [g_targetTeamOriginal]
+        }
+    }
 
     bool IsPvpMode(uint8_t* mode)
     {
@@ -1003,7 +1033,14 @@ namespace
     int LockTarget(uint32_t objectId, char p2, char p3)
     {
         __try {
-            return g_lockTarget(g_scriptModeStandIn, objectId, p2, p3);
+            void* previous = g_targetSearchUm;
+            void* um = g_game.unitManager ? *g_game.unitManager : nullptr;
+            g_targetSearchUm = um && BotByObject(um, objectId) ? um : nullptr;
+            __try {
+                return g_lockTarget(g_scriptModeStandIn, objectId, p2, p3);
+            } __finally {
+                g_targetSearchUm = previous;
+            }
         } __except (LockFault(GetExceptionCode(), (GetExceptionInformation())->ExceptionRecord->ExceptionAddress)) {
             return 0;
         }
@@ -1168,11 +1205,36 @@ namespace
         return g_originalPlayerSlot(um, index);
     }
 
+    uint8_t* SearchParticipant(void* um, uint32_t compactId)
+    {
+        if (!um || um != g_targetSearchUm || compactId < 1 || compactId > kSearchParticipantLimit)
+            return nullptr;
+        for (const Bot& bot : g_botTable) {
+            if (bot.slot >= 0 && static_cast<uint32_t>(bot.slot + 1) == compactId && SlotHolds(um, bot))
+                return static_cast<uint8_t*>(g_originalFindObject(um, bot.objectId));
+        }
+        return nullptr;
+    }
+
+    void* __fastcall FindObjectForSearch(void* um, void* /*edx*/, uint32_t objectId)
+    {
+        void* unit = g_originalFindObject(um, objectId);
+        // Native eligibility/visibility helpers repeat FindObject using the
+        // same compact loop index. They must resolve the same real participant.
+        return unit ? unit : SearchParticipant(um, objectId);
+    }
+
     void* __fastcall FindPlayer(void* um, void* /*edx*/, uint32_t objectId)
     {
         void* unit = g_originalFindPlayer(um, objectId);
         if (!unit && BotByObject(um, objectId))
             unit = g_findObject(um, objectId);
+        // Native LockTarget enumerates 1..playerCount, but AddObject assigns
+        // these AI participants ids 1001+. Supply the missing compact *search
+        // index* only inside that call. Native filtering and SetAttackTarget
+        // still use candidate+4, its real object id. HUD/packet lookups outside
+        // this scope must retain exact-id semantics, including missing humans.
+        if (!unit) unit = SearchParticipant(um, objectId);
         return unit;
     }
 
@@ -1850,10 +1912,14 @@ SDGO_MOD_ENTRY
                  Bind(g_game.calculateTeam, "um.calculate_team") && Bind(g_game.enableAi, "npc.enable_ai") &&
                  Bind(g_registerLuaBindings, "lua.register_bindings") && Bind(g_gameApp, "game.app") &&
                  Bind(g_lockTarget, "ainormal.lock_target") && Bind(g_runLuaFunction, "ainormal.run_lua_function") &&
+                 Bind(g_targetParticipants, "ainormal.target_participants") &&
                  Bind(g_findObject, "um.find_object") && Bind(g_setPlayerCount, "um.set_player_count") &&
                  Bind(g_gridData, "grid.data") && Bind(g_gridFind, "grid.find") &&
                  Bind(g_addDeckUnit, "unit.add_deck_unit") && Bind(g_switchDeck, "unit.switch_deck");
     if (!bound)
+        return 0;
+    if (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite ||
+        !api->HookSite(mod, "ainormal.target_team_gate", reinterpret_cast<void*>(&TargetTeamGate), &g_targetTeamOriginal))
         return 0;
     // The profile pointer is only used by the optional read-only GameTest
     // observer. Older supported symbol maps must still load the production AI
@@ -1884,7 +1950,9 @@ SDGO_MOD_ENTRY
         !api->HookCode(mod, "um.player_slot", reinterpret_cast<void*>(&PlayerSlot),
                        reinterpret_cast<void**>(&g_originalPlayerSlot)) ||
         !api->HookCode(mod, "um.find_player", reinterpret_cast<void*>(&FindPlayer),
-                       reinterpret_cast<void**>(&g_originalFindPlayer)))
+                       reinterpret_cast<void**>(&g_originalFindPlayer)) ||
+        !api->HookCode(mod, "um.find_object", reinterpret_cast<void*>(&FindObjectForSearch),
+                       reinterpret_cast<void**>(&g_originalFindObject)))
         return 0;
     // Without this an AI player keeps its first unit for every life in modes 6 and 7.
     if (!api->HookCode(mod, "game.playback_unit", reinterpret_cast<void*>(&PlaybackUnit),

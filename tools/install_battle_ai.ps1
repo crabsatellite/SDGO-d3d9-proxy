@@ -12,11 +12,11 @@ $game=(Resolve-Path -LiteralPath $GameDir).Path
 if($Side -eq 'Client') {
     $exeName='GOnline.exe';$symbolName='GOnline-54BE1568-00C97000.ini'
     $expectedHash='e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92'
-    $products=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','config.example.ini');match_ai=@('match_ai.dll','mod.ini')}
+    $products=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json')}
 } else {
     $exeName='BattleServer.exe';$symbolName='BattleServer-548A891D-0046C000.ini'
     $expectedHash='f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4'
-    $products=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini');pvp_ai=@('pvp_ai.dll','mod.ini')}
+    $products=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini','manager.json');pvp_ai=@('pvp_ai.dll','mod.ini','manager.json')}
 }
 $exe=Join-Path $game $exeName
 if(-not (Test-Path -LiteralPath $exe)) { throw "GameDir must contain $exeName" }

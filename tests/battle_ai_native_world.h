@@ -19,10 +19,10 @@ inline std::array<uint8_t,0x500> app{};
 inline std::array<uint8_t,0x40> service{},mode{};
 inline std::array<uint8_t,0xA4> room{};
 inline wchar_t title[32]={};
-inline std::array<uint8_t,0x3300> enemy1{},enemy2{};
-inline std::array<std::array<uint8_t,0x1400>,3> definitions{},fsms{};
-inline std::array<std::array<uint8_t,0x1400>,3> movements{};
-inline std::array<std::array<uint8_t,0x300>,3> nodes{},scenes{};
+inline std::array<uint8_t,0x3300> enemy1{},enemy2{},remoteHuman{},sameTeamNpc{};
+inline std::array<std::array<uint8_t,0x1400>,5> definitions{},fsms{};
+inline std::array<std::array<uint8_t,0x1400>,5> movements{};
+inline std::array<std::array<uint8_t,0x300>,5> nodes{},scenes{};
 inline std::array<std::array<uint8_t,0x800>,4> weapons{};
 inline std::array<void*,16> unitVtable{},sceneVtable{};
 inline bool blocked=false;
@@ -102,7 +102,16 @@ struct Callbacks {
         Put(unit,0x3090,rotated);Put(unit,0xD98,static_cast<float>(radians));Put(unit,0x100,dispatch);
     }
     __declspec(noinline) void Receipts(void*) {Shot(0,0,0);Shot(0,1,0);Shot(0,0,1);}
-    __declspec(noinline) bool CanAttack(uint8_t*) { return true; }
+    __declspec(noinline) bool CanAttack(uint8_t* attacker) {
+        auto candidate=reinterpret_cast<uint8_t*>(this);
+        if(candidate==attacker) return false;
+        const int state=*reinterpret_cast<int*>(candidate+0x9D8);
+        if(state==1) {
+            const int own=*reinterpret_cast<int*>(candidate+0x20),other=*reinterpret_cast<int*>(attacker+0x20);
+            return own==0||own==5||other==0||other==5||own!=other;
+        }
+        return state==4&&*reinterpret_cast<uint32_t*>(candidate+0xEB8)==*reinterpret_cast<uint32_t*>(attacker+4);
+    }
     __declspec(noinline) bool Projectile(void* opaque) {
         auto p=reinterpret_cast<uint8_t*>(this);
         auto node=*reinterpret_cast<uint8_t**>(p+8);
@@ -137,7 +146,8 @@ struct Callbacks {
         auto unit=reinterpret_cast<uint8_t*>(this);Put(unit,0x3078,*point);unit[0x30DC]=1;++moves;return 1;
     }
     __declspec(noinline) uint8_t* Find(uint32_t id) {
-        if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();return nullptr;
+        if(id==20)return source;if(id==1)return enemy1.data();if(id==2)return enemy2.data();
+        if(id==3)return remoteHuman.data();if(id==4)return sameTeamNpc.data();return nullptr;
     }
     __declspec(noinline) Vec3* Path(uint32_t,Vec3 start,Vec3 end,Vec3*,uint32_t* count) {
         ++pathCalls;
@@ -196,6 +206,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
     memset(unit,0,0x3300);
     auto def=definitions[index].data(),fsm=fsms[index].data(),node=nodes[index].data(),scene=scenes[index].data();
     Put(unit,0,unitVtable.data());Put(unit,4,id);Put(unit,0x20,team);Put(unit,0x38,hp);Put(unit,0x3C,1000);
+    Put(unit,0x9D8,int32_t(1));Put(unit,0xEC4,int32_t(1));
     Put(unit,8,node);Put(unit,0x34,scene);Put(unit,0x9C4,def);Put(unit,0x9CC,fsm);
     auto movement=movements[index].data();Put(unit,0x9C8,movement);Put(movement,4,movement+0x20);Put(movement,8,uint32_t(0));
     Put(node,0x88,Vec3{x,0,z});Put(scene,0,sceneVtable.data());Put(scene,0x0C,unit);
@@ -214,6 +225,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
 }
 struct ListNode { ListNode* next;ListNode* prev;uint8_t* unit; };
 inline ListNode head{},a{},b{};
+inline ListNode remoteHead{},remoteEntry{},friendlyHead{},friendlyEntry{};
 inline int SetFire(lua_State* L){source[0x312A]=lua_toboolean(L,2)?1:0;return 0;}
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
 inline int Stop(lua_State*){source[0x30DC]=0;return 0;}

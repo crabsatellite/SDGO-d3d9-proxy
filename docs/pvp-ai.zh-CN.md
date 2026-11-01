@@ -47,6 +47,10 @@ English: [pvp-ai.md](pvp-ai.md)
 AI 在房主客户端运行，其他玩家显示同步副本。Grid/Tag 模式可使用 AI 卡组；
 死亡后可通过原有观战功能查看 AI。复活、生命消耗和胜负按所选模式规则处理。
 
+`match_ai 0.1.2` 修正原版目标搜索的参与者编号和 team 1 分支，两边机器人都可以把敌方真人和 AI
+作为目标；同队单位仍排除。即使使用 Easy 或没有启用增强 AI，该兼容修复也生效。
+Medium／Hard 的独立策略和版本检查见[战斗 AI](battle-ai.md)。
+
 ## 设置
 
 服务端：`sdgo/mods/pvp_ai/mod.ini` 的 `[settings]`，改完后重启相应对战服务器。

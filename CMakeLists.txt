@@ -602,6 +602,7 @@ if(BUILD_TESTING)
         add_test(NAME ${mod}_offline COMMAND ${mod}_test)
         set_tests_properties(${mod}_offline PROPERTIES TIMEOUT 30)
     endforeach()
+    target_link_libraries(match_ai_test PRIVATE minhook)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)

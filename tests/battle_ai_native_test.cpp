@@ -588,6 +588,48 @@ int wmain(int argc,wchar_t** argv) {
     }
 
     if(generic||medium) {
+        native_world::Initialize(unit.bytes,g_L);
+        Config(generic?"[settings]\nDifficulty=Hard\nCoverChance=0\n":"[settings]\nDifficulty=Medium\n");
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        native_world::Configure(native_world::remoteHuman.data(),3,3,1,200,1200,150);
+        native_world::remoteHuman[0x2B65]=1;native_world::Put(native_world::remoteHuman.data(),0x3238,uint32_t(0));
+        native_world::Configure(native_world::sameTeamNpc.data(),4,4,2,1,600,50);
+        native_world::remoteHead={&native_world::remoteEntry,&native_world::remoteEntry,nullptr};
+        native_world::remoteEntry={&native_world::remoteHead,&native_world::remoteHead,native_world::remoteHuman.data()};
+        native_world::friendlyHead={&native_world::friendlyEntry,&native_world::friendlyEntry,nullptr};
+        native_world::friendlyEntry={&native_world::friendlyHead,&native_world::friendlyHead,native_world::sameTeamNpc.data()};
+        native_world::Put(native_world::document.data(),0x70,&native_world::remoteHead);
+        native_world::Put(native_world::document.data(),0x7C,&native_world::friendlyHead);
+        native_world::Put(native_world::enemy1.data(),0x3238,uint32_t(0));
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(50));
+        unit.Init(reinterpret_cast<void*>(4));Sleep(2100);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
+              "enemy AI selects the opposing team's AI while excluding its own lower-HP AI teammate");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(0));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
+              "the target's native permission state excludes an unattackable AI without excluding remote humans");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(4));native_world::Put(native_world::enemy2.data(),0xEB8,uint32_t(20));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
+              "native restricted permission can admit an AI for this specific attacker");
+        native_world::Put(native_world::enemy2.data(),0xEB8,uint32_t(999));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
+              "an AI restricted to another attacker does not bypass native targetability");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(1));
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(0));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
+              "enemy AI selects the remote human teammate instead of being limited to the local human");
+        native_world::Put(native_world::remoteHuman.data(),0x38,int32_t(0));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==1)"),
+              "local human remains a normal eligible opponent after other opposing targets die");
+        native_world::Put(unit.bytes,0x20,int32_t(1));
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(50));native_world::Put(native_world::enemy2.data(),0x20,int32_t(2));
+        native_world::Put(native_world::sameTeamNpc.data(),0x20,int32_t(1));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
+              "host-side allied AI attacks the opposing AI and never the host or its own AI teammate");
+        native_world::Put(native_world::document.data(),0x70,static_cast<native_world::ListNode*>(nullptr));
+        native_world::Put(native_world::document.data(),0x7C,static_cast<native_world::ListNode*>(nullptr));
+    }
+    if(generic||medium) {
         native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=0;
         Config(generic?"[settings]\nDifficulty=Hard\n":"[settings]\nDifficulty=Medium\n");
         native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
