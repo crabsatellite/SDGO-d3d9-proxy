@@ -15,6 +15,14 @@ from pathlib import Path
 from .capsule_catalog import ClientData, read_json, write_json
 
 
+def _normalized_head_anchors(authoring_grid):
+    """Convert 256-grid review coordinates to source-relative values."""
+    return {
+        key: tuple(value / 256 for value in anchor)
+        for key, anchor in authoring_grid.items()
+    }
+
+
 def sprite_frame(data, frame=0):
     version, count = struct.unpack_from("<II", data)
     if version not in (10000, 11000) or not 0 <= frame < count <= 1000:
@@ -64,24 +72,102 @@ class Assets:
     # y=10..73. x=5..9 and x=173..177 are intentional native inner-border
     # pixels, not padding to remove. Pillow boxes use exclusive right/bottom.
     CARD_PICTURE_BOX = (10, 10, 173, 74)
+    # The stock footer is two tiny rasterized legal-text rows inside the
+    # picture. It is foreground text, not a background strip: native robots
+    # remain visible through every gap between the glyphs.
+    LEGAL_TEXT_BOX = (10, 67, 173, 74)
+    # Rank chrome overlaps the top-left of the picture. The extra top/right
+    # span includes its one-pixel native top rule and diagonal antialiasing.
+    HEADER_RECOVERY_BOX = (10, 10, 111, 30)
     # A few presentation renders put a wing or weapon above the actual face.
-    # These anchors are measured in the shipped 256x256 source textures and
-    # keep heads/turrets centered when a tall gun, wing or backpack otherwise
-    # wins the generic alpha scan. The third value is the source crop width.
-    HEAD_ANCHORS = {
+    # Anchors are reviewed on a normalized 256x256 authoring grid, then stored
+    # source-relative. This is essential because shipped portrait sources use
+    # mixed 128, 129x113 and 256 pixel canvases. The third authoring value is
+    # crop width; no runtime path assumes a physical 256x256 source.
+    # When an action pose places a weapon directly across the face, use the
+    # same unit's unobstructed shipped pose with a separately anchored crop.
+    HEAD_SOURCE_VARIANTS = {
+        (10202, 1): 0,
+        (10210, 1): 0,
+        (20032, 1): 0,
+        (24722, 1): 0,
+    }
+    HEAD_ANCHORS = _normalized_head_anchors({
+        (10086, 0): (128, 94, 90),
+        (10086, 1): (125, 95, 95),
+        (10101, 0): (138, 88, 90),
+        (10101, 1): (122, 90, 90),
+        (10113, 0): (128, 98, 85),
+        (10113, 1): (126, 98, 85),
+        (10202, 0): (127, 96, 95),
+        (10202, 1): (136, 96, 95),
         (10208, 0): (128, 128, 150),
         (10208, 1): (118, 128, 150),
+        (10210, 0): (127, 96, 100),
+        (10210, 1): (136, 96, 100),
         (10219, 0): (126, 105, 112),
         (10219, 1): (132, 104, 112),
+        (11013, 0): (126, 60, 105),
+        (11013, 1): (121, 58, 105),
+        (11016, 0): (128, 64, 95),
+        (11016, 1): (125, 64, 95),
+        (11046, 0): (163, 72, 95),
+        (11046, 1): (122, 76, 95),
+        (11048, 0): (128, 96, 100),
+        (11048, 1): (122, 96, 100),
+        (12007, 0): (124, 68, 100),
+        (12007, 1): (119, 72, 100),
+        (13005, 0): (130, 72, 95),
+        (13005, 1): (131, 72, 95),
+        (13009, 0): (125, 72, 100),
+        (13009, 1): (154, 72, 100),
+        (13036, 0): (122, 78, 95),
+        (13036, 1): (122, 78, 95),
         (14016, 0): (128, 108, 112),
         (14016, 1): (129, 108, 118),
+        (15066, 0): (130, 90, 100),
+        (15066, 1): (128, 90, 100),
+        (15086, 0): (128, 94, 95),
+        (15086, 1): (130, 94, 95),
+        (15089, 0): (128, 92, 100),
+        (15089, 1): (132, 92, 100),
+        (15102, 0): (127, 96, 95),
+        (15102, 1): (140, 96, 95),
+        (15114, 0): (134, 104, 100),
+        (15114, 1): (134, 104, 100),
+        (17081, 0): (130, 96, 90),
+        (17081, 1): (130, 96, 90),
+        (18018, 0): (132, 88, 110),
+        (18018, 1): (128, 88, 110),
+        (18027, 0): (133, 92, 105),
+        (18027, 1): (128, 92, 105),
+        (18028, 0): (128, 106, 100),
+        (18028, 1): (127, 106, 100),
+        (20032, 0): (128, 94, 95),
+        (20032, 1): (136, 94, 95),
+        (22029, 0): (128, 100, 90),
+        (22029, 1): (128, 100, 90),
+        (22050, 0): (130, 100, 95),
+        (22050, 1): (128, 94, 95),
+        (22127, 0): (128, 100, 95),
+        (22127, 1): (128, 96, 95),
+        (23024, 0): (128, 104, 90),
+        (23024, 1): (128, 104, 90),
+        (24601, 0): (126, 102, 95),
+        (24601, 1): (125, 100, 95),
+        (24605, 0): (128, 90, 105),
+        (24605, 1): (120, 94, 105),
+        (24702, 0): (128, 105, 95),
+        (24702, 1): (130, 100, 100),
         (24713, 0): (128, 82, 108),
         (24713, 1): (130, 83, 108),
         (24716, 0): (130, 103, 100),
         (24716, 1): (158, 108, 100),
         (24720, 0): (126, 88, 105),
         (24720, 1): (126, 91, 110),
-    }
+        (24722, 0): (128, 94, 90),
+        (24722, 1): (136, 94, 90),
+    })
 
     def __init__(self, client, lookup, catalog, capsule_lookup=None):
         self.reader = ClientData(client)
@@ -250,6 +336,195 @@ class Assets:
                 "to recover capsule chrome")
         return samples
 
+    def _native_rare_samples(self, base_grade):
+        """Read true stock R cards whose dark subjects expose fixed footer text."""
+        samples = []
+        for unit in sorted(self.units.values(), key=lambda item: item["id"]):
+            if unit.get("grade") != base_grade + "R":
+                continue
+            paths = self._sprite_pair(
+                {str(unit["id"]): unit.get("capsule_sprites")},
+                unit["id"], "capsule_sprites")
+            if not paths:
+                continue
+            # Some GDT rows deliberately reference the same card twice.
+            for path in dict.fromkeys(paths):
+                image = self.sprite(path)
+                if image.size == self.CARD_SIZE:
+                    samples.append(image)
+            if len(samples) >= 48:
+                break
+        if len(samples) < 8:
+            raise ValueError(
+                f"No eight 183x107 native {base_grade}R cards available "
+                "to recover capsule footer text")
+        return samples
+
+    @classmethod
+    def _header_overlay_from_grade_samples(cls, grade_samples):
+        """Recover exact rank chrome without copying a donor robot below it."""
+        from PIL import Image
+        if set(grade_samples) != {"A", "B", "C"}:
+            raise ValueError("Native header recovery requires A, B and C samples")
+        if any(
+                len(samples) < 2
+                or any(image.size != cls.CARD_SIZE for image in samples)
+                for samples in grade_samples.values()):
+            raise ValueError("Native header recovery requires two cards per grade")
+
+        left, top, right, bottom = cls.HEADER_RECOVERY_BOX
+        width, height = right - left, bottom - top
+        modes = {}
+        supports = {}
+        for grade, samples in grade_samples.items():
+            image = Image.new("RGBA", (width, height))
+            support = [[0] * width for _ in range(height)]
+            for y in range(height):
+                for x in range(width):
+                    pixel, count = Counter(
+                        sample.getpixel((left + x, top + y))
+                        for sample in samples).most_common(1)[0]
+                    image.putpixel((x, y), pixel)
+                    support[y][x] = count
+            modes[grade] = image
+            supports[grade] = support
+
+        # Grade-colored banner pixels differ across A/B/C while the picture
+        # below them is shared. Requiring 75% within-grade agreement excludes
+        # robots. This recovers the exact stepped diagonal instead of guessing
+        # it with a polygon.
+        fixed = [
+            [
+                all(
+                    supports[grade][y][x] * 4
+                    >= len(grade_samples[grade]) * 3
+                    for grade in ("A", "B", "C"))
+                for x in range(width)
+            ]
+            for y in range(height)
+        ]
+        mask = [
+            [
+                fixed[y][x]
+                and len({
+                    modes[grade].getpixel((x, y))
+                    for grade in ("A", "B", "C")
+                }) > 1
+                for x in range(width)
+            ]
+            for y in range(height)
+        ]
+
+        # The one-pixel dark top/left rules are common to all grades. Grow only
+        # through neutral, high-support pixels touching the colored banner;
+        # saturated starfield and donor armor cannot enter this component.
+        changed = True
+        while changed:
+            changed = False
+            expanded = [row[:] for row in mask]
+            for y in range(height):
+                for x in range(width):
+                    if mask[y][x] or not fixed[y][x]:
+                        continue
+                    pixels = [
+                        modes[grade].getpixel((x, y))
+                        for grade in ("A", "B", "C")
+                    ]
+                    red, green, blue, alpha = pixels[0]
+                    if (len(set(pixels)) != 1 or alpha < 192
+                            or max(red, green, blue) - min(red, green, blue) > 35):
+                        continue
+                    if any(
+                            mask[near_y][near_x]
+                            for near_y in range(max(0, y - 1), min(height, y + 2))
+                            for near_x in range(max(0, x - 1), min(width, x + 2))):
+                        expanded[y][x] = True
+                        changed = True
+            mask = expanded
+
+        overlays = {}
+        for grade in ("A", "B", "C"):
+            overlay = Image.new("RGBA", cls.CARD_SIZE, (0, 0, 0, 0))
+            for y in range(height):
+                for x in range(width):
+                    if mask[y][x]:
+                        overlay.putpixel(
+                            (left + x, top + y),
+                            modes[grade].getpixel((x, y)))
+            if not overlay.getchannel("A").getbbox():
+                raise ValueError(f"Native {grade}-rank header recovery was empty")
+            overlays[grade] = overlay
+        return overlays
+
+    @functools.lru_cache(maxsize=1)
+    def _native_header_overlays(self):
+        return self._header_overlay_from_grade_samples({
+            grade: self._native_card_samples(grade)
+            for grade in ("A", "B", "C")
+        })
+
+    def _native_header_overlay(self, base_grade):
+        return self._native_header_overlays()[base_grade]
+
+    @classmethod
+    def _legal_overlay_from_samples(cls, samples):
+        """Recover only native footer glyphs, with no donor background pixels."""
+        from PIL import Image
+        left, top, right, bottom = cls.LEGAL_TEXT_BOX
+        width, height = right - left, bottom - top
+        if len(samples) < 8 or any(image.size != cls.CARD_SIZE for image in samples):
+            raise ValueError("Native legal-text recovery requires eight card samples")
+
+        votes = [[0] * width for _ in range(height)]
+        values = [[[] for _ in range(width)] for _ in range(height)]
+        for image in samples:
+            for row, y in enumerate(range(top, bottom)):
+                for column, x in enumerate(range(left, right)):
+                    red, green, blue, alpha = image.getpixel((x, y))
+                    luminance = (red + green + blue) // 3
+                    chroma = max(red, green, blue) - min(red, green, blue)
+                    # Stock legal glyphs are neutral gray even on dark R-card
+                    # subjects. The saturated blue starfield is deliberately
+                    # excluded; unrelated neutral robot pixels disappear in
+                    # the cross-card vote below.
+                    if alpha >= 192 and luminance >= 35 and chroma <= 65:
+                        votes[row][column] += 1
+                        values[row][column].append((red, green, blue))
+
+        # A legal glyph is fixed in at least 65% of unrelated native R cards.
+        # Requiring a nearby fixed pixel removes isolated stock stars without
+        # filling any of the real spaces between letters.
+        fixed = [
+            [votes[y][x] * 20 >= len(samples) * 13 for x in range(width)]
+            for y in range(height)
+        ]
+        overlay = Image.new("RGBA", cls.CARD_SIZE, (0, 0, 0, 0))
+        for y in range(height):
+            for x in range(width):
+                if not fixed[y][x]:
+                    continue
+                neighbors = sum(
+                    1
+                    for nearby_y in range(max(0, y - 1), min(height, y + 2))
+                    for nearby_x in range(max(0, x - 2), min(width, x + 3))
+                    if (nearby_x != x or nearby_y != y)
+                    and fixed[nearby_y][nearby_x])
+                if not neighbors:
+                    continue
+                pixels = values[y][x]
+                color = tuple(
+                    sorted(pixel[channel] for pixel in pixels)[len(pixels) // 2]
+                    for channel in range(3))
+                overlay.putpixel((left + x, top + y), (*color, 255))
+        if not overlay.getchannel("A").getbbox():
+            raise ValueError("Native capsule footer text recovery was empty")
+        return overlay
+
+    @functools.lru_cache(maxsize=3)
+    def _native_legal_overlay(self, base_grade):
+        return self._legal_overlay_from_samples(
+            self._native_rare_samples(base_grade))
+
     @functools.lru_cache(maxsize=3)
     def _native_frame(self, base_grade):
         """Recover stock chrome/background without retaining a donor robot."""
@@ -287,19 +562,15 @@ class Assets:
                     picture.putpixel((x - left, y - top), pixel)
         donor.paste(picture, (left, top))
 
-        # Restore the opaque rank banner from a real card. A polygon avoids
-        # copying the donor robot beneath the banner's diagonal transparent
-        # edge.
-        banner = Image.new("L", self.CARD_SIZE, 0)
-        ImageDraw.Draw(banner).polygon(
-            [(10, 10), (96, 10), (79, 23), (10, 23)], fill=255)
-        donor.paste(samples[0], (0, 0), banner)
+        donor.alpha_composite(self._native_header_overlay(base_grade))
         return donor
 
     def _head_crop(self, uid, variant):
         """Create a head/upper-chest close-up from the same unit and pose."""
         from PIL import Image
-        source = self._source_art(uid, variant)
+        source_variant = self.HEAD_SOURCE_VARIANTS.get(
+            (uid, min(variant, 1)), variant)
+        source = self._source_art(uid, source_variant)
         bounds = source.getchannel("A").getbbox()
         if not bounds:
             raise ValueError(f"Source unit art is empty for capsule card {uid}")
@@ -321,7 +592,8 @@ class Assets:
             max(96, round(presentation_width / 1.45)))
         anchor = self.HEAD_ANCHORS.get((uid, min(variant, 1)))
         if anchor:
-            crop_width = min(source.width, anchor[2])
+            crop_width = min(
+                source.width, max(1, round(anchor[2] * source.width)))
         crop_height = min(body_height, max(36, round(crop_width / 2.15)))
 
         # Wings, guns and antennae can begin well above the face. Find the
@@ -340,11 +612,14 @@ class Assets:
                    for row in range(candidate, candidate + 3)):
                 focus_top = candidate
                 break
-        center_x = anchor[0] if anchor else (left + right) // 2
+        center_x = (
+            round(anchor[0] * source.width)
+            if anchor else (left + right) // 2)
         crop_left = max(0, min(source.width - crop_width,
                                center_x - crop_width // 2))
         if anchor:
-            crop_top = anchor[1] - crop_height * 2 // 5
+            face_y = round(anchor[1] * source.height)
+            crop_top = face_y - crop_height * 2 // 5
         else:
             crop_top = focus_top - max(2, body_height // 40)
         crop_top = max(0, crop_top)
@@ -385,15 +660,11 @@ class Assets:
         card.alpha_composite(
             head, (self.CARD_PICTURE_BOX[0], self.CARD_PICTURE_BOX[1]))
 
-        # Reapply the native fixed pixels (rank banner and legal-text rows)
-        # after the robot, matching their foreground order in stock cards.
-        frame = self._native_frame(base_grade)
-        from PIL import Image, ImageDraw
-        overlay = Image.new("L", self.CARD_SIZE, 0)
-        draw = ImageDraw.Draw(overlay)
-        draw.polygon([(10, 10), (96, 10), (79, 23), (10, 23)], fill=255)
-        draw.rectangle((10, 67, 172, 73), fill=255)
-        card.paste(frame, (0, 0), overlay)
+        # Reapply native foreground pixels after the robot. The rank banner is
+        # opaque, while the footer must remain a sparse text-only overlay so
+        # the robot continues beneath every gap between its tiny glyphs.
+        card.alpha_composite(self._native_header_overlay(base_grade))
+        card.alpha_composite(self._native_legal_overlay(base_grade))
         return card
 
     def card(self, uid, variant=0):

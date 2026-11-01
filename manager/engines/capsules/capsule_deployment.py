@@ -376,6 +376,14 @@ def _assert_client_stopped(target):
             f"GOnline.exe in {target} is running; close that client before applying"
         )
     _assert_client_image_unmapped(Path(target) / "GOnline.exe")
+    mod_image = Path(target) / "sdgo/mods/capsule_catalog/capsule_catalog.dll"
+    if mod_image.exists():
+        try:
+            _assert_client_image_unmapped(mod_image)
+        except ClientRunningError:
+            raise ClientRunningError(
+                f"The capsule Mod in {target} is running; close that client before applying"
+            ) from None
 
 
 def _decode_text(raw, label):
@@ -695,6 +703,7 @@ def _validate_compiled(runtime_output, revision):
         "data/0101.gdt",
         "data/0154.gdt",
         "data/0155.gdt",
+        "ui/1161.uir",
     }
     if not required <= set(files):
         raise ValueError("Compiled manifest lacks required capsule resources")
@@ -716,6 +725,9 @@ def _validate_compiled(runtime_output, revision):
         configured_hash = runtime.get("gdt", f"{table}_sha256", fallback="")
         if configured != expected_path or configured_hash != hashes[expected_path]:
             raise ValueError(f"Compiled runtime.ini GDT entry differs: {table}")
+    if (runtime.get("ui", "1161", fallback="").replace("\\", "/") != "ui/1161.uir"
+        or runtime.get("ui", "1161_sha256", fallback="") != hashes["ui/1161.uir"]):
+        raise ValueError("Compiled runtime.ini capsule UI entry differs")
     for relative in SUPPLEMENTAL_COMPILED_FILES:
         path = _safe_join(runtime_output, relative)
         hashes[relative] = _sha256_file(path)

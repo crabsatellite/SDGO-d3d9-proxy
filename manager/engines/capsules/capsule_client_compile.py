@@ -10,10 +10,11 @@ import struct
 
 from .capsule_catalog import GRADE_SETS, digest, gdt_records, read_json, validate, write_json
 from .capsule_assets import Assets, standalone_sprite
+from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 4
+COMPILER_VERSION = 5
 
 
 def encode_gdt(size, records, extra=11):
@@ -254,6 +255,12 @@ def compile_catalog(catalog, client, lookup, output):
         target.write_bytes(data)
         resources[f"gdrs/{table}.gdt"] = data
         files[f"data/{table}.gdt"] = hashlib.sha256(data).hexdigest()
+    ui_data, ui_receipt = patch_capsule_price_defaults(reader.read_resource("uirs/1161.uir"))
+    ui_path = out / "ui" / "1161.uir"
+    ui_path.parent.mkdir()
+    ui_path.write_bytes(ui_data)
+    resources["uirs/1161.uir"] = ui_data
+    files["ui/1161.uir"] = hashlib.sha256(ui_data).hexdigest()
     archive = build_archive(resources, out / "overlay")
     for name in ("overlay.zdx", "overlay.zpk"):
         files[name] = hashlib.sha256((out / name).read_bytes()).hexdigest()
@@ -262,6 +269,8 @@ def compile_catalog(catalog, client, lookup, output):
              f"overlay_zpk_sha256={files['overlay.zpk']}", "", "[gdt]"]
     for table in TABLE_BASES:
         lines += [f"{table}=data\\{table}.gdt", f"{table}_sha256={files[f'data/{table}.gdt']}"]
+    lines += ["", "[ui]", "1161=ui\\1161.uir",
+              f"1161_sha256={files['ui/1161.uir']}"]
     counts = {"fixed": len(fixed_rows), "coin": len(coin_rows), "custom": len(custom_rows), "candidates": len(candidate_rows)}
     lines += ["", "[counts]"] + [f"{key}={value}" for key, value in counts.items()]
     (out / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
@@ -271,6 +280,7 @@ def compile_catalog(catalog, client, lookup, output):
         "catalog_revision": revision,
         "counts": counts, "files": files, "generated_cards": generated_cards,
         "native_card_references": native_card_references,
+        "ui_patches": [ui_receipt],
         "source_gdt_extras": original_extras,
         "source_index_sha256": reader.index_hash})
     return {"catalog_revision": revision, "counts": counts, "generated_cards": len(generated_cards),

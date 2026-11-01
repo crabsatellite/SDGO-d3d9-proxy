@@ -16,7 +16,10 @@ def main():
         p.add_argument("--client", type=Path, required=True)
         p.add_argument("--output", type=Path, required=True)
         if name == "initialize":
-            p.add_argument("--price", type=int, default=1200)
+            p.add_argument(
+                "--price", type=int, default=None,
+                help=("override every newly initialized fixed-machine price; "
+                      "default inherits each selected native template price"))
     p = sub.add_parser("catalog")
     p.add_argument("action", choices=["list", "show", "create", "update", "delete", "validate", "export"])
     p.add_argument("--file", type=Path, required=True)
@@ -40,7 +43,7 @@ def main():
                                                        if m["owner"] == "native"]}
         write_json(args.output / "patterns.json", patterns(native_catalog))
         if args.command == "initialize":
-            if args.price < 0:
+            if args.price is not None and args.price < 0:
                 parser.error("Price cannot be negative")
             catalog, report = initialize(args.snapshot, catalog, args.price)
             # An idempotent rerun keeps the original seed receipt.

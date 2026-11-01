@@ -117,7 +117,7 @@ class ClientData:
         """Read a numeric game resource; no supplied paths are extracted."""
         import re
         key = name.replace("\\", "/").lower()
-        if not re.fullmatch(r"(?:gdrs/[0-9]+\.gdt|sprs/[0-9a-z_-]+\.spr|txrs/[0-9a-z_-]+\.txr)", key):
+        if key != "uirs/1161.uir" and not re.fullmatch(r"(?:gdrs/[0-9]+\.gdt|sprs/[0-9a-z_-]+\.spr|txrs/[0-9a-z_-]+\.txr)", key):
             raise ValueError("Invalid game resource name")
         return self._read(key)
 
@@ -512,7 +512,9 @@ def acquisition(snapshot, catalog, additional=()):
                 "No account state, event rewards or admin grants are assumed."]}
 
 
-def initialize(snapshot, catalog, price=1200):
+def initialize(snapshot, catalog, price=None):
+    if price is not None and (type(price) is not int or price < 0):
+        raise ValueError("Initialization price override must be a nonnegative integer or null")
     validate(catalog)
     catalog = copy.deepcopy(catalog)
     units = {u["id"]: u for u in catalog["units"]}
@@ -542,6 +544,11 @@ def initialize(snapshot, catalog, price=1200):
     next_id = (max(occupied, default=0) // 100 + 1) * 100 + 1
     new_machines = []
     derived_machines = []
+    fixed_machine_mix = []
+    filler_usage = collections.Counter()
+    baseline_known = {uid for uid in initial["known"] if uid in units}
+    configured_fixed_units = set()
+    max_new_roots_per_machine = 4
 
     def add_fixed_machines(derived=False):
         nonlocal next_id
@@ -549,9 +556,10 @@ def initialize(snapshot, catalog, price=1200):
             choices = []
             for model in baseline:
                 slots, used, covered, derived_units = [], set(), [], []
+                baseline_fillers, initialized_fillers = [], []
                 for slot_index, ref in enumerate(model["slots"], 1):
                     ref_unit = units[ref["unit_id"]]
-                    if derived:
+                    if derived and len(covered) < max_new_roots_per_machine:
                         candidates = [uid for uid in sorted(pending)
                                       if uid not in used
                                       and ref_unit["rank"] <= 3
@@ -559,50 +567,102 @@ def initialize(snapshot, catalog, price=1200):
                                       and units[uid]["rank"] == ref_unit["rank"]
                                       and units[uid]["subgrade"] == 3
                                       and native_capsule_card_available(units[uid])]
-                    else:
+                    elif not derived and len(covered) < max_new_roots_per_machine:
                         candidates = [uid for uid in sorted(pending)
                                       if uid not in used
                                       and units[uid]["grade"] == ref_unit["grade"]]
+                    else:
+                        candidates = []
                     if candidates:
                         uid = candidates[0]
                         covered.append(uid)
                         if derived:
                             derived_units.append(uid)
+                        role = "new_root"
                     else:
-                        fillers = [uid for uid in sorted(initial["known"])
-                                   if uid in units and units[uid]["grade"] == ref_unit["grade"]
-                                   and uid not in used]
+                        available_fillers = baseline_known | configured_fixed_units
+
+                        def filler_matches(uid):
+                            candidate = units[uid]
+                            if candidate["grade"] == ref_unit["grade"]:
+                                return True
+                            return (derived and ref_unit["rank"] <= 3
+                                    and ref_unit["subgrade"] == 2
+                                    and candidate["rank"] == ref_unit["rank"]
+                                    and candidate["subgrade"] == 3
+                                    and native_capsule_card_available(candidate))
+
+                        fillers = [uid for uid in available_fillers
+                                   if uid not in used and filler_matches(uid)]
+                        # Every generated machine retains at least one genuinely
+                        # baseline unit. Other filler slots may rotate through
+                        # roots that earlier generated machines actually added.
+                        if not baseline_fillers:
+                            fillers = [uid for uid in fillers if uid in baseline_known]
+                        fillers.sort(key=lambda uid: (filler_usage[uid], uid))
                         if not fillers:
                             break
                         uid = fillers[0]
+                        if uid in baseline_known:
+                            role = "filler_baseline"
+                            baseline_fillers.append(uid)
+                        else:
+                            role = "filler_initialized"
+                            initialized_fillers.append(uid)
                     used.add(uid)
-                    slots.append({"unit_id": uid, "weight": ref["weight"],
-                                  "native_draw_group": ref["native_draw_group"],
-                                  "sprites": units[uid].get("capsule_sprites", []),
-                                  "template_unit_id": ref["unit_id"],
-                                  "template_grade": ref_unit["grade"],
-                                  "template_slot": slot_index,
-                                  "template_sprites": ref.get("sprites", [])})
+                    slot = {"unit_id": uid, "weight": ref["weight"],
+                            "native_draw_group": ref["native_draw_group"],
+                            "sprites": units[uid].get("capsule_sprites", []),
+                            "template_unit_id": ref["unit_id"],
+                            "template_grade": ref_unit["grade"],
+                            "template_slot": slot_index,
+                            "template_sprites": ref.get("sprites", []),
+                            "initialization_role": role}
+                    if role != "new_root":
+                        slot["filler_usage_before"] = filler_usage[uid]
+                    slots.append(slot)
                 if len(slots) == 6 and covered:
                     choices.append((len(covered), -model["id"], model, slots,
-                                    covered, derived_units))
+                                    covered, derived_units, baseline_fillers,
+                                    initialized_fillers))
             if not choices:
                 break
-            _, _, model, slots, covered, derived_units = max(
+            (_, _, model, slots, covered, derived_units, baseline_fillers,
+             initialized_fillers) = max(
                 choices, key=lambda x: (x[0], x[1]))
             while next_id in occupied or next_id + 1 in occupied:
                 next_id += 100
+            machine_price = model["price"] if price is None else price
+            pricing_source = "template" if price is None else "override"
             m = {"id": next_id, "name": f"Acquisition {len(new_machines) + 1}",
                  "enabled": True, "owner": "initialization", "currency": "GP",
-                 "price": price, "draw_policy": "independent_weighted",
+                 "price": machine_price, "pricing_source": pricing_source,
+                 "template_price": model["price"],
+                 "draw_policy": "independent_weighted",
                  "template_id": model["id"],
                  "template_match": "base_rank_derived" if derived else "exact_grade",
+                 "initialization_mix": {
+                     "new_root_limit": max_new_roots_per_machine,
+                     "new_root_unit_ids": list(covered),
+                     "baseline_filler_unit_ids": list(baseline_fillers),
+                     "initialized_filler_unit_ids": list(initialized_fillers)},
                  "slots": slots}
             if derived_units:
                 m["derived_template_units"] = sorted(derived_units)
                 derived_machines.append(next_id)
             catalog["fixed_machines"].append(m)
             new_machines.append(next_id)
+            fixed_machine_mix.append({
+                "machine_id": next_id,
+                "template_id": model["id"],
+                "template_price": model["price"],
+                "price": machine_price,
+                "pricing_source": pricing_source,
+                **m["initialization_mix"]})
+            for slot in slots:
+                if slot["initialization_role"] != "new_root":
+                    filler_usage[slot["unit_id"]] += 1
+            configured_fixed_units.update(covered)
             pending.difference_update(covered)
             occupied.add(next_id)
             next_id += 100
@@ -759,6 +819,10 @@ def initialize(snapshot, catalog, price=1200):
               "unconfigured_seeds": unconfigured_seeds,
               "new_fixed_machine_ids": new_machines,
               "derived_fixed_machine_ids": derived_machines,
+              "fixed_machine_mix": fixed_machine_mix,
+              "fixed_filler_usage": [
+                  {"unit_id": uid, "grade": units[uid]["grade"], "uses": count}
+                  for uid, count in sorted(filler_usage.items())],
               "custom_candidate_additions": custom_added,
               "custom_candidate_exclusions": custom_exclusions,
               "derived_fixed_art_blocked": [
