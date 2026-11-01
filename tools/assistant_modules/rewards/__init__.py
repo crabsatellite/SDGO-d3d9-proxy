@@ -1,7 +1,8 @@
-"""Mount the rewards design/preview module on the existing assistant HTTP port."""
+"""Mount reward configuration and runtime health on an assistant HTTP port."""
 import json
 from pathlib import Path
 import secrets
+import traceback
 from urllib.parse import urlsplit
 
 MODULE = {"id": "rewards", "name": "战斗奖励", "url": "/rewards", "audience": "host"}
@@ -10,13 +11,14 @@ MODULE = {"id": "rewards", "name": "战斗奖励", "url": "/rewards", "audience"
 def attach(server, workspace):
     """Preserve existing routes; extend the assistant's json_response module list.
 
-    Call before serve_forever. Existing modules keep their own session tokens.
-    This only configures a design model; it does not enable native settlement.
+    Call before serve_forever. Existing modules keep their own session tokens;
+    reward connectivity is derived from the workspace's verified native health.
     """
     parent = server.RequestHandlerClass
     if getattr(parent, "_reward_module_attached", False):
         raise ValueError("奖励模块已经挂载")
     token = secrets.token_urlsafe(32)
+    workspace.public()
 
     class Handler(parent):
         _reward_module_attached = True
@@ -27,7 +29,7 @@ def attach(server, workspace):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
             self.end_headers()
             self.wfile.write(body)
 
@@ -40,7 +42,9 @@ def attach(server, workspace):
         def json_response(self, status, value):
             if urlsplit(self.path).path == "/api/modules" and status == 200 and isinstance(value, dict):
                 value = dict(value)
-                value["modules"] = [*value.get("modules", []), dict(MODULE)]
+                modules = [dict(item) for item in value.get("modules", []) if isinstance(item, dict)]
+                value["modules"] = [item for item in modules if item.get("id") != MODULE["id"]]
+                value["modules"].append(dict(MODULE))
             if hasattr(parent, "json_response"):
                 return super().json_response(status, value)
             return self._reward_json(status, value)
@@ -84,8 +88,21 @@ def attach(server, workspace):
                 else:
                     return self._reward_json(404, {"error": "入口不存在"})
                 return self._reward_json(200, result)
-            except (ValueError, KeyError, TypeError, OSError) as error:
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 return self._reward_json(400, {"error": str(error)})
+            except OSError:
+                self._reward_log_error()
+                return self._reward_json(500, {"error": "奖励运行时配置写入失败，请查看助手日志"})
+            except Exception:
+                self._reward_log_error()
+                return self._reward_json(500, {"error": "奖励设置操作失败，请查看助手日志"})
+
+        def _reward_log_error(self):
+            try:
+                with (workspace.root / "assistant-errors.log").open("a", encoding="utf-8") as stream:
+                    stream.write(traceback.format_exc() + "\n")
+            except OSError:
+                pass
 
     server.RequestHandlerClass = Handler
     return server
