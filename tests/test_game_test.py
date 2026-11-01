@@ -1049,6 +1049,21 @@ class RecordingLifecycleTests(unittest.TestCase):
             self.assertEqual(record['status'], 'discarded')
             self.assertFalse(pending.exists())
 
+    def test_native_pass_without_any_footage_is_not_recording_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            helper = root/'helper.exe'
+            helper.write_bytes(b'fixture')
+            metadata = {'run_id':'fixture', 'plan':{'mode_sequence':'1,3'},
+                        'client':{'events':str(root/'events.jsonl')}}
+            with mock.patch.object(game_test, 'validate_metadata', return_value=metadata), \
+                    mock.patch.object(self.recorder, 'validate_audio_policy'), \
+                    mock.patch.object(game_test, 'run_prepared', return_value={'status':'pass'}):
+                result = self.recorder.run_and_record(root/'run', root/'videos', helper)
+            self.assertEqual(result['test_status'], 'pass')
+            self.assertEqual(result['recording_status'], 'failed')
+            self.assertEqual(result['clips'], [])
+
 
 if __name__ == "__main__":
     unittest.main()

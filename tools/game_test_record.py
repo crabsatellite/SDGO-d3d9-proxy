@@ -180,6 +180,8 @@ def run_and_record(run_dir: Path, output: Path, helper: Path, seconds: int = 25,
     folder.mkdir(parents=True, exist_ok=False)
     records = []
     seen = set()
+    expected_scenes = {case for case in game_test.required_flow_cases(metadata['plan']['mode_sequence'])
+                       if case.endswith('.ai_spawn')}
     events_path = Path(metadata['client']['events'])
     with ThreadPoolExecutor(max_workers=1) as executor:
         native = executor.submit(game_test.run_prepared, run_dir, timeout, 45)
@@ -199,9 +201,10 @@ def run_and_record(run_dir: Path, output: Path, helper: Path, seconds: int = 25,
             for record in records:
                 finalize_clip(record, passed)
             receipt = {'run_id': metadata['run_id'], 'native_receipt': str(events_path),
-                       'native_passed': passed, 'clips': records}
+                       'native_passed': passed, 'expected_scenes': sorted(expected_scenes), 'clips': records}
             game_test.atomic_write(folder/'recording.json', json.dumps(receipt, indent=2))
-    usable = bool(records) and all(record['status'] == 'retained_for_visual_review' for record in records)
+    usable = ({record['case'] for record in records} == expected_scenes
+              and all(record['status'] == 'retained_for_visual_review' for record in records))
     return {'test_status': report['status'], 'recording_status': 'candidates_ready' if usable else 'failed',
             'recording_receipt': str(folder/'recording.json'), 'clips': records}
 
