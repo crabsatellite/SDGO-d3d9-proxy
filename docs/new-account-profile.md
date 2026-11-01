@@ -43,6 +43,8 @@ It keeps the earliest hangar slots (then unit identity), preserves units already
 before that call, and updates unit counters and any dangling selected-unit reference
 in the same transaction. A value of 0 removes those automatic gifts entirely; normal
 starter selection and later purchases, capsule draws and rewards are not capped.
+This is a ceiling, not a guaranteed extra unit: if the native profile call grants
+no units, the Mod does not create one.
 
 The Mod reads only `[DB StoreBilling] DBName` from the host's own INI. It borrows
 the already authenticated OLE DB session and its local transactions; it does not

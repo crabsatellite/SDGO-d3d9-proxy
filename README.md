@@ -10,7 +10,8 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 
 ## Core fixes
 
-Recommended defaults for startup, input method and compatibility problems.
+Client compatibility fixes, server settlement repairs and new-account defaults.
+Each fix can be disabled separately.
 
 <!-- mod-category:fixes -->
 | Feature | Purpose | Mods | Install on | Guide |
@@ -25,6 +26,20 @@ Recommended defaults for startup, input method and compatibility problems.
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
 Mod-owned procedures while preserving the original procedures. Players need no client update.
+
+**New-account defaults are enabled in Base and Full packages built from current master; only the owner installs them on WorldServer.**
+New players start with **5,000 GP, zero cash and Corporal 1**. Automatic unit gifts from
+the first-profile call are capped at one instead of granting an entire catalog.
+Existing ownership and progress are preserved. Normal starter selection, later purchases,
+capsule draws and rewards continue under the native rules.
+
+Owner settings live in `sdgo/mods/new_account_profile/config.ini`. `InitialUnitLimit=1`
+caps those automatic gifts; use `0` to remove them. To disable the Mod, set
+`new_account_profile=0` under `[mods]` in `sdgo/sdgo.ini` and restart World. Future
+creations return to native rules; existing accounts keep their data.
+See the [new-account installation, configuration and acceptance guide](docs/new-account-profile.md).
+This new Mod is on master. If your downloaded release lacks
+`server/sdgo/mods/new_account_profile/`, [build a package from current source](docs/setup.md#building-from-source).
 
 <details>
 <summary>Input method example</summary>
@@ -43,6 +58,7 @@ and random-unit gameplay belong in this category.
 |---|---|---|---|---|
 | Mission AI wingmen | Add AI teammates with `!ai` in a mission title | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`. | `room_random` | Battle server | [Use](docs/room-random.md) |
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 <!-- /mod-category:gameplay -->
@@ -72,6 +88,13 @@ gameplay. The package's feature directory lists the tools actually included.
 | FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
 <!-- /mod-category:network -->
 
+## Reward rules and verification
+
+[Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
+settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
+contains the approved values and offline calculator. Real account combat, HUD and
+reconnect acceptance remain manual; installation keeps existing unrelated state.
+
 ## Developer tools
 
 For development and troubleshooting; disabled by default.
@@ -84,7 +107,7 @@ For development and troubleshooting; disabled by default.
 
 ## Install and use
 
-1. Follow the [installation guide](docs/setup.md#install); multi-host features need their matching server parts.
+1. Follow the [installation guide](docs/setup.md#install) for the hosts required by your chosen feature. New-account defaults and rank repair install only on World; players need no client component.
 2. Start with your usual launcher and enable extensions using their guides.
 3. Use the installer to update while keeping your configuration. Categories,
    whole features and individual mods have separate switches.
