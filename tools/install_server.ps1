@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs, updates or removes the SDGO mod framework in Battle or Agent server folders.
+  Installs, updates or removes the SDGO mod framework in Battle, Agent or World server folders.
 
 .DESCRIPTION
   -ServerRoot is either one battle server folder (it contains BattleServer.exe) or a folder
@@ -36,7 +36,7 @@ param(
     [string]$Source,
     [switch]$OverwriteConfig,
     [switch]$Uninstall,
-    [ValidateSet("Battle", "Agent")][string]$Role = "Battle"
+    [ValidateSet("Battle", "Agent", "World")][string]$Role = "Battle"
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,7 +44,7 @@ $ProductName = "SDGO mod framework"
 $Loader = "winmm.dll"
 $Chain = "winmm_chain.dll"
 $ChainKey = "chain_winmm"
-$HostExe = if ($Role -eq "Agent") { "AgentServer.exe" } else { "BattleServer.exe" }
+$HostExe = switch ($Role) { "Agent" { "AgentServer.exe" } "World" { "WorldServer.exe" } default { "BattleServer.exe" } }
 
 Add-Type -Namespace SdgoInstall -Name Ini -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]

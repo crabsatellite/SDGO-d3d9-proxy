@@ -123,6 +123,8 @@ sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES 
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
 
+sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -220,3 +222,10 @@ if(BUILD_TESTING)
         message(STATUS "Lua simulation disabled; set SDGO_LUA50_SOURCE to include it")
     endif()
 endif()
+
+add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
+sdgo_strict(new_account_policy_test)
+add_test(NAME new_account_policy COMMAND new_account_policy_test)
+add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
+target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+sdgo_strict(new_account_sql_test)
