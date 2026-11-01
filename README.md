@@ -107,8 +107,21 @@ gameplay. The package's feature directory lists the tools actually included.
 ## Reward rules and verification
 
 [Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
-settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
-contains the approved values and offline calculator. Real account combat, HUD and
+settlement and the owner wallet worker. Owners change the GB/MB base multiplier
+at `/rewards`; players keep their normal client and launcher. Kills, effective
+damage, assists, mission minions and Boss contribution affect payouts, and PvP
+MVP earns additional MB. AI matches use the same PvP tier. Each extra qualifying
+human multiplies rewards by another `1.1`, together with double time: base ten,
+double time and four humans give `10 × 2 × 1.1³ = 26.62`.
+
+Use the full package's `rewards/` toolkit to install every participating
+BattleServer with one shared owner workspace, then run
+`tools/Start-Battle-Rewards.ps1` for the wallet worker and assistant. It can mount
+the installed operator assistant on the same port while preserving its modules;
+closing the browser does not stop the worker. Stop each target BattleServer for
+installation and restart it afterward; later multiplier changes are hot-loaded.
+See [installation, startup and recovery](docs/battle-rewards.md) and the
+[full reward rules](docs/battle-reward-design.md). Real account combat, HUD and
 reconnect acceptance remain manual; installation keeps existing unrelated state.
 
 ## Developer tools
