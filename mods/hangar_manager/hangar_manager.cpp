@@ -8,6 +8,7 @@
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/hangar_model.h"
+#include "sdgo/inventory_app_state.h"
 #include "native_ui.h"
 
 namespace {
@@ -71,10 +72,7 @@ bool VisibleUnsafe() {
     if(!g_grid || Read<void*>(g_grid)!=g_gridVtable || !*g_info || !*g_profile)return false;
     auto* panel=Read<uint8_t*>(g_grid,0x44);
     if(!panel || !Read<uint8_t>(panel,0x162))return false;
-    auto* app=g_app();
-    auto* game=app?Read<uint8_t*>(app,0x4A4):nullptr;
-    if(game && Read<void*>(game,0x0C))return false; // never operate in a battle
-    return true;
+    return sdgo::inventory::MenuAvailable(g_app());
 }
 bool Visible() {
     __try {return VisibleUnsafe();} __except(EXCEPTION_EXECUTE_HANDLER){return false;}
@@ -194,14 +192,21 @@ void __fastcall Init(void* self,void*) {
     g_grid=static_cast<uint8_t*>(self);g_gridVtable=Read<void*>(self);g_thread=GetCurrentThreadId();
     try {
         if(!AttachUi(self))g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI unavailable; no external UI fallback");
+        else g_api->Log(g_mod,SDGO_LOG_INFO,"native unit-management UI attached; app state %u",sdgo::inventory::AppState(g_app()));
     }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI initialization failed");}
 }
 void HandleButton(void* self,void* control) {
     // An unsupported/incomplete Mod page must not swallow native lock/delete
     // events. The original service continues to own its original controls.
-    if(!g_ui.Owns(self)){g_button(self,control);return;}
-    if(!Visible())return;
+    if(!g_ui.Owns(self)){
+        if(g_ui.Click(control)!=ui::Action::None)g_api->Log(g_mod,SDGO_LOG_WARN,"unit-management button receiver does not match attached page");
+        g_button(self,control);return;
+    }
+    if(!Visible()){
+        g_api->Log(g_mod,SDGO_LOG_WARN,"unit-management click ignored: page or app state unavailable");return;
+    }
     const auto action=g_ui.Click(control);
+    if(action!=ui::Action::None)g_api->Log(g_mod,SDGO_LOG_INFO,"unit-management action %d; app state %u",static_cast<int>(action),sdgo::inventory::AppState(g_app()));
     if(action==ui::Action::None) {
         if(!g_ui.Exchange() && !Busy())g_button(self,control);
         return;

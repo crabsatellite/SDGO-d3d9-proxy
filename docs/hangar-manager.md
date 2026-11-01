@@ -15,6 +15,11 @@ and uses the client's native assets; players supply no skin files or settings.
 Distribute the new DLL with its symbol fragment. An already running old DLL still
 requires the normal close, update and restart sequence.
 
+Version 0.2.3 fixes clicks rejected by the old battle-pointer guard. The app's
+state number identifies menu services; lobby objects have no game-mode field at
+offset `+0C`. Page attachment and received clicks are logged separately from
+successful Mod loading.
+
 ## Install and open
 
 This gameplay extension is included in Full framework packages and omitted from
