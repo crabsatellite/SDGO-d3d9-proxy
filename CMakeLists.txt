@@ -142,6 +142,8 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta)"
+             SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
              SOURCES mods/rank_progression_fix/rank_progression_fix.cpp LIBS ole32 oleaut32 bcrypt uuid)
 
@@ -248,6 +250,13 @@ add_executable(agent_udp_pool_test tests/agent_udp_pool_test.cpp)
 target_link_libraries(agent_udp_pool_test PRIVATE sdgo_api ws2_32)
 sdgo_strict(agent_udp_pool_test)
 
+add_executable(daily_rewards_policy_test tests/daily_rewards_policy_test.cpp)
+target_link_libraries(daily_rewards_policy_test PRIVATE sdgo_api)
+sdgo_strict(daily_rewards_policy_test)
+add_executable(daily_rewards_runtime_test tests/daily_rewards_runtime_test.cpp)
+target_link_libraries(daily_rewards_runtime_test PRIVATE sdgo_api)
+sdgo_strict(daily_rewards_runtime_test)
+
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
@@ -302,6 +311,8 @@ if(BUILD_TESTING)
     add_test(NAME operator_assistant_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
              -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_operator_assistant.py")
     set_tests_properties(operator_assistant_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    add_test(NAME daily_rewards_policy COMMAND daily_rewards_policy_test)
+    set_tests_properties(daily_rewards_policy PROPERTIES TIMEOUT 30)
     add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
     target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
     sdgo_strict(catalog_conflict_mod)
@@ -323,26 +334,15 @@ if(BUILD_TESTING)
     add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
     target_link_libraries(native_agent_cash_probe_mod PRIVATE sdgo_api)
     sdgo_strict(native_agent_cash_probe_mod)
-    # The daily component can be supplied by a later integrated target. Until
-    # then compile its exact committed implementation as a non-staged fixture.
-    if(TARGET daily_rewards)
-        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards)
-    else()
-        add_library(daily_rewards_coexist_fixture SHARED tests/fixtures/daily_rewards_coexist/daily_rewards.cpp)
-        target_link_libraries(daily_rewards_coexist_fixture PRIVATE sdgo_api)
-        set_target_properties(daily_rewards_coexist_fixture PROPERTIES OUTPUT_NAME daily_rewards
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/reward_daily_fixture/$<CONFIG>")
-        sdgo_strict(daily_rewards_coexist_fixture)
-        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards_coexist_fixture)
-    endif()
+    # Exercise the shipped daily reward Mod in contribution-reward coexistence tests.
     add_executable(battle_rewards_runtime_test tests/battle_rewards_runtime_test.cpp)
     target_link_libraries(battle_rewards_runtime_test PRIVATE sdgo_api)
     target_include_directories(battle_rewards_runtime_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     sdgo_strict(battle_rewards_runtime_test)
-    add_dependencies(battle_rewards_runtime_test battle_rewards sdgo_core ${SDGO_REWARD_DAILY_TEST_TARGET})
+    add_dependencies(battle_rewards_runtime_test battle_rewards sdgo_core daily_rewards)
     add_test(NAME battle_reward_runtime_integration COMMAND powershell -NoProfile -ExecutionPolicy Bypass
         -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_rewards_runtime_test.ps1" -Config "$<CONFIG>"
-        -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:${SDGO_REWARD_DAILY_TEST_TARGET}>")
+        -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:daily_rewards>")
     set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120 RUN_SERIAL TRUE)
     add_executable(battle_reward_mission_test tests/battle_reward_mission_test.cpp)
     target_link_libraries(battle_reward_mission_test PRIVATE sdgo_api)
@@ -474,6 +474,10 @@ if(BUILD_TESTING)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
     if(SDGO_POWERSHELL)
+        add_test(NAME daily_rewards_runtime COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/daily_rewards_runtime_test.ps1"
+            -Config "$<CONFIG>")
+        set_tests_properties(daily_rewards_runtime PROPERTIES TIMEOUT 120)
         add_test(NAME ai_catalog_integration COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")

@@ -83,7 +83,23 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager'))
+    $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
+    Check-Package $dailyZip ($baseMods + @('daily_rewards'))
+    $dailyFolder = Join-Path $work 'daily-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($dailyZip, $dailyFolder)
+    $dailyServer = Join-Path $work 'daily-server'
+    New-FakeExe (Join-Path $dailyServer 'BattleServer.exe') 0x548A891D 0x0046C000
+    $dailyInstaller = Join-Path $dailyFolder 'install_server.ps1'
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Daily reward installer failed: $output" }
+    $dailyConfig = Join-Path $dailyServer 'sdgo\mods\daily_rewards\config.ini'
+    $ownerSchedule = "[settings]`r`nStartTime=20:30`r`nEndTime=01:15`r`nTrace=0"
+    [IO.File]::WriteAllText($dailyConfig, $ownerSchedule)
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $dailyInstaller -ServerRoot $dailyServer 2>&1
+    if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllText($dailyConfig) -cne $ownerSchedule) {
+        throw "Daily reward update lost the owner's time-window configuration: $output"
+    }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {

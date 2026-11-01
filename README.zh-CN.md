@@ -47,12 +47,16 @@
 | 长房名（Beta） | 任务与对战使用完整房名，读取第 20 字节后的规则 | `room_titles`、`room_titles_agent`、`room_titles_server` | 客户端 + Agent + Battle | [说明](docs/room-titles.zh-CN.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 每日双倍时间（Beta） | 默认服务器本地时间 18:00–22:00，正常对战的 G 币、驾驶员与机体经验翻倍，服主可配置时段 | `daily_rewards` | 对战服务器 | [使用说明](docs/daily-rewards.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 进入机库后点击「**整理机库**」「**重复兑换…**」，也可按 **F8** 打开管理窗口。
 相同状态的未培养机体默认保留两台，已培养机体不参与兑换；锁定、出击、舰队、租赁和未知状态机体均受保护。
 正常操作由原生回包同步并刷新机库，无需重新登录；结果无法确认时停止批次，提示重新登录。
 真实游戏效果仍需手动验收；安装、预览规则和奖励领取见[机库管理说明](docs/hangar-manager.zh-CN.md)。
+
+每日双倍仅需服主更新对战服务器，玩家沿用现有客户端。配置、关闭和实测步骤见
+[每日双倍教程](docs/daily-rewards.zh-CN.md#手动验收)。
 
 副官管理通过包内 `tools/Start-Assistant.ps1` 打开服主 UI，可修改名称、头像和掉落概率、数量。
 自带设计图、经验、装饰、强化套件、扭蛋币 5 位全员永久补给官；旧持有记录原位迁移，保留当前装备与个人昵称。

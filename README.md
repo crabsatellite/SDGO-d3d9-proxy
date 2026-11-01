@@ -51,6 +51,7 @@ and random-unit gameplay belong in this category.
 | Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 | Hangar manager (Beta) | Sort movable units and preview duplicate exchanges for native GB or item rewards; confirm before exchanging | `hangar_manager` | Clients | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
+| Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
 In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
@@ -60,6 +61,9 @@ Successful native operations
 update the visible hangar without relogging; an unconfirmed result stops the batch
 and requires relogging. Real-game acceptance remains manual. See the
 [hangar guide](docs/hangar-manager.md) for installation, preview rules and reward handling.
+
+Daily double rewards need only a BattleServer update; players keep their current clients.
+See the [setup and manual acceptance guide](docs/daily-rewards.md#manual-acceptance).
 
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
