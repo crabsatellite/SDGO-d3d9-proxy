@@ -78,6 +78,13 @@ struct Callbacks {
     __declspec(noinline) void Receive(const uint8_t* message) {
         auto unit=reinterpret_cast<uint8_t*>(this);
         if(*reinterpret_cast<const uint16_t*>(message)==0x18) Put(unit,0xBC8,*reinterpret_cast<const int32_t*>(message+0x10));
+        if(*reinterpret_cast<const uint16_t*>(message)==0x48) {
+            int slot=message[0x10];requestedSlot=slot;++switchRequests;Put(unit,0xDD0,slot);
+            if(!deferSwitch&&slot>=0&&slot<4) {
+                auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+                Put(fsm,0x240,slot);Put(fsm,0x248,weapons[slot].data());
+            }
+        }
     }
     __declspec(noinline) void FacingUpdate() {
         auto unit=reinterpret_cast<uint8_t*>(this);auto node=*reinterpret_cast<uint8_t**>(unit+8);
@@ -221,7 +228,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
         Put(fsm,0x24C+i*0xC8,int16_t(30));Put(fsm,0x254+i*0xC8,int16_t(0));
         Put(fsm,0x258+i*0xC8,weapons[i].data());
     }
-    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);
+    Put(fsm,4,fsm+0x20);Put(fsm,8,uint32_t(0));Put(fsm,0x240,int32_t(1));Put(fsm,0x248,weapons[1].data());Put(fsm,0xB2C,unit);Put(fsm,0xB30,movement);Put(unit,0xDD0,int32_t(1));
     Encode(unit,0xBE1,0xBE5,0xBF5,100);Encode(unit,0xBCC,0xBD0,0xBE0,100);
     unit[0x326C]=1;Put(unit,0x3238,uint32_t(3604001));
     unit[0x3291]=1;
@@ -232,7 +239,7 @@ inline ListNode remoteHead{},remoteEntry{},friendlyHead{},friendlyEntry{};
 inline int SetFire(lua_State* L){source[0x312A]=lua_toboolean(L,2)?1:0;return 0;}
 inline int SetTarget(lua_State* L){Put(fsms[0].data(),0x200,uint32_t(lua_tonumber(L,2)));return 0;}
 inline int Stop(lua_State*){source[0x30DC]=0;return 0;}
-inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));requestedSlot=i;++switchRequests;if(!deferSwitch&&i>=0&&i<4){Put(fsms[0].data(),0x240,i);Put(fsms[0].data(),0x248,weapons[i].data());}return 0;}
+inline int Change(lua_State* L){int i=static_cast<int>(lua_tonumber(L,2));if(*reinterpret_cast<int*>(source+0xDD0)!=i){uint8_t message[0x14]={};Put(message,0,uint16_t(0x48));message[0x10]=static_cast<uint8_t>(i);reinterpret_cast<Callbacks*>(source)->Receive(message);}return 0;}
 inline int Direction(lua_State*){++moves;source[0x30DC]=1;return 0;}
 inline int Mode(lua_State*){return 0;}
 inline int Jump(lua_State*){++jumps;return 0;}

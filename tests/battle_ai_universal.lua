@@ -87,7 +87,7 @@ observation.targets[2].hp=2000;Tick(0)
 observation.targets[2].hp=1;observation.targets[2].distance=2800;Tick(700)
 Check(calls.target==1,'extreme distance gap does not pull an ongoing close engagement away')
 Reset();observation.targets={Target(1,1000,100)};Tick(0)
-Check(calls.switch==0 and calls.fire==false,'close opponent selects data-driven melee and waits for native switch')
+Check(calls.switch==0 and calls.fire==true,'close opponent requests melee while the actually bound gun keeps firing')
 observation.selectedSlot=0;Tick(100);Tick(300)
 Check(calls.fire==true,'acknowledged melee weapon attacks without an added reaction window')
 Reset();observation.selectedSlot=0;Tick(0);Tick(300)
@@ -270,7 +270,7 @@ Check(calls.switch==nil,'Medium cannot use the NPC unconditional SP override wit
 observation.spReady=1;observation.hurt=1;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.switch==nil,'Medium cannot launch a special while the player hurt gate forbids it')
 observation.hurt=0;SDGO_BattleAI_ProfileUpdate(npc)
-Check(calls.switch==3 and calls.fire==false,'Medium requests the native special slot after legal hurt recovery')
+Check(calls.switch==3 and calls.fire==true,'Medium requests the native special slot while its current gun keeps legal output')
 now=100;observation.selectedSlot=3;observation.specialSelected=1;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.fire==true,'confirmed native special selection emits attack intent through the ordinary action path')
 now=200;observation.spReady=0;SDGO_BattleAI_ProfileUpdate(npc)
@@ -279,7 +279,7 @@ observation.specialBusy=1;SDGO_BattleAI_ProfileUpdate(npc);observation.specialBu
 Check(calls.switch==1,'completed native special returns to the prior ordinary weapon')
 Check(SDGO_BattleAI_Universal.profiles[20].special.returning,'special restore retains ownership until native weapon selection is acknowledged')
 now=1100;observation.selectedSlot=0;observation.specialSelected=0;SDGO_BattleAI_ProfileUpdate(npc)
-Check(SDGO_BattleAI_Universal.profiles[20].special~=nil,'an ordinary but different slot does not falsely acknowledge restoration')
+Check(SDGO_BattleAI_Universal.profiles[20].special==nil,'any committed ordinary slot immediately returns control without waiting for the previous slot')
 observation.selectedSlot=1;now=1200;SDGO_BattleAI_ProfileUpdate(npc)
 Check(SDGO_BattleAI_Universal.profiles[20].special==nil,'confirmed previous ordinary slot releases the special lease')
 Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
@@ -623,4 +623,18 @@ Reset();observation.targets[2].rangedFiring=1;Tick(0)
 local previousBoosts=calls.dashes or 0;observation.moving=1;observation.boostFraction=0.1;Tick(1)
 Check(calls.mode==UNIT_MOVE_EVENT_MOVE and calls.jumpSeconds==0 and (calls.dashes or 0)==previousBoosts,
       'fuel exhaustion releases held thrust and lift before the next lateral-switch timer')
+Reset({Difficulty=1});observation.selectedSlot=0;observation.targets={Target(1,2000,900)}
+Tick(0)
+Check(calls.switch==1 and calls.routes>0 and calls.fire==false,
+      'uncommitted ranged switch approaches an enemy instead of circling forever')
+Reset({Difficulty=1});observation.weapons[3]=Weapon(2,'hitscan',1400,10,500)
+observation.selectedSlot=2;observation.targets={Target(1,2000,900)}
+Tick(0)
+Check(calls.switch==1 and calls.fire==true,
+      'a pending better weapon does not silence the currently bound legal gun')
+local submitted=nil
+SDGO_BattleAI_RequestWeapon=function(slot) submitted=slot;return 1 end
+Tick(1)
+Check(submitted==1 and calls.fire==true,'native request bridge keeps actual-slot firing while waiting for commit')
+SDGO_BattleAI_RequestWeapon=nil
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

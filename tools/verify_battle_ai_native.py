@@ -70,6 +70,10 @@ def main():
         ("startup_missing_event_returns_zero",0x491529,bytes.fromhex("3b f3 74 17")),
         ("startup_signals_launcher_event",0x49152E,bytes.fromhex("ff 15 f4 d2 e2 00")),
         ("startup_closes_native_event_handle",0x491535,bytes.fromhex("ff 15 f0 d2 e2 00")),
+        ("npc_weapon_hint_shortcut",0x65EBBC,bytes.fromhex("39 91 d0 0d 00 00 74 22")),
+        ("npc_weapon_request_type",0x65EBCF,bytes.fromhex("ba 48 00 00 00")),
+        ("npc_weapon_request_slot_byte",0x65EBD4,bytes.fromhex("88 45 fc")),
+        ("npc_weapon_request_receiver",0x65EBD9,bytes.fromhex("8b 40 1c")),
     ]:
         assert bytes_at(address,len(expected))==expected,name
         contracts[name]=hex(address)

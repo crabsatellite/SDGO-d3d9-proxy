@@ -783,6 +783,38 @@ int __cdecl BoundSlot(lua_State* L) {
     g_lua.pushnumber(L,known?caps.selectedSlot:-1);g_lua.pushnumber(L,mask);
     g_lua.pushnumber(L,known&&caps.specialBusy?1:0);return 3;
 }
+bool RequestNativeWeapon(uint8_t* unit,int slot) {
+    __try {
+        battle_ai::native::Capabilities caps={};
+        if(!unit||slot<0||slot>3||*reinterpret_cast<int*>(unit+0x38)<=0||
+           !battle_ai::native::ReadCapabilities(unit,caps)) return false;
+        if(slot<3&&!caps.weapons[slot].valid) return false;
+        uint8_t* fsm=nullptr;uint8_t* record=nullptr;uint32_t boundWeapon=0;uint8_t boundStyle=0;
+        const bool bound=battle_ai::native::detail::ReadPointer(unit,0x9CC,fsm)&&
+            battle_ai::native::detail::ReadPointer(fsm,0x248,record)&&
+            battle_ai::native::detail::Read(record,0,boundWeapon)&&battle_ai::native::detail::Read(record,0x69,boundStyle);
+        if(caps.selectedSlot==slot&&bound&&boundWeapon!=0&&boundWeapon==caps.weapons[slot].id&&
+           (slot!=3||boundStyle==2)) return true;
+        auto table=*reinterpret_cast<void***>(unit);
+        if(!table||!table[7]) return false;
+        // CNPC::ChangeWeapon suppresses a request when unit+DD0 already equals
+        // the desired slot, even if AttackFSM+240 never committed that slot.
+        // Submit the same native 0x48 message, without that stale hint shortcut.
+        // The native receiver still owns permission, timing and weapon binding.
+        alignas(4) uint8_t message[0x14]={};
+        *reinterpret_cast<uint16_t*>(message)=0x48;message[0x10]=static_cast<uint8_t>(slot);
+        using Receive=void(__thiscall*)(uint8_t*,const uint8_t*);
+        reinterpret_cast<Receive>(table[7])(unit,message);
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+int __cdecl RequestWeapon(lua_State* L) {
+    double value=g_lua.tonumber(L,1);
+    int slot=std::isfinite(value)&&value>=0&&value<=3?static_cast<int>(value):-1;
+    bool submitted=value==slot&&GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&
+        RequestNativeWeapon(g_current,slot);
+    g_lua.pushnumber(L,submitted?1:0);return 1;
+}
 bool QueryRoute(uint8_t* nav,uint32_t id,Vec3 from,Vec3 to,Vec3** points,uint32_t* count) {
     __try { *points=g_route(nav,id,from,to,nullptr,count);return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -1694,6 +1726,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_ProfileLease",ProfileLease);
     Register(L,"SDGO_BattleAI_ProfilePreviousSlot",ProfilePreviousSlot);
     Register(L,"SDGO_BattleAI_BoundSlot",BoundSlot);
+    Register(L,"SDGO_BattleAI_RequestWeapon",RequestWeapon);
     RuntimeSettings next;
     next.generic=true;
     if (Run(L, ConfigChunk(next,roomDifficulty) + script + "\n" + universal)) {

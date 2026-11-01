@@ -16,6 +16,10 @@ if C.Difficulty>=1 then
 end
 local U=SDGO_BattleAI_Universal or {states={},faults=0}
 local function Flag(v) return v~=nil and v~=false and v~=0 end
+local function ChangeWeapon(npc,slot)
+  if SDGO_BattleAI_RequestWeapon then return SDGO_BattleAI_RequestWeapon(slot) end
+  return npc:ChangeWeapon(slot)
+end
 local function Min(a,b) if a<b then return a else return b end end
 local function Max(a,b) if a>b then return a else return b end end
 local function Distance2(a,b)
@@ -472,6 +476,17 @@ local function OrdinaryFinisher(o,t)
   end
   return false
 end
+local function KeepBoundGun(npc,o,t)
+  local fire=false
+  if not Flag(o.hurt) then
+    for _,w in pairs(o.weapons or {}) do
+      if w.slot==o.selectedSlot and w.kind~='melee' and w.kind~='other' and InRange(w,t) and
+         (Flag(w.ready) or Flag(w.active)) then fire=true end
+    end
+  end
+  npc:SetAttackOnOff(fire)
+  SDGO_BattleAI_AimTarget(fire and t.id or 0)
+end
 local function ProfileTick(npc,o,now,deferSpecial)
   if C.Difficulty<1 or not Flag(o.valid) or o.hp<=0 then return false end
   if not U.profiles then U.profiles={} end
@@ -495,11 +510,11 @@ local function ProfileTick(npc,o,now,deferSpecial)
   end
   local function ReturnWeapon()
     q.returning=true;q.returnAt=q.returnAt or now
-    npc:SetAttackOnOff(false)
     -- A transform may remove the old slot. Do not freeze the whole controller
     -- waiting for an impossible restoration; normal selection owns the new form.
-    if o.selectedSlot==q.slot or not HasOrdinary(o,q.slot) or now-q.returnAt>=250 then return Release() end
-    npc:ChangeWeapon(q.slot)
+    if HasOrdinary(o,o.selectedSlot) or not HasOrdinary(o,q.slot) or now-q.returnAt>=250 then return Release() end
+    npc:SetAttackOnOff(false)
+    ChangeWeapon(npc,q.slot)
     return true
   end
   if q then
@@ -521,7 +536,7 @@ local function ProfileTick(npc,o,now,deferSpecial)
     -- monopolize the controller for the 2.2s lost-notice watchdog.
     if not Flag(o.spReady) then return ReturnWeapon() end
     npc:SetAttackTarget(q.target)
-    if not Flag(o.specialSelected) then npc:SetAttackOnOff(false);npc:ChangeWeapon(3)
+    if not Flag(o.specialSelected) then KeepBoundGun(npc,o,target);ChangeWeapon(npc,3)
     else npc:SetAttackOnOff(true) end
     return true
   end
@@ -553,7 +568,7 @@ local function ProfileTick(npc,o,now,deferSpecial)
   p.special={target=target.id,slot=o.selectedSlot,started=now,finished=o.specialFinished or 0,
              ackSequence=o.specialAckSequence or 0,defensive=defensiveCast}
   if SDGO_BattleAI_ProfileLease then SDGO_BattleAI_ProfileLease(o.selectedSlot) end
-  MeleeGate(false);SDGO_BattleAI_CancelRoute();npc:SetAttackOnOff(false);npc:ChangeWeapon(3)
+  MeleeGate(false);KeepBoundGun(npc,o,target);ChangeWeapon(npc,3)
   return true
 end
 local function ProtectedTarget(o,s)
@@ -767,26 +782,38 @@ local function Tick(npc)
     else Move(npc,o,s,t,now,false) end
     Log(s,'weapons unavailable: keep moving while native resources recover',now); return 123
   end
+  local pendingSlot=nil
   if o.selectedSlot~=w.slot then
     if Flag(o.meleeBusy) or Flag(o.specialBusy) then return 123 end
     npc:SetAttackOnOff(false)
     if s.requestedSlot~=w.slot then s.switchLeft=not s.switchLeft end
-    npc:ChangeWeapon(w.slot)
+    pendingSlot=w.slot
     s.requestedSlot=w.slot
-    if not Flag(o.defenceMoving) and not s.weave then
-      if not Flag(o.moving) then
-        local dir=t.distance<w.range*0.18 and UNIT_MOVE_DIR_BACKWARD or
-          (s.switchLeft and UNIT_MOVE_DIR_LEFT or UNIT_MOVE_DIR_RIGHT)
-        DirectMove(npc,o,dir,C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
-      end
-      npc:SetMoveType(UNIT_MOVE_EVENT_MOVE)
+    local current=nil
+    for _,candidate in pairs(o.weapons) do
+      local permitted=not forced or (forced=='melee' and candidate.kind=='melee') or
+        (forced=='ranged' and candidate.kind~='melee' and candidate.kind~='other')
+      if permitted and candidate.slot==o.selectedSlot and InRange(candidate,t) then current=candidate end
     end
-    s.readyAt=nil; SDGO_BattleAI_AimTarget(0)
-    Log(s,'waiting for native weapon switch',now)
-    return 123
+    if current then
+      -- A pending switch is not a committed weapon. Keep legal output from
+      -- the actual bound slot instead of silencing the entire controller.
+      w=current
+    else
+      if not Flag(o.defenceMoving) and not s.weave then
+        if forced=='ranged' and Flag(o.meleePressure) then
+          DirectMove(npc,o,UNIT_MOVE_DIR_BACKWARD,C.StrafeDistance,UNIT_MOVE_EVENT_MOVE)
+        else Move(npc,o,s,t,now,false) end
+      end
+      s.readyAt=nil;SDGO_BattleAI_AimTarget(0)
+      ChangeWeapon(npc,pendingSlot)
+      Log(s,'native switch pending: approach with current weapon',now)
+      return 123
+    end
   end
   if s.slot~=w.slot then
-    s.slot=w.slot; s.weaponAt=now+C.WeaponHoldMs; s.readyAt=nil; s.requestedSlot=nil
+    s.slot=w.slot; s.weaponAt=now+C.WeaponHoldMs; s.readyAt=nil
+    if not pendingSlot then s.requestedSlot=nil end
   end
   local inRange=InRange(w,t)
   local reaction=inRange and Flag(w.ready)
@@ -794,6 +821,7 @@ local function Tick(npc)
   SDGO_BattleAI_AimTarget(inRange and t.id or 0)
   if Flag(o.defenceMoving) then
     npc:SetAttackOnOff(reaction);SDGO_BattleAI_Cadence(0)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
     Log(s,'front/rear crossfire: keep defensive movement and fire',now)
     return 123
   end
@@ -801,11 +829,13 @@ local function Tick(npc)
   if covered then
     npc:SetAttackOnOff(reaction and peek and inRange)
     SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
     return 123
   end
   if not inRange then
     npc:SetAttackOnOff(false)
     Move(npc,o,s,t,now,false)
+    if pendingSlot then ChangeWeapon(npc,pendingSlot) end
     Log(s,'approach through navigation',now)
     return 123
   end
@@ -842,6 +872,7 @@ local function Tick(npc)
   -- and collisions execute the attack. No synthesized hit/damage packet.
   npc:SetAttackOnOff(reaction)
   SDGO_BattleAI_Cadence(C.AttackIntervalMs)
+  if pendingSlot then ChangeWeapon(npc,pendingSlot) end
   Log(s,reaction and 'attack intent' or 'native weapon unavailable: position for next attack',now)
   return 123
 end
@@ -870,7 +901,7 @@ function SDGO_BattleAI_ProfileRelease(npc)
     pending={slot=slot,generation=generation,started=now};U.releases[id]=pending
   end
   if now-pending.started>=250 then Release();return 123 end
-  npc:SetAttackOnOff(false);npc:ChangeWeapon(slot)
+  npc:SetAttackOnOff(false);ChangeWeapon(npc,slot)
   return 123
 end
 function SDGO_BattleAI_ProfileUpdate(npc)

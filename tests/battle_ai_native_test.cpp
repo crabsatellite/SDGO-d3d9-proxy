@@ -134,6 +134,28 @@ int wmain(int argc,wchar_t** argv) {
     unit.Init(reinterpret_cast<void*>(1)); unit.Think();
     Check(lua_gettop(g_L)==1 && lua_tonumber(g_L,1)==987,"adapter preserves incoming Lua stack");
     if(generic||medium) {
+        auto fsm=native_world::fsms[0].data();
+        native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
+        native_world::Put(unit.bytes,0xDD0,int32_t(1));
+        int prior=native_world::switchRequests;
+        Eval("npc:ChangeWeapon(1)");
+        Check(native_world::switchRequests==prior&&*reinterpret_cast<int*>(fsm+0x240)==0,
+              "stock NPC hint shortcut can suppress a switch that never actually committed");
+        Eval("savedWeaponProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) weaponProbeResult=SDGO_BattleAI_RequestWeapon(1); return 123 end");
+        unit.Think();
+        Check(native_world::switchRequests==prior+1&&native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==1,
+              "native message bridge retries a stale NPC hint and lets the receiver commit the real slot");
+        native_world::deferSwitch=true;
+        native_world::Put(fsm,0x240,int32_t(0));native_world::Put(fsm,0x248,native_world::weapons[0].data());
+        unit.Think();
+        Check(*reinterpret_cast<int*>(fsm+0x240)==0,
+              "queued switch never fabricates acknowledgement when the native receiver defers it");
+        Check(Eval("assert(SDGO_BattleAI_RequestWeapon(1)==0)"),"weapon bridge rejects calls outside the current owned AI callback");
+        native_world::deferSwitch=false;
+        native_world::Put(fsm,0x240,int32_t(1));native_world::Put(fsm,0x248,native_world::weapons[1].data());
+        Eval("SDGO_BattleAI_GenericUpdate=savedWeaponProbe");
+    }
+    if(generic||medium) {
         Eval("motionProbe=SDGO_BattleAI_GenericUpdate; SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_Observe(); n:SetMoveTargetPos_Dir(2,400,2,false); n:SetMoveType(1); n:SetAttackOnOff(true); return 123 end");
         native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
         native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,1000});
