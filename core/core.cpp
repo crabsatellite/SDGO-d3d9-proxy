@@ -11,6 +11,7 @@
 #include "hooks.h"
 #include "log.h"
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_commands.h"
 #include "symbols.h"
 
 struct SdgoMod
@@ -430,6 +431,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.ModDirectory = Api_ModDirectory;
     g_api.HookSystemExport = Api_HookSystemExport;
     g_api.HookSite = Api_HookSite;
+    g_api.FindRoomCommand = sdgo::room_commands::Parse;
 
     LoadMods();
     size_t active = 0;

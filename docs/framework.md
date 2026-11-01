@@ -195,6 +195,8 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `HookImport(mod, dll, function, detour, &original)` | replace an entry of the exe's import table |
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
+| `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
 
 The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
@@ -219,6 +221,17 @@ Rules: one owner per hook site (a second hook on the same site fails); install h
 `SdgoModLoad`, so a failed load can roll them back; detours run on whatever thread the host
 calls them on, so guard shared state; keep detours exception-safe (the bundled mods wrap
 game calls in `__try`/`__except`).
+
+Room-title commands use the shared grammar in `include/sdgo/room_commands.h`.
+Check the optional `FindRoomCommand` field's size before use, or call the SDK's
+`sdgo::room_commands::Find`, which supplies the same parser on older cores. Each
+whitespace-separated `!command` has its own argument span, ending before the next
+`!` token, including unknown commands. Names are case-insensitive; numeric suffixes
+such as `!ai3` require `SDGO_ROOM_COMMAND_ALLOW_COUNT`. The first valid matching
+command wins. The parser does not modify titles or install hooks. This lets mods
+compose `!rand !ai3 lv4` in either order without consuming each other's options.
+AI options must stay inside the `!ai` span; the native 20-byte limit remains.
+See [the composition guide](room-commands.zh-CN.md) for examples.
 
 `HookCode` hooks made while the mods load are switched on together right after the last mod
 has loaded (`core: N code hooks switched on`), before the host's own code runs; `original`

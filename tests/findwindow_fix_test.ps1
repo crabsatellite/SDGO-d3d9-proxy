@@ -53,6 +53,7 @@ hosts=*
     $exitCode = $LASTEXITCODE
     $log = Get-Content (Join-Path $dir "sdgo\logs\sdgo.log") -Raw
     if ($exitCode -ne 0 -or $log.Contains("TEST FAILURE") -or
+        -not $log.Contains("room command API checks passed") -or
         -not $log.Contains("export API checks passed; deliberately decline for rollback")) {
         throw "case $case failed (exit $exitCode); see $dir"
     }

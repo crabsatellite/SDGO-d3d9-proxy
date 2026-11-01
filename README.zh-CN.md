@@ -12,16 +12,16 @@
 推荐安装并保持启用，用于修复启动、输入法等兼容性问题。
 
 <!-- mod-category:fixes -->
-| 功能 | 作用 | Mod | 安装位置 | 说明 |
+| 功能 | 作用 | Mod / 工具 | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 输入法提交修复 | 修正输入法提交内容的长度计算 | `ime_fix` | 客户端 | [使用说明](docs/ime-fix.zh-CN.md) |
 | 输入法卡死修复 | 恢复输入法需要的窗口查找，兼容已有插件 | `findwindow_fix` | 客户端 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
+| 军衔回退修复 | 防止较高子等级误将当前军衔降级，例如 `15-1 → 5-2` | [SQL 维护工具（源码）](tools/rank_progression_fix.py) | 服务端游戏数据库 | [使用说明](docs/rank-progression-fix.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
-源码中的服务端维护工具：[军衔回退修复](docs/rank-progression-fix.zh-CN.md)。检查并修复两个原生数据库过程
-把已保存的 `15-1` 军衔误改成 `5-2` 的问题，无需更新玩家客户端。
+军衔修复由服主从源码目录单独运行维护工具，支持只读检查、备份和回滚，无需更新玩家客户端。
 
 <details>
 <summary>查看输入法修复效果</summary>
@@ -39,6 +39,7 @@
 |---|---|---|---|---|
 | 任务 AI 僚机 | 用 `!ai` 给任务队伍加入 AI 队友 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合 | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
 <details>

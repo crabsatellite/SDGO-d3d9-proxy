@@ -36,6 +36,8 @@
 
 #include "sdgo/sdgo_api.h"
 #include "sdgo/ai_scoring.h"
+#include "sdgo/ai_catalog_provider.h"
+#include "sdgo/room_commands.h"
 
 namespace
 {
@@ -216,54 +218,33 @@ namespace
         int level = 2;
     };
 
-    int ReadNumber(const char*& p)
-    {
-        int value = 0;
-        while (*p >= '0' && *p <= '9') {
-            int digit = *p++ - '0';
-            if (value < kSlotsPerTeam)
-                value = value * 10 + digit;
-            if (value > kSlotsPerTeam)
-                value = kSlotsPerTeam;
-        }
-        return value;
-    }
-
     // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
     // aN allies, lvN level. Case-insensitive.
     Plan ParseTitle(const char* title)
     {
         Plan plan;
         plan.level = g_settings.defaultLevel;
-        char lower[kRoomTitleMax + 1];
-        size_t n = 0;
-        for (; n < kRoomTitleMax && title[n]; ++n)
-            lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
-        lower[n] = '\0';
-        const char* command = strstr(lower, "!ai");
-        if (!command)
+        namespace commands=sdgo::room_commands;
+        SdgoRoomCommand command{};
+        if (!commands::Find(g_api,title,static_cast<uint32_t>(kRoomTitleMax),"ai",
+                            SDGO_ROOM_COMMAND_ALLOW_COUNT,&command))
             return plan;
         plan.enabled = true;
-        const char* p = command + 3;
-        int count = -1;
-        if (*p >= '0' && *p <= '9')
-            count = ReadNumber(p);
+        const int count=command.has_count ? static_cast<int>((std::min)(command.count,uint32_t{kSlotsPerTeam})) : -1;
         int enemies = -1;
         int allies = -1;
-        while (*p) {
-            while (*p == ' ')
-                ++p;
-            const char* token = p;
-            while (*p && *p != ' ')
-                ++p;
-            size_t length = static_cast<size_t>(p - token);
-            if (length == 3 && token[0] == 'l' && token[1] == 'v' && token[2] >= '1' && token[2] <= '5') {
+        uint32_t cursor=command.arguments_offset;
+        commands::Token argument;
+        while (commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
+            const char* token=title+argument.offset;
+            const uint32_t length=argument.length;
+            const char first=commands::Lower(token[0]);
+            if (length == 3 && first == 'l' && commands::Lower(token[1]) == 'v' && token[2] >= '1' && token[2] <= '5') {
                 plan.level = token[2] - '0';
-            } else if (length >= 2 && (token[0] == 'e' || token[0] == 'a') && token[1] >= '0' && token[1] <= '9') {
-                const char* digits = token + 1;
-                int value = ReadNumber(digits);
-                if (digits == p)
-                    (token[0] == 'e' ? enemies : allies) = value;
+            } else if (length >= 2 && (first == 'e' || first == 'a')) {
+                uint32_t value=0;
+                if(commands::Number(token+1,length-1,value))
+                    (first == 'e' ? enemies : allies)=static_cast<int>((std::min)(value,uint32_t{kSlotsPerTeam}));
             }
         }
         if (count < 0 && enemies < 0 && allies < 0) {
@@ -743,10 +724,16 @@ namespace
 
         std::vector<uint32_t> available = AiNpcIds();
         std::vector<uint32_t> pool;
-        for (uint32_t id : g_settings.levels[plan.level])
-            if (Contains(available, id))
-                pool.push_back(id);
+        const bool catalog = sdgo::AiCatalogPool(g_api, g_mod, plan.level, pool);
+        if (!catalog)
+            for (uint32_t id : g_settings.levels[plan.level])
+                if (Contains(available, id))
+                    pool.push_back(id);
         if (pool.empty()) {
+            if (catalog) {
+                g_api->Log(g_mod, SDGO_LOG_WARN, "AI catalog has no usable Level%d entries; check catalog source-data diagnostics", plan.level);
+                return;
+            }
             g_api->Log(g_mod, SDGO_LOG_WARN, "no NPC of Level%d is in the server's AI-NPC list (%u entries)",
                        plan.level, static_cast<unsigned>(available.size()));
             return;
