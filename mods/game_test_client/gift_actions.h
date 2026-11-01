@@ -32,6 +32,7 @@ public:
         kPacketConstructionFailed = 0x105,
         kTransportRejected = 0x106,
         kNativeFault = 0x107,
+        kInvalidBody = 0x108,
     };
 
     struct Observation
@@ -91,6 +92,23 @@ public:
         if (position == 0 || position > kPageSize)
             return Publish(kInvalidPosition, page, position);
 
+        char body[48]{};
+        const int count=std::snprintf(body,sizeof(body),"!give %u %u",page,position);
+        if(count<=0 || count>=static_cast<int>(sizeof(body)))return Publish(kInvalidBody,page,position);
+        return SendMail(recipient,body,page,position);
+    }
+
+    // Ordinary authored mail commands are useful for a server's existing GM
+    // preparation business. This never grants anything or bypasses permission;
+    // the authenticated native sender and the server remain authoritative.
+    Result SendMail(const char* recipient,const char* body,uint32_t page=0,uint32_t position=0)
+    {
+        if(!bound_ || !native_)return Publish(kUnbound,page,position);
+        const auto recipientLength=BoundedLength(recipient,kNicknameCapacity);
+        if(!recipientLength || recipientLength>kNicknameCapacity)return Publish(kInvalidRecipient,page,position);
+        const auto bodyLength=BoundedLength(body,kBodyCapacity);
+        if(!bodyLength || bodyLength>kBodyCapacity)return Publish(kInvalidBody,page,position);
+
         const NativeActions::OnboardingObservation nativeState =
             native_->OnboardingState();
         if (nativeState.native_app_state != kLobbyAppState)
@@ -115,22 +133,6 @@ public:
             if (sender[0] == '\0')
                 return Publish(
                     kSenderNicknameInvalid,
-                    page,
-                    position,
-                    nativeState);
-
-            char body[48] = {};
-            const int bodyLength = std::snprintf(
-                body,
-                sizeof(body),
-                "!give %u %u",
-                page,
-                position);
-            if (bodyLength <= 0 ||
-                bodyLength >= static_cast<int>(sizeof(body)) ||
-                bodyLength > static_cast<int>(kBodyCapacity))
-                return Publish(
-                    kPacketConstructionFailed,
                     page,
                     position,
                     nativeState);

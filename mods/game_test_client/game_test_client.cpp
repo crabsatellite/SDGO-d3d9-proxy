@@ -10,6 +10,8 @@
 #include "page_test_actions.h"
 #include "operator_catalog_actions.h"
 #include "ai_catalog_actions.h"
+#include "storage_test_actions.h"
+#include "capsule_catalog_actions.h"
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "tutorial_actions.h"
@@ -39,6 +41,8 @@ HangarNavigation hangarNavigation;
 PageTestActions pages;
 OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
+StorageTestActions storage;
+CapsuleCatalogActions capsules;
 const void* roomListVtable=nullptr;
 const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
@@ -66,6 +70,7 @@ uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
 uint32_t giftPages[4]{}, giftPositions[4]{};
+char giftBodies[4][301]{};
 uint64_t rejectedAt = 0;
 bool nicknameRequested = false, nicknameAccepted = false;
 uint32_t nicknameReplySeen = 0;
@@ -146,6 +151,12 @@ bool LoadPlan() {
         if (!giftSenderPilot || !giftRecipientPilot || giftCount < 1 || giftCount > 4) return false;
         for (uint32_t i = 0; i < giftCount; ++i) {
             wchar_t key[32]{};
+            wchar_t body[301]{};swprintf_s(key,L"body%u",i);
+            const auto bodyLength=GetPrivateProfileStringW(L"gift",key,L"",body,301,accountPath.c_str());
+            if(bodyLength) {
+                if(bodyLength>=300 || !WideCharToMultiByte(CP_ACP,WC_NO_BEST_FIT_CHARS,body,-1,giftBodies[i],301,nullptr,nullptr))return false;
+                continue;
+            }
             swprintf_s(key, L"page%u", i);
             giftPages[i] = GetPrivateProfileIntW(L"gift", key, 0, accountPath.c_str());
             swprintf_s(key, L"position%u", i);
@@ -746,7 +757,8 @@ int __cdecl SendGiftRequests(const SdgoGameTestContextV1* context) {
         if (!processedTick || GetTickCount64() < processedTick || GetTickCount64()-processedTick < 61000)
             return SDGO_GAME_TEST_WAIT;
     }
-    const auto result=gifts.SendUnitGift(giftRecipient,giftPages[giftSent],giftPositions[giftSent]);
+    const auto result=giftBodies[giftSent][0]?gifts.SendMail(giftRecipient,giftBodies[giftSent]):
+        gifts.SendUnitGift(giftRecipient,giftPages[giftSent],giftPositions[giftSent]);
     if (result==GiftActions::kWaitingForLobby) return SDGO_GAME_TEST_WAIT;
     if (result!=GiftActions::kRequestSent) {
         context->Assert(0,"the original native mail request could not be constructed and transported");
@@ -872,12 +884,95 @@ int __cdecl ReadAiCatalog(const SdgoGameTestContextV1* context) {
     context->Assert(ready,"every owner-provided NPC and its source unit resolve from the real native grid with the exact catalog bytes and unit hash");
     return ready ? SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
+int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
+    const auto result=storage.Read(context);
+    if(result>=StorageTestActions::Invalid) {
+        context->Assert(0,"storage native observer is available and belongs to this process/run/UI thread");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result==StorageTestActions::Ready) {
+        const auto state=storage.State();
+        if(!state.timer_observed)return SDGO_GAME_TEST_WAIT;
+        char message[192];
+        sprintf_s(message,"native storage tab=%u total=%u entries=%u loaded=%u visible=%u generation=%u",
+            state.current_tab,state.total,state.page_entry_count,state.loaded,state.visible,state.generation);
+        context->Observe(message);
+        context->Assert(state.timer_observed!=0,"the attached native storage Mod runs its timer on the real private-desktop message loop");
+        context->Assert(!state.busy && !state.outstanding,"normal storage list and native business are idle before batch confirmation");
+        return SDGO_GAME_TEST_PASS;
+    }
+    static bool clicked=false;
+    if(!clicked) {
+        const auto navigation=hangarNavigation.ClickOperatorMenuButton(L"SalaryBtn",0x74);
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+            context->Assert(0,"storage entry requires the real native SalaryBtn and its original callback");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        clicked=navigation==HangarNavigation::kReady;
+    }
+    return SDGO_GAME_TEST_WAIT;
+}
+int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
+    const auto result=storage.Claim(context);const auto state=storage.State();
+    static uint32_t previous=UINT32_MAX,previousReplies=UINT32_MAX;
+    if(previous!=result || previousReplies!=state.reply_sequence) {
+        char message[256];
+        sprintf_s(message,"native storage claim result=%u actions=%u replies=%u preflight=%u phase=%u reason=%u complete=%u armed=%u outstanding=%u total=%u",
+            result,state.action_sequence,state.reply_sequence,state.preflight_reply_sequence,state.batch_phase,state.batch_reason,
+            state.completed,state.armed,state.outstanding,state.total);
+        context->Observe(message);previous=result;previousReplies=state.reply_sequence;
+    }
+    if(result>=StorageTestActions::Invalid) {
+        context->Assert(0,"native storage batch preserves run/session identity and completes only on genuine correlated replies");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+    context->Assert(state.action_sequence==2 && state.reply_sequence>0 && !state.outstanding,
+        "exactly two original button actions confirm one native list/claim batch and retain its server replies");
+    context->Observe(state.completed?"positive native storage claim completed; delivery/readback is a separate assertion":"empty native storage list completed without any item claim; positive delivery remains untested");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl ReadCapsuleCatalog(const SdgoGameTestContextV1* context) {
+    const bool ready=capsules.Check(sdgo_test::directory+L"\\..\\mods\\capsule_catalog\\runtime.ini");
+    const auto state=capsules.State();char message[192];
+    sprintf_s(message,"native capsule tables=%u rows=%u/%u collection=%u price=%u error=%u",state.tables,state.verified,state.expected,
+        state.collection_machine,state.collection_price,state.error);context->Observe(message);
+    context->Assert(ready,"all five configured capsule tables are registered in the actual native grid with exact counts and row identities");
+    context->Assert(state.collection_machine==990001 && state.collection_price==100000,"the collection machine has its original 100000 GP price in the real client registry");
+    return ready?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+}
+int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
+    static bool clicked=false;static uint32_t baseline=0;
+    SdgoCapsuleGameTestSnapshotV1 state{};
+    if(!capsules.Currency(state)) {
+        context->Assert(0,"the optional native capsule list-load observer belongs to the current GameTest");return SDGO_GAME_TEST_FAIL;
+    }
+    if(!clicked) {
+        baseline=state.generation;
+        const auto navigation=hangarNavigation.ClickBottomRadio(L"CapsuleRoomRadio",0x4C);
+        if(navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
+            context->Assert(0,"capsule page entry validates the original bottom-menu radio and callback");return SDGO_GAME_TEST_FAIL;
+        }
+        clicked=navigation==HangarNavigation::kReady;return SDGO_GAME_TEST_WAIT;
+    }
+    if(state.generation<=baseline)return SDGO_GAME_TEST_WAIT;
+    char message[192];sprintf_s(message,"native activity list load generation=%u result=%u grid=%u machine=%u price=%u currency=%u registry=%u",
+        state.generation,state.result,state.grid_id,state.machine_id,state.price,state.currency,state.registry_currency);context->Observe(message);
+    context->Assert(state.process_id==GetCurrentProcessId() && state.ui_thread_id==GetCurrentThreadId(),"the original activity-list load ran on this client's native UI thread after real page entry");
+    context->Assert(state.grid_id==145093 && state.machine_id==9301 && state.price==99 && state.currency==2 && state.registry_currency==2,
+        "machine 9301 uses token currency in both its loaded UI list and the registry used by the original confirmation lookup, with price 99 retained");
+    return SDGO_GAME_TEST_PASS;
+}
 const SdgoGameTestCaseV1 pageCases[]={
     {"pages.hangar.read",120000,&ReadHangarPage},
     {"pages.hangar.preview",60000,&PreviewHangarPage},
     {"pages.hangar.cancel",60000,&CancelHangarPage},
     {"catalog.operator",60000,&ReadOperatorCatalog},
     {"catalog.ai",60000,&ReadAiCatalog},
+    {"pages.storage.read",60000,&ReadStoragePage},
+    {"pages.storage.claim",120000,&ClaimStoragePage},
+    {"catalog.capsule",60000,&ReadCapsuleCatalog},
+    {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
 };
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
@@ -1092,6 +1187,8 @@ SDGO_MOD_ENTRY {
         (pagesOnly && !pages.Bind()) ||
         (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
+        (pagesOnly && !storage.Bind()) ||
+        (pagesOnly && !capsules.Bind(api,mod)) ||
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");

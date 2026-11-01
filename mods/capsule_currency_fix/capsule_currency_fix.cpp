@@ -7,6 +7,8 @@
 
 #include "capsule_currency_logic.h"
 #include "sdgo/sdgo_api.h"
+#include "sdgo/game_test_page_observer.h"
+#include "sdgo/game_test_capsule_observer.h"
 
 namespace
 {
@@ -24,6 +26,38 @@ namespace
     LoadActivityItemsFn g_original = nullptr;
     GridDataFn g_gridData = nullptr;
     GridFindFn g_gridFind = nullptr;
+    SdgoCapsuleGameTestSnapshotV1 g_testSnapshot{};
+
+    uint64_t TestRunHash() {
+        char run[64]{},role[16]{};
+        const auto n=GetEnvironmentVariableA("SDGO_GAME_TEST_RUN",run,sizeof(run));
+        const auto r=GetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",role,sizeof(role));
+        return n<sizeof(run) && r<sizeof(role)?sdgo::game_test_page_observer::ClientRunHash(run,n,role,r):0;
+    }
+
+    void ObserveLoad(void* ui,capsule_currency_fix::FixResult result) {
+        const auto hash=TestRunHash();if(!hash)return;
+        const auto generation=g_testSnapshot.run_hash==hash?g_testSnapshot.generation+1:1;
+        g_testSnapshot={};g_testSnapshot.size=sizeof(g_testSnapshot);g_testSnapshot.version=1;
+        g_testSnapshot.run_hash=hash;g_testSnapshot.process_id=GetCurrentProcessId();
+        g_testSnapshot.ui_thread_id=GetCurrentThreadId();g_testSnapshot.generation=generation;
+        g_testSnapshot.result=static_cast<uint32_t>(result);
+        __try {
+            if(!ui)return;
+            auto* object=static_cast<uint8_t*>(ui);
+            auto* first=*reinterpret_cast<uint8_t**>(object+kVectorBeginOffset);
+            auto* end=*reinterpret_cast<uint8_t**>(object+kVectorEndOffset);
+            auto* capacity=*reinterpret_cast<uint8_t**>(object+kVectorCapacityOffset);
+            uint8_t* target=nullptr;
+            if(capsule_currency_fix::InspectActivityMachineVector(first,end,capacity,
+                *reinterpret_cast<uint32_t*>(object+kPageCountOffset),&target)!=capsule_currency_fix::FixResult::AlreadyCorrect || !target)return;
+            memcpy(&g_testSnapshot.grid_id,target,4);memcpy(&g_testSnapshot.machine_id,target+5,4);
+            memcpy(&g_testSnapshot.price,target+15,4);g_testSnapshot.currency=target[9];
+            void* registry=nullptr;
+            if(g_gridFind(g_gridData(),&registry,static_cast<int>(g_testSnapshot.grid_id),0x3C,0) && registry)
+                g_testSnapshot.registry_currency=static_cast<uint8_t*>(registry)[9];
+        }__except(EXCEPTION_EXECUTE_HANDLER){}
+    }
 
     bool WritableRange(const void* address, std::size_t size)
     {
@@ -130,7 +164,17 @@ namespace
             result = capsule_currency_fix::FixResult::InvalidShape;
         }
         LogResult(result);
+        ObserveLoad(ui,result);
     }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoCapsuleGameTestGetSnapshotV1(SdgoCapsuleGameTestSnapshotV1* output) {
+    if(!output || output->size<sizeof(*output) || output->version!=1)return 0;
+    const auto hash=TestRunHash();
+    if(!hash)return 0;
+    if(g_testSnapshot.generation && (g_testSnapshot.run_hash!=hash || g_testSnapshot.ui_thread_id!=GetCurrentThreadId()))return 0;
+    auto value=g_testSnapshot;value.size=sizeof(value);value.version=1;value.run_hash=hash;value.process_id=GetCurrentProcessId();
+    __try {*output=value;return 1;}__except(EXCEPTION_EXECUTE_HANDLER){return 0;}
 }
 
 SDGO_MOD_ENTRY

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/game_test_capsule_observer.h"
 #include "../mods/capsule_currency_fix/capsule_currency_logic.h"
 
 namespace {
@@ -102,6 +103,18 @@ int wmain(int argc,wchar_t** argv)
         const auto wrongSource=registered;
         NativeLoad(object.data(),nullptr);const auto wrongPrice=loaded;hook(object.data(),nullptr);Check(loaded==wrongPrice&&Find(9301)[9]==0,"changed authoritative price is refused without changing any display byte");
         Check(registered==wrongSource,"refused price leaves native registry unchanged");
+        auto observe=reinterpret_cast<SdgoCapsuleGameTestGetSnapshotV1Fn>(GetProcAddress(dll,"SdgoCapsuleGameTestGetSnapshotV1"));
+        Check(observe!=nullptr,"optional native activity-load observer is exported");
+        SdgoCapsuleGameTestSnapshotV1 receipt{};receipt.size=sizeof(receipt);receipt.version=1;
+        Check(!observe(&receipt),"observer is disabled outside an explicit GameTest process");
+        SetEnvironmentVariableA("SDGO_GAME_TEST_RUN","12345678-1234-1234-1234-123456789abc");SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE","client");
+        registered=source;hook(object.data(),nullptr);
+        Check(observe(&receipt) && receipt.generation==1 && receipt.run_hash && receipt.process_id==GetCurrentProcessId() &&
+            receipt.ui_thread_id==GetCurrentThreadId() && receipt.grid_id==145093 && receipt.machine_id==9301 && receipt.price==99 &&
+            receipt.currency==2 && receipt.registry_currency==2,"observer records the genuine post-load UI and registry correction");
+        SetEnvironmentVariableA("SDGO_GAME_TEST_RUN","22345678-1234-1234-1234-123456789abc");
+        Check(!observe(&receipt),"an old native load cannot prove a different run");
+        SetEnvironmentVariableA("SDGO_GAME_TEST_RUN",nullptr);SetEnvironmentVariableA("SDGO_GAME_TEST_ROLE",nullptr);
         puts("ACTUAL CURRENCY DLL AND 94-ROW ACTIVITY VECTOR REPLAY PASS; native UI visual acceptance remains manual");return 0;
     }catch(const std::exception& e){fprintf(stderr,"FAIL %s\n",e.what());return 1;}
 }

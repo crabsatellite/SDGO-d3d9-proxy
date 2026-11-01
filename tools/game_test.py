@@ -704,7 +704,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
     if pages_only:
-        return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai')
+        return FLOW_CASES[:3] + ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai','pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency')
     if bootstrap_only:
         return FLOW_CASES[:3]
     if gift_requests_only:

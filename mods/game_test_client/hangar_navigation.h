@@ -295,6 +295,27 @@ public:
         } __except(EXCEPTION_EXECUTE_HANDLER) { return Publish(kNativeFault); }
     }
 
+    Result ClickBottomRadio(const wchar_t* name,size_t cachedOffset)
+    {
+        if(!bound_ || !native_)return Publish(kUnbound);
+        __try {
+            void* menu=nullptr;
+            const auto result=ResolveService(L"downmenu",downmenuVtable_,&menu);
+            if(result==kServiceMismatched)return Publish(kDownmenuServiceMismatch);
+            if(!menu)return Publish(kWaitingForLobbyUi);
+            auto* bytes=static_cast<uint8_t*>(menu);
+            auto* root=*reinterpret_cast<uint8_t**>(bytes+kDownmenuRoot);
+            auto* control=*reinterpret_cast<uint8_t**>(bytes+cachedOffset);
+            if(!root || !control)return Publish(kWaitingForLobbyUi);
+            if(FindControl(root,name)!=control || *reinterpret_cast<void**>(control+kControlParent)!=root || !ControlHasName(control,name))
+                return Publish(kDownmenuControlMismatch);
+            if(!root[0x162] || !control[0x162] || !control[0x167])return Publish(kWaitingForLobbyUi);
+            if(*reinterpret_cast<uint32_t*>(bytes+kDownmenuMode)==8 && native_->OnboardingState().starter_draw_busy)return Publish(kLobbyBusy);
+            downmenuCallback_(menu,kRadioMessage,control+kControlName,control);
+            return Publish(kReady); // original callback invoked; target page is independently observed
+        }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
     Observation State() const
     {
         Observation observed = {};

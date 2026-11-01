@@ -396,6 +396,17 @@ int main()
         TestNativeRequest(gift);
         TestInputAndStateBoundaries(gift);
         TestConstructionAndTransportFailures(gift);
+        ResetFixture();gift.Reset();
+        Check(gift.SendMail("System","!givegb 9229 100000")==GiftActions::kRequestSent &&
+            g_networkCalls==1 && strcmp(reinterpret_cast<const char*>(g_lastPacket+0x2C),"!givegb 9229 100000")==0 &&
+            strcmp(reinterpret_cast<const char*>(g_lastPacket+0x06),"GiftGM")==0,
+            "authored normal preparation mail retains the native authenticated sender and exact body");
+        ResetFixture();
+        Check(gift.SendMail("System","")==GiftActions::kInvalidBody && !g_packetCtorCalls,
+            "empty mail body cannot reach the original constructor");
+        char tooLong[302];memset(tooLong,'a',301);tooLong[301]=0;
+        Check(gift.SendMail("System",tooLong)==GiftActions::kInvalidBody && !g_packetCtorCalls,
+            "oversized mail cannot reach the original constructor");
     }
 
     if (g_failures) {

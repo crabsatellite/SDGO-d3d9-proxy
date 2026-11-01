@@ -78,11 +78,23 @@ Use `--pages-only` to test the authenticated unit-management page, inventory
 readback, both exchange previews and cancellation. It compares unit UIDs, slots
 and the active unit before and after; it never confirms an exchange with candidates.
 Page cases do not count as battle acceptance.
-The suite requires the hangar and operator/AI catalog Mods plus the server's
-1200-slot capacity Mod. It reads every configured operator and NPC from the
+It also opens native storage, waits for its real message loop and server list
+reply, and confirms one claim batch. An empty batch does not prove delivery.
+Capsule cases read all five native catalog tables and enter the actual page to
+check machine 9301's UI/confirmation currency source and the collection price;
+they do not purchase anything.
+The suite requires the hangar, storage, operator/AI catalog, capsule catalog and
+currency-fix Mods plus the server's 1200-slot capacity Mod. It reads every configured operator and NPC from the
 native grid and compares the configured names, category references, NPC bytes
 and source unit hashes. These catalog checks do not claim shop interaction or
 mission completion.
+
+For `--gift-requests-only`, the private account profile may specify existing
+owner mail commands in `[gift] body0` through `body3`, or use `page0/position0`
+for unit gifts. The recipient must be an actual native pilot nickname. Native
+authentication and the server authorize/process the mail; GameTest still waits
+for an independent processing receipt and never grants currency or inventory
+directly. Keep credentials and command configuration local.
 
 For a passive server check, run `tools/game_test_server_report.py --run-dir
 build/gametest/pvp --events <server-observer-events.jsonl> --host-pilot <pilot-id>`.

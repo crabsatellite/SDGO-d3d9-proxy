@@ -47,7 +47,7 @@ uint8_t g_downmenu[0x200] = {};
 uint8_t g_mainframe[0x200] = {};
 uint8_t g_unitManager[0x200] = {};
 uint8_t g_wrongService[0x200] = {};
-uint8_t g_downmenuRoot = 0;
+uint8_t g_downmenuRoot[0x180] = {};
 uint8_t g_mainframeRoot = 0;
 uint8_t g_unitManagerRoot = 0;
 uint8_t g_myRoomControl[0x180] = {};
@@ -1191,6 +1191,20 @@ void TestResultNames()
                 0,
         "result names keep pending and hard-failure states explicit");
 }
+
+void TestBottomRadioValidation(SdgoApi& api,NativeActions& native) {
+    ResetFixture(6);g_downmenuRoot[0x162]=1;
+    HangarNavigation page;Check(BindNavigation(page,api,native),"native bottom-menu adapter binds");
+    Check(page.ClickBottomRadio(L"GameRoomRadio",0x48)==HangarNavigation::kReady && g_downmenuCalls==1,
+        "general page navigation uses the real radio lookup and original callback");
+    g_gameRoomControl[0x167]=0;
+    Check(page.ClickBottomRadio(L"GameRoomRadio",0x48)==HangarNavigation::kWaitingForLobbyUi && g_downmenuCalls==1,
+        "disabled native radio never dispatches");
+    g_gameRoomControl[0x167]=1;
+    *reinterpret_cast<void**>(g_gameRoomControl+0x15C)=&g_mainframeRoot;
+    Check(page.ClickBottomRadio(L"GameRoomRadio",0x48)==HangarNavigation::kDownmenuControlMismatch && g_downmenuCalls==1,
+        "foreign-parent native radio never dispatches");
+}
 } // namespace
 
 int main()
@@ -1242,6 +1256,7 @@ int main()
         TestResultNames();
         TestGameRoomRestoration(api,native);
         TestUnitManagementNavigation(api,native);
+        TestBottomRadioValidation(api,native);
     }
 
     DestroyNativeString(

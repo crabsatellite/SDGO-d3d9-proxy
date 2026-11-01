@@ -463,7 +463,7 @@ rva=state
     def test_pages_plan_binds_its_own_cases_and_cannot_claim_battle_acceptance(self):
         run_dir=self.prepare('pages-only',pages_only=True)
         meta=self.metadata(run_dir)
-        expected=game_test.FLOW_CASES[:3]+('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai')
+        expected=game_test.FLOW_CASES[:3]+('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel','catalog.operator','catalog.ai','pages.storage.read','pages.storage.claim','catalog.capsule','pages.capsule.currency')
         self.assertEqual(meta['suite'],'native-pages')
         self.assertEqual(game_test.required_flow_cases('1',pages_only=True),expected)
         self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')['run']['required_cases'],','.join(expected))
