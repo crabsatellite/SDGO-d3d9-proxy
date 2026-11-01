@@ -301,6 +301,10 @@ add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_curre
                mods/capsule_currency_fix/capsule_currency_logic.cpp)
 target_include_directories(capsule_currency_fix_test PRIVATE mods/capsule_currency_fix)
 sdgo_strict(capsule_currency_fix_test)
+add_executable(capsule_currency_dll_test tests/capsule_currency_dll_test.cpp)
+target_link_libraries(capsule_currency_dll_test PRIVATE sdgo_api)
+sdgo_strict(capsule_currency_dll_test)
+add_dependencies(capsule_currency_dll_test capsule_currency_fix)
 add_executable(capsule_price_probe_test mods/capsule_price_probe/capsule_price_probe_test.cpp)
 sdgo_strict(capsule_price_probe_test)
 
@@ -343,6 +347,10 @@ sdgo_strict(daily_rewards_runtime_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
+if(BUILD_TESTING)
+    add_test(NAME capsule_currency_actual_dll COMMAND capsule_currency_dll_test "$<TARGET_FILE:capsule_currency_fix>")
+    set_tests_properties(capsule_currency_actual_dll PROPERTIES TIMEOUT 30)
+endif()
 if(BUILD_TESTING)
     foreach(test capsule_currency_fix capsule_price_probe)
         add_test(NAME ${test}_offline COMMAND ${test}_test)
