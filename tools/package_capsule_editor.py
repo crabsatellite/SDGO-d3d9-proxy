@@ -70,8 +70,9 @@ def build(args):
     target_symbol = output / "framework-client/sdgo/symbols" / HOST_SYMBOL
     target_symbol.parent.mkdir(parents=True, exist_ok=True)
     target_symbol.write_bytes(symbols)
-    copy(root / "docs" / "capsule-authoring.zh-CN.md", "docs/capsule-authoring.zh-CN.md")
-    copy(root / "docs" / "capsule-display-fix.zh-CN.md", "docs/capsule-display-fix.zh-CN.md")
+    for guide in ("capsule-authoring.zh-CN.md", "capsule-display-fix.zh-CN.md",
+                  "capsule-catalog.md", "capsule-catalog.zh-CN.md", "capsule-integration.md"):
+        copy(root / "docs" / guide, "docs/" + guide)
     settings = {
         "schema_version": 1, "catalog": "config/catalog.json",
         "patterns": "config/patterns.json", "assets": "assets",
