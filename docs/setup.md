@@ -14,6 +14,7 @@ The framework only touches code it can verify. Each exe build has a *host key*,
 | GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2 (and the client it is based on) |
 | BattleServer.exe | `BattleServer-548A891D-0046C000` | the common private server pack (BattleServer1..N folders) |
 | AgentServer.exe | `AgentServer-548A86BC-000D7000` | Native Agent relay hosts |
+| WorldServer.exe | `WorldServer-548A86E3-0010C000` | Native World settlement host |
 
 The install scripts print the host key of your exe. With another build the framework still
 loads, logs that no symbol file matches and keeps every mod disabled, so the game is
@@ -78,6 +79,18 @@ powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SD
 
 The default role is Battle. Owner/player profile preparation is covered by the
 [FRP distribution guide](frp-distribution.md).
+
+### World servers
+
+WorldServer core fixes use the same installer with `-Role World` (stop that
+WorldServer first):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server\WorldServer" -Role World
+```
+
+See the [rank progression Mod guide](rank-progression-fix.md). Players need no
+client component for that fix. Use the same role when uninstalling a World host.
 
 ## Uninstall
 

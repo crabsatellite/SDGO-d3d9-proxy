@@ -21,6 +21,7 @@ SDGO_MOD_ENTRY
     api->Log(mod, SDGO_LOG_ERROR, "TEST FAILURE: %s", #condition); return 0; } } while (0)
     REQUIRE(api->size>=offsetof(SdgoApi,FindRoomCommand)+sizeof(api->FindRoomCommand));
     REQUIRE(api->FindRoomCommand);
+    REQUIRE(api->size>=offsetof(SdgoApi,HookSite)+sizeof(api->HookSite) && api->HookSite);
     for(const char* title:{"!rand !ai e2 a1 lv4","!ai e2 a1 lv4 !rand"}) {
         SdgoRoomCommand ai{},random{};
         REQUIRE(api->FindRoomCommand(title,20,"ai",SDGO_ROOM_COMMAND_ALLOW_COUNT,&ai));

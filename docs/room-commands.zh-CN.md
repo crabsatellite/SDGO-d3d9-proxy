@@ -28,6 +28,9 @@ Hook 地址，core 仍执行每个 Hook 只能有一个所有者的规则。AI �
 公共 C ABI 位于 `include/sdgo/sdgo_api.h`。`SdgoRoomCommand` 返回原房名中的命令和参数字节范围，
 可选数字后缀通过 `SDGO_ROOM_COMMAND_ALLOW_COUNT` 启用，例如 `!ai3`。解析有界、无状态、可并发调用。
 API 1 的可选字段通过 `api->size` 检查，不改变既有字段的布局。
+已有每日奖励 Mod 使用的 `HookSite` 扩展保持原位置，房名接口位于其后。
+早期房名预览包 0.1.1/0.1.2 尚未包含这个兼容安排，应通过新版安装器一起更新 core 和三个服务端 DLL，
+不要混用早期预览 DLL 与新版 core。现有每日奖励 DLL 无需重编译。
 
 建议通过 `include/sdgo/room_commands.h` 调用：
 

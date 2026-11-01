@@ -19,6 +19,7 @@ For people who build the framework or write mods. Installing is covered in the
 ```
 GOnline.exe      ── static import ──> d3d9.dll   (loader/d3d9)
 BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
+AgentServer.exe / WorldServer.exe ──> winmm.dll (same server loader)
         │  DllMain: redirect the exe's kernel32!GetSystemTimeAsFileTime import
         │  first CRT call (__security_init_cookie): restore it, then boot      (loader/common)
         ▼
@@ -29,7 +30,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
   sdgo/mods/<id>/<id>.dll
 ```
 
-* Both host executables import a DLL from their own folder at start-up (`d3d9.dll`, and
+* The supported hosts import a DLL from their own folder at start-up (`d3d9.dll`, and
   `winmm.dll` for `timeGetTime`), so a DLL of that name next to the exe is loaded before
   any of the program's own code runs. Neither name is a Windows KnownDLL.
 * The loader does two things. It forwards its exports to the real DLL (system32, or the DLL
@@ -196,6 +197,7 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
 | `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
 
 The network mods use `ModDirectory` to read `config.ini` without changing this ABI.

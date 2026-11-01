@@ -23,7 +23,7 @@
   * -Only limits the install to the named subfolders; -Uninstall removes the framework.
   * -Role Agent selects AgentServer.exe folders for agent_udp_pool. The default
     remains Battle (BattleServer.exe), so existing commands keep their meaning.
-  * -Role World selects WorldServer.exe for new-account profile fixes.
+  * -Role World selects WorldServer.exe for rank and new-account profile fixes.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"

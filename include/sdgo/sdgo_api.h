@@ -4,6 +4,7 @@
  * Loading chain:
  *   GOnline.exe      --static import--> d3d9.dll  (loader shim, next to the exe)
  *   BattleServer.exe --static import--> winmm.dll (loader shim, next to the exe)
+ *   AgentServer.exe / WorldServer.exe -> winmm.dll (same server loader)
  *     --early CRT hook--> sdgo/core.dll  (this API)
  *       --mod.ini manifests--> sdgo/mods/<id>/<id>.dll
  * Reference: docs/framework.md.
@@ -92,6 +93,13 @@ typedef struct SdgoApi {
      * Optional API 1 extension: check size before reading this field. */
     int (*HookSystemExport)(SdgoMod* mod, const wchar_t* dll, const char* function,
                             void* detour, void** original);
+
+    /* Retain the slot already deployed by settlement mods before the room-title
+     * preview. Inline detour at a verified kind=site instruction boundary.
+     * The detour preserves live registers, flags, stack and FP/SIMD state, then
+     * jumps to the trampoline. Same queued activation/ownership/rollback as
+     * HookCode. Optional API 1 extension: check size before reading. */
+    int (*HookSite)(SdgoMod* mod, const char* name, void* detour, void** original);
 
     /* Find the first standalone !name command (ASCII case-insensitive).
      * title_length is a byte bound; an earlier NUL ends the title. Arguments

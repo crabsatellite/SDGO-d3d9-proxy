@@ -13,18 +13,18 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 Recommended defaults for startup, input method and compatibility problems.
 
 <!-- mod-category:fixes -->
-| Feature | Purpose | Mods / tool | Install on | Guide |
+| Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
 | IME input fix | Correct the length of committed IME text | `ime_fix` | Clients | [Use](docs/ime-fix.md) |
 | Input method freeze fix | Restore window lookup needed by input methods alongside existing plugins | `findwindow_fix` | Clients | [Use](docs/findwindow-fix.md) |
 | Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
-| Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | [SQL repair tool (source)](tools/rank_progression_fix.py) | Game database | [Use](docs/rank-progression-fix.md) |
+| Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
 | New-account starter profile | Start new accounts with 5,000 GP, zero cash and Corporal rank; keep existing player progress | `new_account_profile` | World server | [Guide](docs/new-account-profile.md) |
 <!-- /mod-category:fixes -->
 
-The rank repair is applied separately by the server owner from a source checkout, with read-only audit,
-backup and rollback support. Players need no client update.
+The rank repair loads through the framework in WorldServer. It routes matching battle calls to
+Mod-owned procedures while preserving the original procedures. Players need no client update.
 
 <details>
 <summary>Input method example</summary>

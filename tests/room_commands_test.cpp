@@ -3,6 +3,10 @@
 #include "sdgo/random_loadout.h"
 
 namespace commands=sdgo::room_commands;
+static_assert(offsetof(SdgoApi,HookSite)==offsetof(SdgoApi,HookSystemExport)+sizeof(SdgoApi::HookSystemExport),
+              "Retain deployed settlement ABI slot");
+static_assert(offsetof(SdgoApi,FindRoomCommand)==offsetof(SdgoApi,HookSite)+sizeof(SdgoApi::HookSite),
+              "Room commands must follow the existing settlement extension");
 namespace {
 int calls=0;
 int Service(const char* text,uint32_t length,const char* name,uint32_t flags,SdgoRoomCommand* out) {
