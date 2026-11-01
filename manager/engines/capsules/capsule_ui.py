@@ -626,8 +626,9 @@ class CatalogStore:
             catalog, _ = self.read()
             revision = self._expect(catalog, expected_revision)
             runtime_root = (self.bundle_path / "runtime" / revision[:16]).resolve()
-            from .capsule_client_compile import COMPILER_VERSION
-            output = runtime_root / f"client-v{COMPILER_VERSION}"
+            from .capsule_client_compile import COMPILER_VERSION, extension_fingerprint
+            extension_signature = extension_fingerprint(self.client_path)
+            output = runtime_root / f"client-v{COMPILER_VERSION}-{extension_signature[:12]}"
             reused = False
             generated_cards = None
             if output.exists():
@@ -643,6 +644,8 @@ class CatalogStore:
                     manifest, placements = self._validate_compiled_output(
                         temporary, revision
                     )
+                    if manifest.get('preserved_extensions_signature') != extension_signature:
+                        raise ConflictError('Shared capsule resources changed while compiling; refresh and retry')
                     if output.exists():
                         raise ConflictError(
                             "Another process created this runtime revision while compiling"

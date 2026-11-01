@@ -10,6 +10,7 @@ OWNER = "collection_capsule/v1"
 MODULES = {
     "dbo.sdgo_collection_capture_profiles": "capture_profiles.sql",
     "dbo.sdgo_collection_capture_units": "capture_units.sql",
+    "dbo.sdgo_collection_capture_drop_items": "capture_drop_items.sql",
     "sdgo_collection_capsule.Draw": "draw.sql",
 }
 
@@ -36,7 +37,8 @@ def pool_hash(pool: dict) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def installation(pool: dict, source_rows: list[dict], machine_id: int, *, legacy_account_max: int | None = None) -> str:
+def installation(pool: dict, source_rows: list[dict], machine_id: int, *, legacy_account_max: int | None = None,
+                 unit_items: list[dict] | None = None) -> str:
     from .metadata import validate_source
     validate_source(source_rows)
     source = {r["UnitNumber"]: r for r in source_rows}
@@ -60,6 +62,18 @@ def installation(pool: dict, source_rows: list[dict], machine_id: int, *, legacy
            for f in pool.get("form_aliases", [])):
         raise ValueError("Invalid form metadata")
     checksum = pool_hash(pool)
+    unit_items = unit_items or []
+    categories, item_units = set(), set()
+    for item in unit_items:
+        category, unit = item.get('category_id'), item.get('unit_id')
+        if (type(category) is not int or not 1100000 <= category < 1200000 or category in categories
+                or type(unit) is not int or not 0 < unit <= 2147483647 or unit in item_units
+                or type(item.get('created_by_collection')) is not bool
+                or not isinstance(item.get('name'), str) or not 0 < len(item['name']) <= 48
+                or '\0' in item['name']
+                or (item['created_by_collection'] and not 1180000 <= category <= 1199999)):
+            raise ValueError('Invalid permanent unit gift metadata')
+        categories.add(category); item_units.add(unit)
     sql = """SET NOCOUNT ON;
 SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
@@ -71,7 +85,9 @@ EXEC @installLock=sys.sp_getapplock @Resource=N'sdgo.collection_capsule.install.
      @LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000;
 IF @installLock<0 RAISERROR('Collection install is busy',16,1);
 IF OBJECT_ID(N'dbo.tbl_Users',N'U') IS NULL OR OBJECT_ID(N'dbo.tbl_UserUnits',N'U') IS NULL
- OR OBJECT_ID(N'dbo.tbl_MachinePrice',N'U') IS NULL OR OBJECT_ID(N'dbo.sp_CreateUserUnit',N'P') IS NULL
+ OR OBJECT_ID(N'dbo.tbl_MachinePrice',N'U') IS NULL OR OBJECT_ID(N'dbo.tbl_ItemMachinePrice',N'U') IS NULL
+ OR OBJECT_ID(N'dbo.tbl_ItemMachineList',N'U') IS NULL OR OBJECT_ID(N'dbo.sp_CreateUserUnit',N'P') IS NULL
+ OR OBJECT_ID(N'dbo.tbl_ItemCategory',N'U') IS NULL OR OBJECT_ID(N'dbo.tbl_UserDropItemBox',N'U') IS NULL
  OR OBJECT_ID(N'dbo.tbl_CapsulePicked',N'U') IS NULL
  RAISERROR('Required native capsule tables/procedure are missing',16,1);
 DECLARE @transactionProbe bigint;
@@ -79,15 +95,51 @@ SELECT @transactionProbe=transaction_id FROM sys.dm_tran_current_transaction;
 IF @transactionProbe IS NULL RAISERROR('Transaction tracking permission is missing',16,1);
 """
     sql += HERE.joinpath("schema.sql").read_text(encoding="utf-8") + "\n"
+    for item in unit_items:
+        category, unit = item['category_id'], item['unit_id']
+        sql += f"DELETE sdgo_collection_capsule.UnitDelivery WHERE UnitID={unit};\nINSERT sdgo_collection_capsule.UnitDelivery(UnitID,CategoryID) VALUES({unit},{category});\n"
+        if not item['created_by_collection']:
+            sql += f"""
+IF NOT EXISTS(SELECT 1 FROM dbo.tbl_ItemCategory WHERE CatalogueID={category} AND RefIndex={unit} AND TimeLimit=0 AND Option1=1 AND Option2=2)
+ RAISERROR('Native permanent unit gift definition changed since export',16,1);
+"""
+            continue
+        sql += f"""
+IF EXISTS(SELECT 1 FROM sdgo_collection_capsule.OwnedUnitItems WHERE (UnitID={unit} AND CategoryID<>{category}) OR (CategoryID={category} AND UnitID<>{unit}))
+ RAISERROR('Collection unit gift allocation conflicts with retained metadata',16,1);
+IF EXISTS(SELECT 1 FROM dbo.tbl_ItemCategory WHERE CatalogueID={category})
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.OwnedUnitItems WHERE UnitID={unit} AND CategoryID={category})
+  RAISERROR('Permanent unit gift category belongs to another owner',16,1);
+ IF NOT EXISTS(SELECT 1 FROM dbo.tbl_ItemCategory WHERE CatalogueID={category} AND RefIndex={unit} AND TimeLimit=0 AND Option1=1 AND Option2=2)
+  RAISERROR('Collection permanent unit gift category was externally edited',16,1);
+END
+ELSE
+BEGIN
+ INSERT dbo.tbl_ItemCategory(CatalogueID,Name,RefIndex,TimeLimit,Option1,Option2)
+ VALUES({category},{literal(item['name'])},{unit},0,1,2);
+ IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.OwnedUnitItems WHERE UnitID={unit})
+  INSERT sdgo_collection_capsule.OwnedUnitItems(UnitID,CategoryID,Name) VALUES({unit},{category},{literal(item['name'])});
+END;
+"""
     sql += f"""
-IF EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE SchemaVersion<>1 OR MachineID<>{machine_id})
+IF EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE SchemaVersion NOT IN(1,2) OR MachineID<>{machine_id})
  RAISERROR('Installed collection schema or machine ID differs',16,1);
+DECLARE @previousCollectionSchema int=(SELECT SchemaVersion FROM sdgo_collection_capsule.State WHERE Singleton=1);
 IF EXISTS(SELECT 1 FROM dbo.tbl_MachinePrice WHERE MachineID={machine_id})
  AND NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State s JOIN dbo.tbl_MachinePrice p ON p.MachineID=s.MachineID
-                WHERE p.MachineID={machine_id} AND p.Price=s.PriceGP AND p.Disable=CASE WHEN s.Enabled=1 THEN 0 ELSE 1 END AND p.Type=0)
- RAISERROR('Machine ID is occupied or its price was externally edited',16,1);
+                WHERE s.SchemaVersion=1 AND p.MachineID={machine_id} AND p.Price=s.PriceGP
+                  AND p.Disable=CASE WHEN s.Enabled=1 THEN 0 ELSE 1 END AND p.Type=0)
+ RAISERROR('Ordinary machine ID is occupied or its price was externally edited',16,1);
+IF EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id})
+ AND NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State s JOIN dbo.tbl_ItemMachinePrice p ON p.MachineID=s.MachineID
+                WHERE s.SchemaVersion=2 AND p.MachineID={machine_id} AND p.Price=s.PriceGP
+                  AND p.Disable=CASE WHEN s.Enabled=1 THEN 0 ELSE 1 END AND p.Type=0)
+ RAISERROR('Activity machine ID is occupied or its price was externally edited',16,1);
 IF OBJECT_ID(N'dbo.tbl_MachineList',N'U') IS NOT NULL AND EXISTS(SELECT 1 FROM dbo.tbl_MachineList WHERE MachineID={machine_id})
  RAISERROR('Collection machine must not have a native fallback sequence',16,1);
+IF EXISTS(SELECT 1 FROM dbo.tbl_ItemMachineList WHERE MachineID={machine_id})
+ RAISERROR('Collection activity machine must not have a native fallback sequence',16,1);
 IF OBJECT_ID(N'dbo.sdgo_mod_CapsuleMachine',N'U') IS NOT NULL
 BEGIN
  DECLARE @foreignMachine int=0;
@@ -163,11 +215,13 @@ INSERT sdgo_collection_capsule.UnitSource(UnitID,TransformTo,Ready,UnitRank,Unit
     sql += f"""
 IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State)
  INSERT sdgo_collection_capsule.State(Singleton,SchemaVersion,MachineID,PriceGP,PoolHash,Enabled)
- VALUES(1,1,{machine_id},100000,{literal(checksum)},1);
-ELSE UPDATE sdgo_collection_capsule.State SET PoolHash={literal(checksum)},Enabled=1 WHERE Singleton=1;
-IF NOT EXISTS(SELECT 1 FROM dbo.tbl_MachinePrice WHERE MachineID={machine_id})
- INSERT dbo.tbl_MachinePrice(MachineID,Price,Disable,Type) VALUES({machine_id},100000,0,0);
-ELSE UPDATE dbo.tbl_MachinePrice SET Disable=0 WHERE MachineID={machine_id};
+ VALUES(1,2,{machine_id},100000,{literal(checksum)},1);
+ELSE UPDATE sdgo_collection_capsule.State SET SchemaVersion=2,PoolHash={literal(checksum)},Enabled=1 WHERE Singleton=1;
+IF @previousCollectionSchema=1
+ DELETE dbo.tbl_MachinePrice WHERE MachineID={machine_id};
+IF NOT EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id})
+ INSERT dbo.tbl_ItemMachinePrice(MachineID,Price,Disable,Type) VALUES({machine_id},100000,0,0);
+ELSE UPDATE dbo.tbl_ItemMachinePrice SET Disable=0 WHERE MachineID={machine_id};
 """
     if legacy_account_max is not None:
         sql += f"UPDATE sdgo_collection_capsule.State SET LegacyAccountMax={legacy_account_max},RegistrationBaseline=1 WHERE Singleton=1 AND RegistrationBaseline=0;\n"
@@ -187,10 +241,12 @@ def disable(machine_id: int) -> str:
     if type(machine_id) is not int or not 0 < machine_id <= 2_147_483_647:
         raise ValueError("Invalid machine ID")
     return f"""SET XACT_ABORT ON;BEGIN TRANSACTION;
-IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE Singleton=1 AND MachineID={machine_id})
+IF NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.State WHERE Singleton=1 AND SchemaVersion=2 AND MachineID={machine_id})
 BEGIN ROLLBACK;RAISERROR('Collection ownership differs',16,1);RETURN;END;
+IF EXISTS(SELECT 1 FROM dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id} AND (Price<>100000 OR Type<>0 OR Disable<>0))
+BEGIN ROLLBACK;RAISERROR('Activity price was externally edited',16,1);RETURN;END;
 UPDATE sdgo_collection_capsule.State SET Enabled=0 WHERE Singleton=1;
-UPDATE dbo.tbl_MachinePrice SET Disable=1 WHERE MachineID={machine_id};
+DELETE dbo.tbl_ItemMachinePrice WHERE MachineID={machine_id};
 COMMIT;
 -- Keep history and capture triggers so re-enabling does not permit repeats.
 """

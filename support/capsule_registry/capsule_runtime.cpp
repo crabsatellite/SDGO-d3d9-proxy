@@ -296,7 +296,8 @@ namespace
 
     bool AllowedEntry(const std::wstring& name)
     {
-        if (name == L"gdrs\\0033.gdt" || name == L"gdrs\\0101.gdt" ||
+        if (name == L"gdrs\\0031.gdt" || name == L"gdrs\\0033.gdt" ||
+            name == L"gdrs\\0099.gdt" || name == L"gdrs\\0101.gdt" ||
             name == L"gdrs\\0154.gdt" || name == L"gdrs\\0155.gdt")
             return true;
         if (name == L"uirs\\1161.uir")
@@ -397,7 +398,8 @@ namespace
             error = "overlay.zdx has trailing bytes";
             return false;
         }
-        for (const wchar_t* required : {L"gdrs\\0033.gdt", L"gdrs\\0101.gdt",
+        for (const wchar_t* required : {L"gdrs\\0031.gdt", L"gdrs\\0033.gdt",
+                                        L"gdrs\\0099.gdt", L"gdrs\\0101.gdt",
                                         L"gdrs\\0154.gdt", L"gdrs\\0155.gdt"}) {
             if (bundle.entries.find(required) == bundle.entries.end()) {
                 error = "overlay is missing a required GDT";
@@ -411,7 +413,8 @@ namespace
 
 bool capsule_catalog::IsOverlayGdtPath(const std::wstring& path)
 {
-    return path == L"gdrs\\0033.gdt" || path == L"gdrs\\0101.gdt" ||
+    return path == L"gdrs\\0031.gdt" || path == L"gdrs\\0033.gdt" ||
+           path == L"gdrs\\0099.gdt" || path == L"gdrs\\0101.gdt" ||
            path == L"gdrs\\0154.gdt" || path == L"gdrs\\0155.gdt";
 }
 
@@ -467,13 +470,15 @@ bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, 
     for (const auto& item : {std::pair<const wchar_t*, uint32_t*>(L"fixed", &candidate.fixedCount),
                              {L"coin", &candidate.coinCount},
                              {L"custom", &candidate.customCount},
-                             {L"candidates", &candidate.candidateCount}}) {
+                             {L"candidates", &candidate.candidateCount},
+                             {L"activity", &candidate.activityCount}}) {
         if (!ParseUnsigned(IniValue(ini, L"counts", item.first), *item.second)) {
             error = "runtime.ini is missing a valid [counts] value";
             return false;
         }
     }
-    for (const wchar_t* table : {L"0033", L"0101", L"0154", L"0155"}) {
+    for (const wchar_t* table : {L"0031", L"0033", L"0099", L"0101",
+                                 L"0154", L"0155"}) {
         std::wstring relative = IniValue(ini, L"gdt", table);
         std::wstring key = std::wstring(table) + L"_sha256";
         if (!VerifyDeclaredFile(modDirectory, relative, IniValue(ini, L"gdt", key.c_str()), nullptr, error))

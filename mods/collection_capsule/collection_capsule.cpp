@@ -17,7 +17,7 @@ using namespace sdgo::collection_capsule;
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
-PickFunction g_original = nullptr;
+ActivityPickFunction g_original = nullptr;
 std::int32_t g_machineId = kDefaultMachineId;
 
 template<class T>
@@ -75,35 +75,38 @@ bool MachineId(const sdgo::ModSettings& settings, std::int32_t& result) {
     return true;
 }
 
-int __fastcall PickHook(
-    void* self, void*, void* connection, PickInput* rawInput, PickOutput* callerOutput) {
-    PickInput input = {};
-    if (!Read(rawInput, input)) return kDatabaseFailure;
-    if (input.machine != g_machineId)
-        return g_original(self, connection, rawInput, callerOutput);
+int __fastcall ActivityPickHook(
+    void* self, void*, void* connection, ActivityPickRecord* rawRecord) {
+    std::int32_t account = 0;
+    std::int32_t machine = 0;
+    if (!rawRecord || !Read(&rawRecord->account, account) ||
+        !Read(&rawRecord->machine, machine)) return kDatabaseFailure;
+    if (machine != g_machineId)
+        return g_original(self, connection, rawRecord);
 
     // The native caller refunds every nonzero return. Probe both publication
-    // destinations before delivery so a committed unit cannot be followed by
-    // a refund merely because the caller supplied an unwritable result buffer.
-    if (!ProbeWritable(&rawInput->result, sizeof(rawInput->result)) ||
-        !ProbeWritable(callerOutput, sizeof(*callerOutput))) return kDatabaseFailure;
+    // inputs and outputs before delivery so a committed drop-box item cannot
+    // be followed by a refund because the caller supplied an unwritable record.
+    if (!ProbeWritable(rawRecord, sizeof(*rawRecord))) return kDatabaseFailure;
 
     int result = kDatabaseFailure;
-    PickOutput pending = {};
+    ActivityReward pending = {};
     DrawDatabase database;
-    if (database.Open(connection)) result = database.Draw(input.account, input.machine, pending);
+    if (database.Open(connection)) result = database.Draw(account, machine, pending);
     if (result < 0) result = kDatabaseFailure;
 
     if (result == 0) {
-        std::memcpy(callerOutput, &pending, sizeof(pending));
-        rawInput->result = 0;
+        rawRecord->dropBoxSerial = pending.dropBoxSerial;
+        rawRecord->itemCategory = pending.itemCategory;
+        rawRecord->amount = pending.amount;
+        rawRecord->result = 0;
         return 0;
     }
-    rawInput->result = result;
+    rawRecord->result = result;
     if (g_api && g_api->Log)
         g_api->Log(g_mod, SDGO_LOG_WARN,
-                   "collection capsule delivery declined: machine=%d code=%d",
-                   input.machine, result);
+                   "collection activity delivery declined: machine=%d code=%d",
+                   machine, result);
     return result;
 }
 } // namespace
@@ -119,10 +122,10 @@ SDGO_MOD_ENTRY {
         return 0;
     }
     if (!api->HookCode(
-            mod, "collection.pick", reinterpret_cast<void*>(&PickHook),
+            mod, "collection.activity_pick", reinterpret_cast<void*>(&ActivityPickHook),
             reinterpret_cast<void**>(&g_original))) return 0;
     api->Log(mod, SDGO_LOG_INFO,
-             "collection capsule active: machine=%d, native price registry=100000 GP",
+             "collection activity capsule active: machine=%d, native price registry=100000 GP",
              g_machineId);
     return 1;
 }

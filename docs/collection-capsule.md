@@ -1,18 +1,27 @@
 # Collection capsule (Beta)
 
 Collection capsule is an independently installable and disableable gameplay Mod.
-It adds one machine to the ordinary capsule list:
+It adds one machine to the native activity capsule page:
 
 - default machine ID `990001`;
 - a fixed price of **100,000 GP** per draw, with no other accepted currency;
-- uniform selection among the account's currently eligible unit families;
+- rank-first selection with **C 35% / B 30% / A 20% / S 15%**, then uniform selection among unacquired initial forms in that rank;
 - a permanent, independently ownable base/initial form that the account has never acquired;
 - sold, consumed, or exchanged units remain acquired and cannot be drawn again;
 - no owned unit is consumed, and non-ownable post-transform forms are not prizes.
 
+The weights follow `sp_DailyLoginReward`. Exhausted ranks leave the lottery and
+the remaining rank weights are renormalized; the number of units in a rank does
+not multiply its total probability.
+
+Native activity draws deliver to the **prize box**. The awarded item represents a
+permanent level-1 initial-form unit, created when the player claims it. Acquisition
+history is reserved at draw time, so pending prizes cannot be drawn again. A full
+hangar or failed claim leaves the already-awarded prize available for later claim.
+
 The stock World path prepays the registered GP price. The Mod selects and delivers
-the unit and never charges a second time. Exhaustion, incomplete history, inventory
-delivery failure, database failure, or result-validation failure returns through
+the prize and never charges a second time. Exhaustion, incomplete history, missing
+delivery metadata, database failure, or result-validation failure returns through
 the native failure path, which should refund the complete prepayment and leave a
 net charge of zero.
 
@@ -35,7 +44,7 @@ compatibility mode.
 
 Use **SDGO Mod Manager → Collection capsule (Beta)** for everyday configuration.
 Select the target WorldServer INI, matching client, and full framework or owner
-toolkit directory. An optional cover must be a 182×108 PNG.
+toolkit directory. An optional activity poster must be a **361×322 PNG**.
 
 1. Generate matched resources. Only public configuration is exported; existing
    shared client machines are preserved.
@@ -43,12 +52,16 @@ toolkit directory. An optional cover must be a 182×108 PNG.
    WorldServer, then install its server package and the matching local client.
    Manager does not control game processes.
 3. Restart that WorldServer, export the player package and distribute it to friends.
+   Manager and the player notes report the current activity page and slot. Players
+   draw there and claim the resulting unit through the game's native prize box.
 4. Import trusted complete acquisition history for legacy accounts. Current hangar
    contents alone are insufficient. Register reciprocal imported-family metadata
    before building when needed.
 
-After separately updating the ordinary capsule catalog, regenerate and install
-the composed client resources here before exporting a new player package.
+Ordinary capsule updates preserve activity posters, generated resources and unit
+gift categories. Publishing requires the current six-table shared provider; an
+older four-table provider is rejected. Regenerate and distribute matched resources
+after changing the collection poster or importing new content.
 Enable or disable the gameplay Mod on its World feature card and restart that
 World; acquisition history is retained. Price is fixed at 100,000 GP. The internal
 machine ID is developer information and must match SQL and client resources.
@@ -98,7 +111,8 @@ The output directory must not already exist. This command exports only the publi
 configuration needed to build the pool:
 
 - `dbo.tbl_Units` unit definitions;
-- `dbo.tbl_MachinePrice` machine definitions;
+- `dbo.tbl_MachinePrice` / `dbo.tbl_ItemMachinePrice` machine definitions;
+- `dbo.tbl_ItemCategory` prize definitions and this Mod's retained owned unit-gift categories;
 - published imported-family metadata;
 - row counts, file hashes, and an export-time receipt.
 
@@ -140,7 +154,8 @@ Standalone, unambiguous base units need no declaration. `--unit-family` supplies
 inventory-root metadata; it is not a frozen prize allowlist.
 
 The default placeholder cover is `mods\collection_capsule\assets\cover.png`.
-A replacement must be an exact **182×108 PNG**:
+A replacement must be an exact **361×322 PNG**. Author a larger image at the same
+aspect ratio and downsample it for installation:
 
 ```powershell
 python tools/collection_capsule.py build-kit `
@@ -210,7 +225,8 @@ Each player receives the `player\` directory:
 1. Close the client being updated.
 2. Double-click `Install-Client.cmd`.
 3. Select the game directory containing `GOnline.exe`.
-4. Start normally and use Collection capsule in the ordinary capsule list.
+4. Start normally, use Collection capsule in the activity capsule list, then claim
+   the permanent unit from the native prize box.
 
 The installer validates the client build, every package hash, and the required
 symbols, then writes an installation receipt. It preserves the existing `sdgo.ini`,
@@ -227,9 +243,16 @@ framework/core, global settings, symbols, and unrelated Mods. If another tool
 changed a controlled file after installation, uninstall refuses to overwrite
 that newer content.
 
-The ordinary machine screen still contains six preview tiles. They are presentation
-anchors, not a prize whitelist. The server result may be any eligible, previously
-unacquired base unit and need not appear among those six previews.
+The activity entry uses one complete poster. It is no longer an ordinary six-tile
+machine. Migration removes only the feature-owned ordinary entry and price while
+retaining acquisition coverage, Seen history, imported families and draw logs.
+Distribute the new player package; the retired ordinary entry is no longer usable.
+
+Unit gift categories are delivery metadata, not a frozen prize list. The builder
+reuses safe permanent level-1 categories and creates missing owned definitions.
+Retained categories survive disable/update so historical prizes remain claimable.
+Claim these prizes before fully uninstalling the player resources. Unclaimed rows
+are not deleted; reinstalling the matching resources restores their presentation.
 
 ## Complete history for existing accounts
 
@@ -288,6 +311,12 @@ Each draw derives eligible inventory roots from the live `tbl_Units` catalog.
 Registration resolves only the initial-form identity of an ambiguous multi-form
 family. It does not freeze a prize-ID list and does not require a DLL rebuild for
 each new unit.
+
+Imported content must also publish matching native permanent level-1 unit gift
+metadata to server and client. Once published, new units participate dynamically.
+A raw unit row without delivery metadata rejects the draw through the refund path
+instead of being silently excluded. A new build automatically supplies missing
+categories, and its matching client resources must be distributed to players.
 
 For existing native units, the builder resolves reciprocal forms from enabled
 entries in the client's `0220.gdt`, checked against all six unit tables and the
@@ -385,10 +414,10 @@ ctest --test-dir build -C Release -R "^collection_capsule_offline$" --output-on-
 
 Manual acceptance should confirm:
 
-1. the ordinary list shows Collection capsule at the fixed 100,000 GP price;
-2. a successful draw grants an independently ownable base form never acquired by that account;
-3. selling it and drawing again cannot repeat the same unit family;
+1. the activity page/slot reported by the build shows the poster and fixed 100,000 GP price;
+2. a draw awards a permanent level-1 initial-form prize, which appears in inventory after native prize-box claim;
+3. pending prizes, sold units and deleted prizes cannot cause the same family to be drawn again;
 4. success produces exactly one net 100,000 GP charge;
-5. exhaustion, incomplete history, delivery failure, and backend failure leave a net charge of zero;
+5. exhaustion, incomplete metadata/history and failed draws leave a net charge of zero; failed claims keep the prize and do not charge again;
 6. unit, history, and machine state survive client and WorldServer restarts;
-7. player uninstall leaves unrelated Mods, shared machines, and the current framework/core working.
+7. disabling keeps historical prizes claimable; after claiming them, player uninstall leaves unrelated Mods, shared machines, and the current framework/core working.

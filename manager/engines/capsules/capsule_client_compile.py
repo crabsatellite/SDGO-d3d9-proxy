@@ -1,6 +1,7 @@
 """Compile a capsule catalog into a complete, versioned native client overlay."""
 from __future__ import annotations
 import argparse
+import configparser
 import gzip
 import hashlib
 import io
@@ -8,13 +9,89 @@ import json
 from pathlib import Path
 import struct
 
-from .capsule_catalog import GRADE_SETS, digest, gdt_records, read_json, validate, write_json
-from .capsule_assets import Assets, standalone_sprite
+from .capsule_catalog import ClientData, GRADE_SETS, digest, gdt_records, read_json, validate, write_json
+from .capsule_assets import Assets, sprite_frame, standalone_sprite
 from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 7
+COMPILER_VERSION = 8
+
+
+def resident_extensions(client, reader):
+    """Keep event posters and unit gifts while editing ordinary machines."""
+    from owner.collection_capsule.client import ArchiveReader
+    root = Path(client) / 'sdgo/mods/capsule_catalog'
+    runtime = configparser.ConfigParser(interpolation=None)
+    path = root / 'runtime.ini'
+    resources, metadata = {}, None
+    if path.is_file():
+        runtime.read(path, encoding='utf-8-sig')
+        for extension in ('zdx', 'zpk'):
+            expected = runtime.get('runtime', 'overlay_' + extension + '_sha256', fallback='')
+            if hashlib.sha256((root / ('overlay.' + extension)).read_bytes()).hexdigest() != expected:
+                raise ValueError('Installed shared capsule overlay hash differs')
+        resident = ArchiveReader(root / 'overlay.zdx', root / 'overlay.zpk')
+        for name in resident.entries:
+            resource = Path(name)
+            if (resource.parent.as_posix() in ('sprs', 'txrs') and resource.stem.isdecimal()
+                    and 60000 <= int(resource.stem) <= 65535 and resource.suffix in ('.spr', '.txr')):
+                resources[name] = resident.read(name)
+        manifest = root / 'manifest.json'
+        if manifest.is_file():
+            metadata = read_json(manifest).get('unit_items')
+    tables = {}
+    for table, size in (('0031', 614), ('0099', 179)):
+        configured = runtime.get('gdt', table, fallback=None)
+        if configured:
+            path = root.joinpath(*configured.replace('\\', '/').split('/')).resolve()
+            if not path.is_relative_to(root.resolve()):
+                raise ValueError('Shared capsule table path leaves its registry')
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != runtime.get('gdt', table + '_sha256'):
+                raise ValueError('Installed shared capsule table hash differs')
+        else:
+            raw = reader.read_resource('gdrs/' + table + '.gdt')
+        actual_size, rows = gdt_records(raw)
+        if actual_size != size:
+            raise ValueError('Unsupported shared native table layout: ' + table)
+        tables[table] = (raw, len(rows))
+    ui = None
+    configured = runtime.get('ui', '1161', fallback=None)
+    if configured:
+        path = root.joinpath(*configured.replace('\\', '/').split('/')).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise ValueError('Shared capsule UI path leaves its registry')
+        ui = path.read_bytes()
+        if hashlib.sha256(ui).hexdigest() != runtime.get('ui', '1161_sha256'):
+            raise ValueError('Installed shared capsule UI hash differs')
+    return resources, tables, metadata, ui
+
+
+def _extension_digest(resources, tables, metadata, reader):
+    hashes = {name: hashlib.sha256(value[0]).hexdigest() for name, value in tables.items()}
+    _, rows = gdt_records(tables['0099'][0])
+    for row in rows:
+        path = row[19:179].decode('utf-16-le').split('\0')[0].replace('\\', '/').lower()
+        if not (Path(path).stem.isdecimal() and 60000 <= int(Path(path).stem) <= 65535):
+            continue
+        raw = resources.get(path)
+        if raw is None:
+            raw = reader.read_resource(path)
+        hashes[path] = hashlib.sha256(raw).hexdigest()
+        texture = sprite_frame(raw)['texture'].replace('\\', '/').lower()
+        raw = resources.get(texture)
+        if raw is None:
+            raw = reader.read_resource(texture)
+        hashes[texture] = hashlib.sha256(raw).hexdigest()
+    hashes['unit_items'] = hashlib.sha256(json.dumps(metadata, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+
+
+def extension_fingerprint(client):
+    reader = ClientData(client)
+    resources, tables, metadata, _ = resident_extensions(client, reader)
+    return _extension_digest(resources, tables, metadata, reader)
 
 
 def encode_gdt(size, records, extra=11):
@@ -101,10 +178,20 @@ def compile_catalog(catalog, client, lookup, output):
     units = {u["id"]: u for u in catalog["units"]}
     revision = digest(catalog)
     resources, files, placement = {}, {}, []
+    inherited, extension_tables, unit_items, inherited_ui = resident_extensions(client, reader)
+    extension_signature = _extension_digest(inherited, extension_tables, unit_items, reader)
+    resources.update(inherited)
+    for relative, raw in inherited.items():
+        target = out / 'assets' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        files[target.relative_to(out).as_posix()] = hashlib.sha256(raw).hexdigest()
     occupied_sprite_ids = {int(Path(name).stem) for name in reader.entries
                            if name.startswith("sprs/") and Path(name).stem.isdecimal()}
     occupied_texture_ids = {int(Path(name).stem) for name in reader.entries
                             if name.startswith("txrs/") and Path(name).stem.isdecimal()}
+    occupied_sprite_ids.update(int(Path(name).stem) for name in inherited if name.startswith('sprs/'))
+    occupied_texture_ids.update(int(Path(name).stem) for name in inherited if name.startswith('txrs/'))
     next_sprite = 60000
     cards = {}
     native_card_references = []
@@ -267,7 +354,11 @@ def compile_catalog(catalog, client, lookup, output):
         target.write_bytes(data)
         resources[f"gdrs/{table}.gdt"] = data
         files[f"data/{table}.gdt"] = hashlib.sha256(data).hexdigest()
-    ui_data, ui_receipt = patch_capsule_price_defaults(reader.read_resource("uirs/1161.uir"))
+    for table, (raw, _) in extension_tables.items():
+        (data_dir / (table + '.gdt')).write_bytes(raw)
+        resources['gdrs/' + table + '.gdt'] = raw
+        files['data/' + table + '.gdt'] = hashlib.sha256(raw).hexdigest()
+    ui_data, ui_receipt = patch_capsule_price_defaults(inherited_ui if inherited_ui is not None else reader.read_resource("uirs/1161.uir"))
     ui_path = out / "ui" / "1161.uir"
     ui_path.parent.mkdir()
     ui_path.write_bytes(ui_data)
@@ -279,16 +370,19 @@ def compile_catalog(catalog, client, lookup, output):
     lines = ["[runtime]", "schema=1", f"catalog_revision={revision}", "asset_root=assets",
              "overlay=overlay", f"overlay_zdx_sha256={files['overlay.zdx']}",
              f"overlay_zpk_sha256={files['overlay.zpk']}", "", "[gdt]"]
-    for table in TABLE_BASES:
+    for table in (*TABLE_BASES, *extension_tables):
         lines += [f"{table}=data\\{table}.gdt", f"{table}_sha256={files[f'data/{table}.gdt']}"]
     lines += ["", "[ui]", "1161=ui\\1161.uir",
               f"1161_sha256={files['ui/1161.uir']}"]
     counts = {"fixed": len(fixed_rows), "coin": len(coin_rows), "custom": len(custom_rows), "candidates": len(candidate_rows)}
+    counts.update(activity=extension_tables['0099'][1], item_categories=extension_tables['0031'][1])
     lines += ["", "[counts]"] + [f"{key}={value}" for key, value in counts.items()]
     (out / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
     write_json(out / "overlay-index.json", archive)
     write_json(out / "placements.json", {"catalog_revision": revision, "machines": placement})
     write_json(out / "manifest.json", {"schema_version": 1, "compiler_version": COMPILER_VERSION,
+        "unit_items": unit_items,
+        "preserved_extensions_signature": extension_signature,
         "catalog_revision": revision,
         "counts": counts, "files": files, "generated_cards": generated_cards,
         "native_card_references": native_card_references,
@@ -297,6 +391,7 @@ def compile_catalog(catalog, client, lookup, output):
         "source_index_sha256": reader.index_hash})
     return {"catalog_revision": revision, "counts": counts, "generated_cards": len(generated_cards),
             "native_card_units": len({row["unit_id"] for row in native_card_references}),
+            "preserved_extensions_signature": extension_signature,
             "output": str(out)}
 
 

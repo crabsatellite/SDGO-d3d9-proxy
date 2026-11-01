@@ -700,6 +700,8 @@ def _validate_compiled(runtime_output, revision):
         "overlay.zdx",
         "overlay.zpk",
         "data/0033.gdt",
+        "data/0031.gdt",
+        "data/0099.gdt",
         "data/0101.gdt",
         "data/0154.gdt",
         "data/0155.gdt",
@@ -719,7 +721,7 @@ def _validate_compiled(runtime_output, revision):
     overlay_zpk = runtime.get("runtime", "overlay_zpk_sha256", fallback="")
     if overlay_zdx != hashes["overlay.zdx"] or overlay_zpk != hashes["overlay.zpk"]:
         raise ValueError("Compiled runtime.ini overlay hashes differ")
-    for table in ("0033", "0101", "0154", "0155"):
+    for table in ("0031", "0033", "0099", "0101", "0154", "0155"):
         expected_path = f"data/{table}.gdt"
         configured = runtime.get("gdt", table, fallback="").replace("\\", "/")
         configured_hash = runtime.get("gdt", f"{table}_sha256", fallback="")
@@ -863,6 +865,9 @@ def _build_package(
             b"if errorlevel 1 pause\r\n"
         )
     stage_hashes = {}
+    provider = _safe_join(framework_stage, 'sdgo/mods/capsule_catalog/capsule_catalog.dll')
+    if not provider.is_file() or b'SDGO_CAPSULE_REGISTRY_6TABLE_V2' not in provider.read_bytes():
+        raise ValueError('请更新配套共享机台组件：当前活动海报和历史领取箱需要新版六表 provider')
     for source_relative in stage_files:
         source = _safe_join(framework_stage, source_relative)
         if not source.is_file():

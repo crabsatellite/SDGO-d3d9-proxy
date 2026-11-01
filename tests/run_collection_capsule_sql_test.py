@@ -31,9 +31,9 @@ bridge_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge_module)
 
 
-def fixture_unit(uid, target=0, ready=1):
+def fixture_unit(uid, target=0, ready=1, rank=1):
     return dict(UnitNumber=uid, UnitNumber_Transform=target, SallyReady=ready,
-                UnitGradeNumber=1, UnitGradeNumber2=2, UnitGraph=1000000 + uid,
+                UnitGradeNumber=rank, UnitGradeNumber2=2, UnitGraph=1000000 + uid,
                 UnitModelName=f"Fixture {uid}")
 
 
@@ -89,6 +89,13 @@ def run(container: str, credential_file: Path, output: Path, native_build: Path 
             cases.append(label)
             print("PASS " + label, flush=True)
 
+        def execute_fails(sql):
+            try:
+                execute(sql)
+            except pyodbc.Error:
+                return True
+            return False
+
         check(scalar("SELECT CONVERT(nvarchar(128),DATABASEPROPERTYEX(DB_NAME(),'Collation'))")
               != scalar("SELECT CONVERT(nvarchar(128),DATABASEPROPERTYEX('tempdb','Collation'))"),
               "fixture database and tempdb deliberately use different collations")
@@ -103,6 +110,14 @@ CREATE INDEX IX_OwnerUnits ON dbo.tbl_UserUnits(AccountNumber,UnitNumber);
 CREATE TABLE dbo.tbl_CapsulePicked(AccountID int,MachineID int,UnitGradeNumber tinyint,UnitID int,PickedDate datetime DEFAULT GETDATE());
 CREATE TABLE dbo.tbl_MachinePrice(MachineID int PRIMARY KEY,Price int,Disable int,Type int);
 CREATE TABLE dbo.tbl_MachineList(MachineID int PRIMARY KEY);
+CREATE TABLE dbo.tbl_ItemMachinePrice(MachineID int PRIMARY KEY,Price int,Disable int,Type int);
+CREATE TABLE dbo.tbl_ItemMachineList(MachineID int PRIMARY KEY,Idx int,CategoryID int,Amount int,used tinyint,ItemName varchar(50));
+CREATE TABLE dbo.tbl_ItemCategory(CatalogueID int PRIMARY KEY,Name nvarchar(100),RefIndex int,
+ TimeLimit tinyint,Option1 int,Option2 int);
+CREATE TABLE dbo.tbl_UserDropItemBox(UserDropItemIdx bigint IDENTITY(2147483648,1) PRIMARY KEY,
+ AccountNumber int,ItemCategory int,Amount int,DropConditionID int,Applied bit NOT NULL DEFAULT 0,
+ DropDate datetime NOT NULL DEFAULT GETDATE());
+CREATE INDEX IX_OwnerDropItems ON dbo.tbl_UserDropItemBox(AccountNumber,ItemCategory);
 CREATE TABLE dbo.fixture_wallet(AccountNumber int PRIMARY KEY,GP int NOT NULL CHECK(GP>=0));
 CREATE TABLE dbo.fixture_flags(FailCreate bit NOT NULL);
 INSERT dbo.fixture_flags VALUES(0);
@@ -127,24 +142,62 @@ END""")
         rows = [fixture_unit(100, 101), fixture_unit(101, 100, 0), fixture_unit(102),
                 fixture_unit(103, 104), fixture_unit(104, ready=1)]
         execute("INSERT dbo.tbl_Units VALUES " + ",".join(
-            f"({r['UnitNumber']},{r['UnitNumber_Transform']},{r['SallyReady']},1,2,{r['UnitGraph']},N'{r['UnitModelName']}')"
+            f"({r['UnitNumber']},{r['UnitNumber_Transform']},{r['SallyReady']},{r['UnitGradeNumber']},2,{r['UnitGraph']},N'{r['UnitModelName']}')"
             for r in rows))
-        install = installation(build_pool(rows), rows, 990001, legacy_account_max=2)
+        execute("""INSERT dbo.tbl_ItemCategory(CatalogueID,Name,RefIndex,TimeLimit,Option1,Option2) VALUES
+(1100100,N'Fixture 100',100,0,1,2),(1100102,N'Fixture 102',102,0,1,2),
+(1100103,N'Fixture 103',103,0,1,2);""")
+        install = installation(build_pool(rows), rows, 990001, legacy_account_max=2,
+                               unit_items=[])
         (output / "install.sql").write_text(install, encoding="utf-8")
         execute(install)
         check(scalar("SELECT Complete FROM sdgo_collection_capsule.Coverage WHERE AccountNumber=1") == 0,
               "legacy history is imported without pretending it is exhaustive")
         check(scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=1") == 2,
               "existing inventory and native draw history are seeded")
+        execute("""UPDATE sdgo_collection_capsule.State SET SchemaVersion=1;
+DELETE dbo.tbl_ItemMachinePrice WHERE MachineID=990001;
+INSERT dbo.tbl_MachinePrice VALUES(990001,99999,0,0);""")
+        check(execute_fails(install)
+              and scalar("SELECT SchemaVersion FROM sdgo_collection_capsule.State") == 1
+              and scalar("SELECT Price FROM dbo.tbl_MachinePrice WHERE MachineID=990001") == 99999
+              and scalar("SELECT COUNT(*) FROM dbo.tbl_ItemMachinePrice WHERE MachineID=990001") == 0,
+              "schema-1 migration rejects an externally edited ordinary price without partial changes")
+        execute("UPDATE dbo.tbl_MachinePrice SET Price=100000 WHERE MachineID=990001")
+        execute(install)
+        check(scalar("SELECT SchemaVersion FROM sdgo_collection_capsule.State") == 2
+              and scalar("SELECT COUNT(*) FROM dbo.tbl_MachinePrice WHERE MachineID=990001") == 0
+              and scalar("SELECT Price FROM dbo.tbl_ItemMachinePrice WHERE MachineID=990001") == 100000,
+              "owned schema-1 ordinary machine migrates atomically to the activity machine")
+        execute("UPDATE dbo.tbl_ItemMachinePrice SET Price=99999 WHERE MachineID=990001")
+        check(execute_fails(install)
+              and scalar("SELECT SchemaVersion FROM sdgo_collection_capsule.State") == 2
+              and scalar("SELECT Price FROM dbo.tbl_ItemMachinePrice WHERE MachineID=990001") == 99999,
+              "schema-2 reinstall rejects an externally edited activity price")
+        execute("UPDATE dbo.tbl_ItemMachinePrice SET Price=100000 WHERE MachineID=990001")
         execute(install)
         check(scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=1") == 2,
-              "idempotent reinstall preserves collection history")
+              "idempotent activity reinstall preserves collection history")
+        policy = re.sub(r"\s+", "", (ROOT / "owner/collection_capsule/sql/draw.sql").read_text(encoding="utf-8"))
+        check("(VALUES(1,35),(2,30),(3,20),(4,15))" in policy
+              and "WHEREEXISTS(SELECT1FROM@choicescWHEREc.UnitRank=w.UnitRank)" in policy
+              and "SELECT@total=SUM(Weight)FROM@grades" in policy,
+              "rank plan is C35/B30/A20/S15 and renormalizes over nonempty ranks")
         execute("INSERT dbo.tbl_Users VALUES(2,0)")
         check(scalar("SELECT Complete FROM sdgo_collection_capsule.Coverage WHERE AccountNumber=2") == 0,
               "an old registration cannot claim complete history merely by creating a new profile")
 
         def account(number):
             execute(f"INSERT dbo.tbl_Users VALUES({number},0);INSERT dbo.fixture_wallet VALUES({number},1000000);")
+
+        def publish_category(unit, identity=None):
+            identity = identity or 1100000 + unit
+            execute("INSERT dbo.tbl_ItemCategory(CatalogueID,Name,RefIndex,TimeLimit,Option1,Option2) "
+                    f"VALUES({identity},N'Imported {unit}',{unit},0,1,2)")
+            return identity
+
+        def unit_for(prize):
+            return scalar(f"SELECT RefIndex FROM dbo.tbl_ItemCategory WHERE CatalogueID={int(prize[1])}")
 
         def draw(number, *, abort_success=False):
             # This models the already verified World prepay/refund boundary.
@@ -164,7 +217,7 @@ END""")
                                     data = cur.fetchall()
                                     if names == ["FixtureReturn"]:
                                         code = data[0][0]
-                                    elif names == ["UserUnitNum", "UnitID", "SlotIndex", "SerialNum", "nCustomLvMax"]:
+                                    elif names == ["DropBoxSerial", "ItemCategory", "Amount"]:
                                         if len(data) != 1:
                                             raise AssertionError("Unexpected native result row count")
                                         prize = tuple(data[0])
@@ -188,8 +241,51 @@ END""")
                     wallet.cursor().execute("UPDATE dbo.fixture_wallet SET GP=GP+100000 WHERE AccountNumber=?", number)
                 return code, prize
 
+        def claim(number, prize):
+            drop_box, category, amount = (int(value) for value in prize)
+            if amount != 1:
+                raise AssertionError("Unexpected fixture reward amount")
+            with contextlib.closing(connect()) as game:
+                cur = game.cursor()
+                try:
+                    cur.execute("BEGIN TRANSACTION;")
+                    row = cur.execute(
+                        "SELECT c.RefIndex FROM dbo.tbl_UserDropItemBox b WITH(UPDLOCK,HOLDLOCK) "
+                        "JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=b.ItemCategory "
+                        f"WHERE b.AccountNumber={number} AND b.UserDropItemIdx={drop_box} "
+                        f"AND b.ItemCategory={category} AND b.Amount=1"
+                    ).fetchone()
+                    if not row:
+                        cur.execute("ROLLBACK TRANSACTION;")
+                        return 2, None
+                    unit = int(row[0])
+                    result = cur.execute(f"""
+DECLARE @slot int,@instance bigint,@serial bigint,@max tinyint,@r int,@now datetime=GETDATE();
+EXEC @r=dbo.sp_CreateUserUnit {number},'Event',{category},{category},@now,0,
+     {unit},1,0,0,@slot OUTPUT,@instance OUTPUT,@serial OUTPUT,@max OUTPUT;
+SELECT @r,@slot,@instance,@serial,@max;
+""").fetchone()
+                    code = int(result[0])
+                    if code:
+                        cur.execute("ROLLBACK TRANSACTION;")
+                        return code, None
+                    deleted = cur.execute(
+                        "DELETE dbo.tbl_UserDropItemBox "
+                        f"WHERE AccountNumber={number} AND UserDropItemIdx={drop_box} "
+                        f"AND ItemCategory={category} AND Amount=1"
+                    ).rowcount
+                    if deleted != 1:
+                        cur.execute("ROLLBACK TRANSACTION;")
+                        return 3002, None
+                    cur.execute("COMMIT TRANSACTION;")
+                    return 0, (unit, *(int(value) for value in result[1:]))
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        cur.execute("IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;")
+                    raise
+
         if native_build:
-            execute("UPDATE sdgo_collection_capsule.State SET Enabled=1;UPDATE dbo.tbl_MachinePrice SET Disable=0 WHERE MachineID=990001;")
+            execute("UPDATE sdgo_collection_capsule.State SET Enabled=1;UPDATE dbo.tbl_ItemMachinePrice SET Disable=0 WHERE MachineID=990001;")
             target = output / "native_core"
             mod = target / "sdgo/mods/collection_capsule"
             mod.mkdir(parents=True)
@@ -217,27 +313,53 @@ END""")
                   "incomplete legacy history rejects with native-style full refund")
             account(7)
             result = draw(7)
-            check(result[0] == 0 and result[1][0] > 2147483647 and result[1][3] > 2147483647,
-                  "successful draw returns the exact native 64-bit result fields")
-            first = result[1][1]
+            first = unit_for(result[1])
+            check(result[0] == 0 and result[1][0] > 2147483647 and result[1][2] == 1
+                  and scalar(f"SELECT COUNT(*) FROM dbo.tbl_UserDropItemBox WHERE UserDropItemIdx={result[1][0]}") == 1
+                  and scalar(f"SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=7 AND UnitID={first}") == 1,
+                  "successful draw returns the exact activity reward and commits a 64-bit drop box")
+            claimed = claim(7, result[1])
+            check(claimed[0] == 0 and claimed[1][0] == first
+                  and claimed[1][2] > 2147483647 and claimed[1][3] > 2147483647
+                  and scalar(f"SELECT COUNT(*) FROM dbo.tbl_UserDropItemBox WHERE UserDropItemIdx={result[1][0]}") == 0,
+                  "native claim creates the unit and removes its pending drop box atomically")
             execute("DELETE dbo.tbl_UserUnits WHERE AccountNumber=7")
             check(scalar(f"SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=7 AND UnitID={first}") == 1,
                   "selling a committed unit does not erase acquisition history")
-            remaining = [draw(7), draw(7)]
-            check(all(r[0] == 0 for r in remaining) and len({first, *(r[1][1] for r in remaining)}) == 3,
-                  "draws do not repeat a previously sold or currently owned base unit")
+            second = draw(7)
+            second_unit = unit_for(second[1])
+            third = draw(7)
+            third_unit = unit_for(third[1])
+            check(second[0] == 0 and third[0] == 0
+                  and len({first, second_unit, third_unit}) == 3,
+                  "pending, claimed and deleted rewards cannot repeat a base family")
+            execute(f"DELETE dbo.tbl_UserDropItemBox WHERE UserDropItemIdx={second[1][0]}")
+            check(scalar(f"SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=7 AND UnitID={second_unit}") == 1,
+                  "deleting an unclaimed pending box does not erase acquisition history")
             check(draw(7)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == 700000,
                   "exhausted pool refunds the entire 100000 GP charge")
 
             account(3)
             execute("UPDATE dbo.fixture_flags SET FailCreate=1")
-            check(draw(3)[0] == 3 and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=3") == 0,
-                  "native creation failure leaves no unit or collection mark")
-            execute("UPDATE dbo.fixture_flags SET FailCreate=0")
-            check(draw(3, abort_success=True)[0] != 0
+            pending = draw(3)
+            failed_claim = claim(3, pending[1])
+            check(pending[0] == 0 and failed_claim[0] == 3
+                  and scalar("SELECT COUNT(*) FROM dbo.tbl_UserDropItemBox WHERE AccountNumber=3") == 1
                   and scalar("SELECT COUNT(*) FROM dbo.tbl_UserUnits WHERE AccountNumber=3") == 0
-                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=3") == 0,
-                  "outer caller abort rolls back delivery, history and audit before refund")
+                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=3") == 1,
+                  "claim failure keeps the already awarded box and its acquisition reservation")
+            execute("UPDATE dbo.fixture_flags SET FailCreate=0")
+            check(claim(3, pending[1])[0] == 0
+                  and scalar("SELECT COUNT(*) FROM dbo.tbl_UserDropItemBox WHERE AccountNumber=3") == 0
+                  and scalar("SELECT COUNT(*) FROM dbo.tbl_UserUnits WHERE AccountNumber=3") == 1,
+                  "a later native claim can consume the preserved box")
+
+            account(9)
+            check(draw(9, abort_success=True)[0] != 0
+                  and scalar("SELECT COUNT(*) FROM dbo.tbl_UserDropItemBox WHERE AccountNumber=9") == 0
+                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.Seen WHERE AccountNumber=9") == 0
+                  and scalar("SELECT COUNT(*) FROM sdgo_collection_capsule.DrawLog WHERE AccountNumber=9") == 0,
+                  "outer caller abort rolls back drop box, history and audit before refund")
 
             account(4)
             with contextlib.closing(connect()) as c:
@@ -249,7 +371,7 @@ END""")
             account(5)
             with ThreadPoolExecutor(max_workers=8) as workers:
                 results = list(workers.map(lambda _: draw(5), range(8)))
-            successful = [r[1][1] for r in results if r[0] == 0]
+            successful = [unit_for(r[1]) for r in results if r[0] == 0]
             check(len(successful) == len(set(successful)) == 3
                   and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=5") == 700000,
                   "concurrent draws serialize per account without duplicates or lost refunds")
@@ -257,17 +379,25 @@ END""")
             account(6)
             execute("INSERT dbo.tbl_UserUnits(AccountNumber,UserUnitSlotNumber,UnitNumber) VALUES(6,1,101)")
             results = [draw(6), draw(6)]
-            check(all(r[0] == 0 and r[1][1] != 100 for r in results),
+            check(all(r[0] == 0 and unit_for(r[1]) != 100 for r in results),
                   "ownership of a transformed form counts toward its base family")
 
             # No pool rebuild: a newly imported standalone unit is discovered live.
             execute("INSERT dbo.tbl_Units VALUES(110,0,1,2,2,1000110,N'Imported base')")
-            check(draw(7)[1][1] == 110,
-                  "newly imported standalone units enter the live pool without an ID allowlist")
+            before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7")
+            check(draw(7)[0] == 3008 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == before,
+                  "a new raw unit without native delivery metadata rejects and fully refunds")
+            publish_category(110)
+            imported = draw(7)
+            check(imported[0] == 0 and unit_for(imported[1]) == 110,
+                  "publishing permanent category metadata activates a new standalone unit dynamically")
             execute("INSERT dbo.tbl_Units VALUES(111,112,1,2,2,1000111,N'Imported transform base'),(112,111,0,2,2,1000112,N'Imported alternate')")
-            check(draw(7)[1][1] == 111,
+            publish_category(111)
+            imported = draw(7)
+            check(imported[0] == 0 and unit_for(imported[1]) == 111,
                   "new unique-root transform families enter dynamically without a pool rebuild")
             execute("INSERT dbo.tbl_Units VALUES(120,121,1,3,2,1000120,N'Imported alternate'),(121,120,1,3,2,1000121,N'Imported base')")
+            publish_category(121)
             before = scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7")
             check(draw(7)[0] == 3008 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=7") == before,
                   "missing imported reciprocal-root metadata is reported, not silently omitted or charged")
@@ -281,7 +411,8 @@ END""")
                 importer.cursor().execute("COMMIT TRANSACTION;")
             # Replaying an older feature package must not erase later unit imports.
             execute(install)
-            check(draw(7)[1][1] == 121,
+            imported = draw(7)
+            check(imported[0] == 0 and unit_for(imported[1]) == 121,
                   "imported reciprocal family registers its declared root and survives feature reinstall")
             with contextlib.closing(connect()) as importer:
                 cur = importer.cursor()
@@ -299,8 +430,25 @@ END""")
                 cur.execute("ROLLBACK TRANSACTION;")
             check(rejected and scalar("SELECT COUNT(*) FROM dbo.tbl_Units WHERE UnitNumber IN(130,131)") == 0,
                   "unit-import transaction rejects missing root declarations without a half-installed family")
+            mapped = installation(build_pool(rows), rows, 990001, legacy_account_max=2,
+                unit_items=[{'unit_id': 100, 'category_id': 1180000, 'name': 'Verified client gift', 'created_by_collection': True}])
+            execute(mapped)
+            execute(install)
+            account(11)
+            execute("INSERT sdgo_collection_capsule.Seen(AccountNumber,UnitID,FirstTransactionID,Source) VALUES(11,102,0,'fixture'),(11,103,0,'fixture'),(11,110,0,'fixture'),(11,111,0,'fixture'),(11,121,0,'fixture')")
+            gift = draw(11)
+            check(gift[0] == 0 and gift[1][1] == 1180000
+                  and scalar("SELECT RefIndex FROM dbo.tbl_ItemCategory WHERE CatalogueID=1100100") == 100,
+                  "verified client gift mapping overrides lower server-only categories and survives older package replay")
+            collision = installation(build_pool(rows), rows, 990001, unit_items=[
+                {'unit_id': 102, 'category_id': 1180000, 'name': 'Collision', 'created_by_collection': True}])
+            check(execute_fails(collision)
+                  and scalar("SELECT UnitID FROM sdgo_collection_capsule.OwnedUnitItems WHERE CategoryID=1180000") == 100
+                  and scalar("SELECT CategoryID FROM sdgo_collection_capsule.UnitDelivery WHERE UnitID=100") == 1180000,
+                  "owned permanent category collision rolls back without breaking historical gift mapping")
             execute(disable(990001))
-            check(draw(3)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=3") == 1000000,
+            account(10)
+            check(draw(10)[0] != 0 and scalar("SELECT GP FROM dbo.fixture_wallet WHERE AccountNumber=10") == 1000000,
                   "disabling this machine preserves history and fully refunds rejected draws")
 
         receipt = dict(passed=cases, database=database, no_original_database_changes=True,
