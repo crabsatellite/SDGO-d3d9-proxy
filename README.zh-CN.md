@@ -40,6 +40,7 @@ Beta、Experimental 表示发布阶段。
 | 每局随机机体（Beta） <!-- catalog: `room_random`、`room_random_client` --> | 任务与对战随机出击 | [使用说明](docs/room-random.zh-CN.md) |
 | 长房名（Beta） <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 房间标题扩展 | [使用说明](docs/room-titles.zh-CN.md) |
 | 战斗 AI 难度（Beta） <!-- catalog: `battle_ai`、`battle_ai_server` --> | 战斗 AI 行为 | [使用说明](docs/battle-ai.md) |
+| 自动机库容量（Beta） <!-- catalog: `hangar_capacity` --> | 登录时保障至少 1200 格，只增不减 | [使用说明](docs/hangar-capacity.zh-CN.md) |
 | 机库管理（Beta） <!-- catalog: `hangar_manager` --> | 服务端排序及 GB 批量回收；0.4.0 支持快速预览和统一入账 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） <!-- catalog: `operator_catalog` --> | 副官内容管理 | [使用说明](docs/operator-assistant.zh-CN.md) |
 | 扭蛋机编辑器（Beta） <!-- catalog: `capsule_catalog` --> | 扭蛋内容管理 | [使用说明](docs/capsule-catalog.zh-CN.md) |

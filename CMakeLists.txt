@@ -185,6 +185,8 @@ sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle
              LIBS room_metadata_common bcrypt)
 
 sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+sdgo_add_mod(hangar_capacity SERVER DESCRIPTION "automatic native 1200-slot hangar"
+             SOURCES mods/hangar_capacity/hangar_capacity.cpp LIBS ole32 oleaut32 uuid)
 
 sdgo_add_mod(collection_capsule SERVER DESCRIPTION "never-acquired base-form capsule machine"
              SOURCES mods/collection_capsule/collection_capsule.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
@@ -895,4 +897,23 @@ if(BUILD_TESTING)
                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
         endforeach()
     endif()
+endif()
+
+# Independent hangar policy, native ABI and opt-in SQL fixtures; never staged.
+if(BUILD_TESTING)
+    add_executable(hangar_capacity_policy_test tests/hangar_capacity_policy_test.cpp)
+    sdgo_strict(hangar_capacity_policy_test)
+    add_test(NAME hangar_capacity_policy_offline COMMAND hangar_capacity_policy_test)
+    set_tests_properties(hangar_capacity_policy_offline PROPERTIES TIMEOUT 30)
+    add_executable(hangar_capacity_native_test tests/hangar_capacity_native_test.cpp)
+    target_link_libraries(hangar_capacity_native_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(hangar_capacity_native_test)
+    add_test(NAME hangar_capacity_native_offline COMMAND hangar_capacity_native_test)
+    set_tests_properties(hangar_capacity_native_offline PROPERTIES TIMEOUT 30)
+    add_executable(hangar_capacity_sql_emit tests/hangar_capacity_sql_emit.cpp)
+    sdgo_strict(hangar_capacity_sql_emit)
+    add_executable(hangar_capacity_sql_test tests/hangar_capacity_sql_test.cpp)
+    target_link_libraries(hangar_capacity_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(hangar_capacity_sql_test)
+    target_compile_options(hangar_capacity_sql_test PRIVATE /Ob0)
 endif()
