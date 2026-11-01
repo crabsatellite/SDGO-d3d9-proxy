@@ -6,6 +6,7 @@
 namespace sdgo::operators {
 constexpr size_t kOperatorSize = 1671;
 constexpr size_t kCategorySize = 614;
+constexpr size_t kMissionPartsOffset = 0x686;
 constexpr size_t kAvatarOffsets[] = {205, 313, 421, 533, 633, 733, 833};
 constexpr size_t kAvatarCapacities[] = {54, 54, 54, 50, 50, 50, 50};
 
