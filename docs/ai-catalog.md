@@ -8,12 +8,12 @@ Players keep their normal launcher. [中文与完整命令](ai-catalog.zh-CN.md)
 The addon is disabled by default. It requires `coop_ai` + `mission_ai` for missions
 or `pvp_ai` + `match_ai` for PvP. It does not change the native mode 11/12 roster.
 
-It also works with [extended room titles](room-titles.md): for example,
+It also works with [extended room titles](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-titles.md): for example,
 `Friendly practice for newcomers !ai e2 a1 lv4 !rand` selects the catalog's level-4
 pool while `room_random` randomizes humans when installed and enabled. Enable the
 separate client/Agent/Battle title Mods and update the consuming AI/random DLLs
 for commands after byte 20. Catalog data and both catalog DLLs remain independently required.
-See [combined commands](room-commands.md).
+See [combined commands](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-commands.md).
 
 ## Owner workflow
 

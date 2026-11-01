@@ -8,11 +8,11 @@ English: [ai-catalog.md](ai-catalog.md)。
 它扩充机体目录，不替换计分、房间、僚机控制或 PvP 逻辑。原生 AI 对战模式 11/12 的机体名单保持原样。
 脚本按原生 AI 模板作默认选择，支持服主覆盖；特殊武器、变形、视觉效果和真人联机仍需手动游戏验收。
 
-也可配合[长房名 Mod](room-titles.zh-CN.md)，例如
+也可配合[长房名 Mod](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-titles.zh-CN.md)，例如
 `朋友练习局，慢慢打欢迎新手 !ai e2 a1 lv4 !rand`：AI 使用目录里的 4 级池，
 另装并启用 `room_random` 后，真人每局随机。第 20 字节后的指令需要长房名客户端、Agent、Battle
 三端配套及更新后的 AI / 随机机体 DLL；目录数据和两端 `ai_catalog` 仍须单独安装。
-组合语法见[房名组合指令](room-commands.zh-CN.md)。
+组合语法见[房名组合指令](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-commands.zh-CN.md)。
 
 ## 安装位置和开关
 
