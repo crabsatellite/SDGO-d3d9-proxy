@@ -7,7 +7,7 @@
 
 namespace sdgo::hangar::ui {
 namespace {
-constexpr size_t kRows=9,kSummaryLines=5;
+constexpr size_t kRows=9,kSummaryLines=6;
 template<class T>T Read(const void* p,size_t offset=0) {T v;memcpy(&v,static_cast<const uint8_t*>(p)+offset,sizeof(v));return v;}
 template<class T>void Write(void* p,size_t offset,T v) {memcpy(static_cast<uint8_t*>(p)+offset,&v,sizeof(v));}
 NativeString View(const std::wstring& text) {
@@ -100,7 +100,9 @@ bool PageUi::Attach(void* service) {
     contentLeft_=static_cast<int>(left);
     contentTop_=static_cast<int>(sy)+buttonHeight_+12;
     contentWidth_=w-contentLeft_-12;
-    if(contentWidth_<3*buttonWidth_+24 || contentTop_+kSummaryLines*22+kRows*28+174>static_cast<size_t>(h))return false;
+    const int bottom=h-180; // leave the native page-selector/footer entirely free
+    const int rowTop=contentTop_+static_cast<int>(kSummaryLines)*22+20;
+    if(contentWidth_<3*buttonWidth_+24 || rowTop+static_cast<int>(kRows)*28>bottom-50)return false;
     auto** skins=Read<uint8_t**>(source,0x1A4);auto** skinsEnd=Read<uint8_t**>(source,0x1A8);
     const auto first=reinterpret_cast<uintptr_t>(skins),last=reinterpret_cast<uintptr_t>(skinsEnd);
     if(!first || last<first || last-first<3*sizeof(void*) || last-first>16*sizeof(void*) || (last-first)%sizeof(void*))return false;
@@ -117,9 +119,9 @@ bool PageUi::Attach(void* service) {
     serviceVtable_=Read<void*>(service);dialogVtable_=Read<void*>(dialog);
     bool ok=Add(L"ModHangarSort",L"一键整理",Action::Sort,x,static_cast<int>(sy),buttonWidth_,buttonHeight_,false) &&
         Add(L"ModHangarOpen",L"重复兑换",Action::Open,x+buttonWidth_+8,static_cast<int>(sy),buttonWidth_,buttonHeight_,false);
-    for(int i=0;ok && i<2;++i) {
+    for(int i=0;ok && i<1;++i) {
         const auto name=L"ModHangarNotice"+std::to_wstring(i);
-        ok=Add(name.c_str(),L"",Action::None,contentLeft_,h-40+i*18,contentWidth_,16,false);
+        ok=Add(name.c_str(),L"",Action::None,contentLeft_,static_cast<int>(sy)+buttonHeight_,contentWidth_,14,false);
         if(ok)controls_.back().notice=true;
     }
     for(size_t i=0;ok && i<kSummaryLines;++i) {
@@ -128,9 +130,8 @@ bool PageUi::Attach(void* service) {
     }
     for(size_t i=0;ok && i<kRows;++i) {
         const auto name=L"ModHangarRow"+std::to_wstring(i);
-        ok=Add(name.c_str(),L"",Action::None,contentLeft_,contentTop_+130+static_cast<int>(i)*28,contentWidth_,26,true);
+        ok=Add(name.c_str(),L"",Action::None,contentLeft_,rowTop+static_cast<int>(i)*28,contentWidth_,26,true);
     }
-    const int bottom=h-84;
     ok=ok && Add(L"ModHangarPrevious",L"上一页",Action::Previous,contentLeft_,bottom-38,96,26,true) &&
         Add(L"ModHangarNext",L"下一页",Action::Next,contentLeft_+12+buttonWidth_,bottom-38,96,26,true) &&
         Add(L"ModHangarPage",L"",Action::None,contentLeft_+24+2*buttonWidth_,bottom-38,contentWidth_-24-2*buttonWidth_,26,true) &&
@@ -151,7 +152,7 @@ bool PageUi::Attach(void* service) {
 void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
     if(control.textSet && control.text==value && control.color==color)return;
     const auto native=View(value);
-    bindings_.text(control.pointer,0,&native,2,3,control.width-4,14,color,shadowColor_,0,font_,control.action==Action::None?1:2);
+    bindings_.text(control.pointer,0,&native,2,control.notice?0:3,control.width-4,14,color,shadowColor_,0,font_,control.action==Action::None?1:2);
     control.text=value;control.color=color;control.textSet=true;
 }
 bool PageUi::Connected() {
@@ -203,7 +204,7 @@ void PageUi::Render() {
     if(!Connected())return;
     const auto summary=Lines(armed_?L"再次确认将兑换清单中的机体，无法撤销。\n请核对奖励、保留份数与全部清单。\n"+status_:status_,static_cast<size_t>(contentWidth_/14));
     const size_t pages=std::max<size_t>(1,(rows_.size()+kRows-1)/kRows);
-    size_t line=0,row=0,notice=0;
+    size_t line=0,row=0;
     for(auto& c:controls_) {
         bool visible=c.body?exchange_:!exchange_;
         if(c.notice)visible=visible && !status_.empty();
@@ -213,7 +214,13 @@ void PageUi::Render() {
         if(c.action==Action::Cancel)enabled=true;
         if(c.action==Action::Previous)enabled=page_>0;
         if(c.action==Action::Next)enabled=page_+1<pages;
-        if(c.notice)Text(c,notice<summary.size()?summary[notice++]:L"",0xFFE3EEF6);
+        if(c.notice) {
+            std::wstring compact=status_;
+            for(auto& ch:compact)if(ch==L'\r' || ch==L'\n')ch=L' ';
+            const auto limit=static_cast<size_t>((contentWidth_-4)/14);
+            if(compact.size()>limit)compact=compact.substr(0,limit-1)+L"…";
+            Text(c,compact,0xFFE3EEF6);
+        }
         else if(c.body && c.action==Action::None) {
             if(line<kSummaryLines) {Text(c,line<summary.size()?summary[line]:L"",0xFFE3EEF6);++line;}
             else if(row<kRows) {

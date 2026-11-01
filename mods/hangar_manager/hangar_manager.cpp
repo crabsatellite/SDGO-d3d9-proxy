@@ -1,4 +1,8 @@
 #include <windows.h>
+#include <objbase.h>
+#ifdef small
+#undef small // RPC headers must not rewrite NativeString::data.small.
+#endif
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +12,7 @@
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/hangar_model.h"
+#include "sdgo/hangar_sort_request.h"
 #include "sdgo/inventory_app_state.h"
 #include "native_ui.h"
 
@@ -41,7 +46,6 @@ Runner g_runner;
 Plan g_preview;
 bool g_hasPreview=false,g_scanning=false,g_mutating=false,g_pumping=false,g_sortAfter=true;
 bool g_needsRelog=false;
-bool g_sorting=false;
 Kind g_scanReward=Kind::GB;
 int g_keep=2,g_maxSlots=1200;
 DWORD g_interval=150,g_timeout=10000;
@@ -140,14 +144,16 @@ void Preview(Plan p) {
         const auto* u=ById(g_preview.before,a.first);
         rows.push_back(Label(*u));
     }
-    std::wstring s=L"将兑换 "+std::to_wstring(g_preview.removed)+L" 台；每种相同状态保留 "+std::to_wstring(g_keep)+L" 台。\r\n";
+    std::wstring s=L"将兑换 "+std::to_wstring(g_preview.removed)+L" 台；每种机体至少保留 "+std::to_wstring(g_keep)+L" 台。\r\n";
     if(g_scanReward==Kind::GB)s+=L"预计 "+std::to_wstring(g_preview.expectedGB)+L" GB";
     else for(const auto& item:g_preview.expectedItems){
         std::wstring name=L"原生道具";
         for(const auto& rule:g_rules)if(rule.second.item==item.first && !rule.second.rewardName.empty()){name=rule.second.rewardName;break;}
         s+=name+L" × "+std::to_wstring(item.second)+L"  ";
     }
-    s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁、已培养及不同状态机体不兑换。";
+    s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁及已培养机体不兑换。\r\n不同涂装按同型号计数，想保留的机体请先锁定。";
+    if(!g_preview.removed)s+=L"\r\n没有可兑换机体：受保护 "+std::to_wstring(g_preview.pinned)+L" 台，详情未齐 "+std::to_wstring(g_preview.detailsMissing)+L" 台。";
+    g_api->Log(g_mod,SDGO_LOG_INFO,"duplicate preview: %u units, %u protected, %u missing details, %u candidates",static_cast<unsigned>(g_preview.before.units.size()),static_cast<unsigned>(g_preview.pinned),static_cast<unsigned>(g_preview.detailsMissing),static_cast<unsigned>(g_preview.removed));
     g_ui.Rows(std::move(rows));Status(s);g_ui.State(false,g_preview.removed!=0);
 }
 void BeginScan(Kind reward) {
@@ -164,20 +170,36 @@ void BeginScan(Kind reward) {
     g_ui.Rows({});g_scanning=true;g_ui.State(true,false);
     Status(L"正在逐台向服务器核对重复机体；此步骤不会兑换或删除机体。");
 }
-void StartPlan(Plan p,const Snapshot& s,bool sorting=false) {
+void StartPlan(Plan p,const Snapshot& s) {
     g_hasPreview=false;g_ui.State(true,false);
-    try {g_runner.Start(std::move(p),s);g_sorting=sorting;g_mutating=true;g_nextSend=0;}
+    try {g_runner.Start(std::move(p),s);g_mutating=true;g_nextSend=0;}
     catch(const std::exception&){Status(L"预览之后机库已变化，请重新预览。");}
+}
+bool Sender(char* out) {
+    __try {
+        if(!g_profile || !*g_profile)return false;
+        memcpy(out,*g_profile+0x161,16);out[16]=0;
+        return out[0]!=0;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 void BeginSort() {
     if(Busy())return;
     if(g_needsRelog){Status(L"上一笔状态尚未确认，请重新登录后再操作。");return;}
-    Snapshot s;if(!GetSnapshot(s)){Status(L"请打开机库后重试；容量超出配置上限时请服主核对 MaxSlots。");return;}
+    if(!Visible()){Status(L"请在机体管理页提交整理。");return;}
     try {
-        auto p=sdgo::hangar::Sort(s,g_rules);
-        g_api->Log(g_mod,SDGO_LOG_INFO,"sort plan: %u units, %u protected/unknown, %u native swaps",static_cast<unsigned>(s.units.size()),static_cast<unsigned>(p.pinned),static_cast<unsigned>(p.actions.size()));
-        Status(L"正在整理；锁定、出击中、舰队、租赁与未知机体保留原位。");StartPlan(std::move(p),s,true);
-    }catch(const std::exception&){Status(L"无法生成安全的排序方案，尚未发送请求。");}
+        char sender[17]={};GUID guid{};
+        if(!Sender(sender) || FAILED(CoCreateGuid(&guid))){Status(L"无法准备服务端请求，尚未发送。");return;}
+        char id[37]={};
+        snprintf(id,sizeof(id),"%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",guid.Data1,guid.Data2,guid.Data3,
+            guid.Data4[0],guid.Data4[1],guid.Data4[2],guid.Data4[3],guid.Data4[4],guid.Data4[5],guid.Data4[6],guid.Data4[7]);
+        const auto bytes=ServerSortRequest(sender,id);
+        if(!Send(bytes.data(),static_cast<int>(bytes.size()))){Status(L"无法提交服务端整理，请检查连接。");return;}
+        // The native mail transport has no proven client acknowledgement.
+        // A send is a submission, never proof that the server committed it.
+        g_needsRelog=true;g_hasPreview=false;
+        Status(L"已提交服务器整理，请退出并重新登录查看。");
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; persistence requires server receipt; relog required",id);
+    }catch(const std::exception&){Status(L"服务端整理请求未完成，请重新登录核对。");}
 }
 
 void UiRefreshUnsafe() {g_ui.AfterNativeRefresh();}
@@ -223,7 +245,7 @@ void HandleButton(void* self,void* control) {
         if(action==ui::Action::Sort){g_ui.Close();BeginSort();}
         if(action==ui::Action::Open) {
             g_hasPreview=false;g_ui.Rows({});g_ui.State(false,false);
-            Status(L"重复机体兑换：先选择奖励并预览。\n每种相同状态至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁、已培养及未知状态机体不兑换。");
+            Status(L"重复机体兑换：先选择奖励并预览。\n按机体编号统计，每种至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁及已培养机体不会被选中；自定义机体请先锁定。");
             g_ui.Open();
         }
         if(action==ui::Action::GB || action==ui::Action::Item) {g_ui.Arm(false);BeginScan(action==ui::Action::GB?Kind::GB:Kind::Item);}
@@ -279,7 +301,7 @@ void Pump() {
                     Status(L"正在核对详情 "+std::to_wstring(g_scanIndex+1)+L" / "+std::to_wstring(g_scanIds.size())+L"；尚未兑换。");
                 }
                 if(g_scanning && !g_detailPending && g_scanIndex==g_scanIds.size()) {
-                    g_scanning=false;Preview(Duplicates(s,g_rules,g_keep,g_scanReward,g_sortAfter));
+                    g_scanning=false;Preview(Duplicates(s,g_rules,g_keep,g_scanReward,false));
                 }
             } else {
                 g_runner.Observe(s,now,g_timeout);
@@ -293,9 +315,9 @@ void Pump() {
                 const auto state=g_runner.state();
                 if(state==State::Complete) {
                     g_mutating=false;CloseUi();RedrawNow();
-                    if(g_sorting && !g_runner.completed())Status(L"可移动机体已按规则排列，无需换槽。\n受保护机体不移动；房间视图未更新请重新登录。");
-                    else Status(L"已确认 "+std::to_wstring(g_runner.completed())+L" 笔"+(g_sorting?L"换槽，已重绘机体管理页。":L"操作，奖励以服务器配置为准。")+L"\n大厅/房间的其他机库视图请重新登录同步。");
+                    Status(L"已确认兑换 "+std::to_wstring(g_runner.completed())+L" 台；奖励以服务器配置为准。");
                     g_api->Log(g_mod,SDGO_LOG_INFO,"completed %u native operations",static_cast<unsigned>(g_runner.completed()));
+                    if(g_sortAfter && g_runner.completed())BeginSort();
                 } else if(state==State::Unknown) {
                     g_mutating=false;g_needsRelog=true;Status(L"操作已暂停。已确认 "+std::to_wstring(g_runner.completed())+L" 笔，最后一笔状态未知。\r\n请重新登录核对；不会自动重试，请勿立即再次兑换。");
                 } else if(state==State::Stopped) {

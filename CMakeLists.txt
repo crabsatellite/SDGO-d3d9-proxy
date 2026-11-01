@@ -132,7 +132,7 @@ sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES 
 sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP bots" SOURCES mods/battle_ai_server/battle_ai_server.cpp)
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery" SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
-             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32)
+             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32 ole32)
 sdgo_add_mod(storage_claim DESCRIPTION "native storage claim-all button"
              SOURCES mods/storage_claim/storage_claim.cpp mods/storage_claim/native_ui.cpp LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
@@ -437,7 +437,7 @@ if(BUILD_TESTING)
     target_compile_options(hangar_model_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_model_offline COMMAND hangar_model_test)
     add_executable(hangar_native_test tests/hangar_native_test.cpp mods/hangar_manager/native_ui.cpp)
-    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32)
+    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32 ole32)
     sdgo_strict(hangar_native_test)
     target_compile_options(hangar_native_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_native_offline COMMAND hangar_native_test)

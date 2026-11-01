@@ -70,7 +70,7 @@ inline void* __fastcall Find(void* owner,void*,const NativeString* key,int type)
     assert(owner==dialog.data() && type==4);auto it=children.find(Copy(key));return it==children.end()?nullptr:it->second->memory.data();
 }
 inline void __fastcall Text(void* owner,void*,int index,const NativeString* value,int x,int y,int w,int h,uint32_t color,uint32_t,uint8_t,uint32_t font,int align) {
-    assert(index==0 && x==2 && y==3 && w>0 && h==14 && font==1 && (align==1 || align==2));
+    assert(index==0 && x==2 && (y==3 || y==0) && w>0 && h==14 && font==1 && (align==1 || align==2));
     for(auto& entry:children)if(entry.second->memory.data()==owner){entry.second->text=Copy(value);entry.second->color=color;entry.second->align=align;return;}
     assert(false);
 }
