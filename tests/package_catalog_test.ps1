@@ -53,7 +53,7 @@ function Check-Package([string]$zip, [string[]]$expected) {
     } finally { $archive.Dispose() }
 }
 try {
-    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix')
+    $baseMods = @('findwindow_fix','ime_fix','startup_crash_fix','agent_relay_log_fix','rank_progression_fix')
     $baseZip = Invoke-Package 'Base' '' (Join-Path $work 'base')
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
@@ -110,6 +110,12 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Id)\$($item.Id).dll")) -or
             (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Other)"))) { throw 'Room-title server role selection is incorrect' }
     }
+    $world = Join-Path $work 'world'
+    New-FakeExe (Join-Path $world 'WorldServer.exe') 0x548A86E3 0x0010C000
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $baseFolder 'install_server.ps1') -ServerRoot $world -Role World 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged World installer failed: $output" }
+    $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
+    if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'
 } finally {
     # Only remove the exact files this fixture introduced in the staged build.

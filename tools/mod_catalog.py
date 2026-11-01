@@ -62,9 +62,9 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
         targets = set()
         for host in list_value(cfg.get("hosts", "")):
             stem = host.split("-", 1)[0]
-            if stem not in {"GOnline", "BattleServer", "AgentServer"}:
+            if stem not in {"GOnline", "BattleServer", "AgentServer", "WorldServer"}:
                 raise ValueError(f"Unknown install target in {path}: {host}")
-            targets.add({"GOnline": "client", "BattleServer": "server", "AgentServer": "server"}[stem])
+            targets.add({"GOnline": "client", "BattleServer": "server", "AgentServer": "server", "WorldServer": "server"}[stem])
         if len(targets) != 1:
             raise ValueError(f"A bundled mod needs exactly one install target: {path}")
         files = [safe_file(name) for name in list_value(cfg.get("files", ""))]

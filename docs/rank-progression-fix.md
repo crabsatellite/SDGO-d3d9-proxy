@@ -1,108 +1,107 @@
-# Battle rank regression repair
+# Battle rank progression Mod
 
 [简体中文](rank-progression-fix.zh-CN.md)
 
-The native `sp_SetBattleExp_V4` and `sp_SetGridBattleExp_V2` procedures can replace
-a pilot's stored rank with a lower major rank when the EXP-derived rank has a
-higher sublevel. This is especially visible on servers that grant a higher
-starting rank without matching EXP.
+`rank_progression_fix` is a default-enabled core fix for
+`WorldServer-548A86E3-0010C000`. Install it through the normal Mod framework.
+Players need no client update, Python, ODBC driver or extra connection configuration.
 
-For example, a pilot stored at **15-1** with 30,090 EXP receives 20 EXP. The
-configured EXP interval selects **5-2**. Both native procedures use:
+## Install
 
-```sql
-IF(@UserLevelNumber < @newlevel OR @UserLevelStep < @NewLevelStep)
+Stop the target WorldServer, then use the Base or Full package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO\Server\WorldServer" -Role World
 ```
 
-The second comparison is true, so the pilot is saved as 5-2. The repair compares
-the rank pair in order:
+Start WorldServer normally. The Mod payload is
+`sdgo/mods/rank_progression_fix/{mod.ini,rank_progression_fix.dll}`. It shares the
+existing `winmm.dll` loader, `sdgo/core.dll`, symbols and global configuration.
+There is no separate maintenance tool to run.
+
+The Mod reads only the database name from WorldServer's existing `[DB Game]`
+configuration and borrows its leased OLE DB session. It never reads or exports
+the connection password and opens no separate game-database connection.
+The existing database identity needs permission to read the two native procedure
+definitions and create the Mod-owned schema, state table and procedures.
+Each participating WorldServer must load the Mod; sharing a database alone does
+not redirect calls made by an unmodified process.
+
+## Behavior and scope
+
+The native `dbo.sp_SetBattleExp_V4` and `dbo.sp_SetGridBattleExp_V2` can lower a
+pilot's major rank when the EXP-derived rank has a higher sublevel. For example,
+rank **15-1** with 30,090 EXP plus 20 EXP becomes **5-2**. The Mod derives private
+copies from the installed definitions, replacing only the procedure identity and
+the faulty rank comparison with:
 
 ```sql
 IF(@UserLevelNumber < @newlevel OR
    (@UserLevelNumber = @newlevel AND @UserLevelStep < @NewLevelStep))
 ```
 
-This preserves same-major sublevel promotions and promotions to a higher major
-rank with a lower sublevel. The native 15-5/ranked-tier restrictions, EXP awards,
-rewards, procedure signatures and other battle logic are retained. Login-time
-leaderboard rank recalculation is a separate system and is not changed.
+On a matching battle settlement, it prepares both copies in the
+`sdgo_rank_progression_fix` schema under one transaction and application lock.
+Preparation checks ownership, supported comparison, hashes and SQL options.
+Unsupported definitions, foreign schemas and external edits are refused.
+The native `dbo` definitions remain unchanged. No native SQL dump is bundled.
 
-## Server installation
+Only the two exact native command strings are redirected. Native parameter
+binding, output processing, EXP awards, rewards and counters stay in place.
+The descriptor's command pointer is restored after the call. Normal promotions,
+the native 15-5/ranked-tier limits and login-time leaderboard recalculation are
+preserved. Past lost ranks are not reconstructed.
 
-This is a database procedure repair; players do not need a client DLL or new
-client configuration. The installer reads the server owner's existing
-`[DB Game]` INI settings. It has no machine-specific defaults and never exports
-connection credentials. It needs Python, `pyodbc`, an installed SQL Server ODBC
-driver, and a database identity permitted to alter the two procedures.
+`sdgo/logs/sdgo.log` distinguishes installed hooks from an active policy.
+`rank policy active` appears when the corresponding command is redirected.
+If preparation fails, an error is logged and the native command is retained;
+on an affected native database that call still has the original rank bug.
 
-Audit is the default and performs no procedure or player-data writes:
+## Disable or remove
 
-```powershell
-python tools/rank_progression_fix.py audit --server-ini "D:\SDGO\StoreServer\StoreServer.ini"
+Set this in `sdgo/sdgo.ini`, then restart the target WorldServer:
+
+```ini
+[mods]
+rank_progression_fix=0
 ```
 
-Apply during a server maintenance window, since an `ALTER PROCEDURE` needs SQL
-schema locks. The tool does not restart processes or alter player rows:
+The standard `[features] rank-progression-fix=0` or `[categories] fixes=0` switch
+also disables it. Inactive private SQL objects may stay in the database; original
+calls do not use them. Disabling does not undo SQL changes made by an older
+standalone repair or another administrator.
+
+## Developer verification
 
 ```powershell
-python tools/rank_progression_fix.py apply --server-ini "D:\SDGO\StoreServer\StoreServer.ini"
+cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-Before the first SQL change, the installer writes an exclusive UTF-8 backup under
-`sdgo/backups/rank_progression_fix` beside the supplied INI. Use `--backup` to
-choose another recovery file. Keep this host-only recovery copy private: it
-contains the original native SQL definitions. No native procedure dump is
-included in this repository.
+The C++ fixture covers SQL transformation, framework entry, both hooks, exact
+matching, fallback and descriptor/output preservation. Packaging tests check
+Base/Full catalogs and the packaged World installer.
 
-Both procedures are checked before either is changed. Comments and SQL literals
-are excluded from comparison matching. Unsupported/ambiguous definitions are
-refused. The repair uses one owned transaction and a database application lock,
-preserves `ANSI_NULLS`/`QUOTED_IDENTIFIER`, alters the existing objects in place,
-and checks exact definition fingerprints before commit. Reapplying an installed
-repair makes no changes and creates no extra backup.
-
-Restore a repair using its exact recovery file:
+The optional integration fixture needs the existing server INI and a private
+recovery backup containing the original two native definitions:
 
 ```powershell
-python tools/rank_progression_fix.py rollback --server-ini "D:\SDGO\StoreServer\StoreServer.ini" --backup "D:\rank-fix-backup.json"
+powershell -ExecutionPolicy Bypass -File tests\rank_progression_db_test.ps1 -ServerIni "D:\SDGO\Server\WorldServer\WorldServer.ini" -OriginalBackup "D:\Maintenance\original-rank-procedures.json" -BuildDir build
 ```
 
-Rollback checks the original and installed fingerprints. It refuses to overwrite
-a procedure edited after installation. Repeated rollback is harmless. A driver
-or connection failure can leave commit status uncertain; run `audit` and inspect
-the retained recovery copy before retrying.
+It creates an ownership-marked scratch database, copies schemas and level
+configuration, and uses synthetic pilots/decks without copying source player rows.
+It executes full native procedures through real SQLOLEDB and production policy code.
+With the tested 65-interval configuration, 152 native calls cover the regression,
+enabled/disabled SQL paths, interval starts, normal promotions and rank caps.
+Tests also check idempotence, ownership/edit refusal, atomic rollback if the
+second procedure creation fails, and unchanged source definitions. Only Haro
+bookkeeping is a no-op; unexpected dependencies fail.
+Four additional bound RPC calls exercise the exact OLE DB escape syntax with
+native parameters and return codes, including policy preparation on a session
+whose command already owns parameter bindings. Existing transactions are left alone.
 
-The installer prevents this future rank regression. It does not infer or rewrite
-previously lost ranks, grant EXP, or change starting-rank policy.
-
-## Verification
-
-Pure offline tests:
-
-```powershell
-python -B -m unittest discover -s tests -p test_rank_progression_fix.py -v
-```
-
-The SQL integration test reads the host's native procedure definitions, table
-schemas and non-player level configuration, then creates a nonce-named scratch
-database. It does not copy source player rows. It runs the full native battle
-procedures against synthetic pilots/decks. Unrelated dependencies fail if called;
-only Haro bookkeeping is a fixture no-op. The native skill-table cross-database
-reference is rebound to the scratch table.
-
-```powershell
-python -B tests/rank_progression_sql_test.py --server-ini "D:\SDGO\StoreServer\StoreServer.ini" --output build/rank-progression-test/run
-```
-
-The tested native SQL configuration reproduced 15-1 → 5-2 in both procedures
-before repair. After repair, **148 cases** passed: all 65 EXP interval starts for
-each procedure plus stored-rank-ahead-of-EXP, normal sublevel/major promotions,
-and the native ranked-tier caps. Tests check persisted rank, EXP and battle/win
-counters. They also verify repeat apply/rollback, refusal to overwrite later
-edits, and complete rollback when a fixture DDL trigger rejects the second ALTER.
-The source procedure definitions are checked unchanged at the end.
-
-Successful tests remove only their ownership-marked scratch database. Failed
-fixtures are retained for diagnosis; `result.json` records their names. Use
-`--keep-database` to retain a successful fixture too. No game login or human
-gameplay acceptance is claimed by these SQL tests.
+Temporary credential files are deleted on success or failure. Successful fixtures
+drop only their ownership-marked database; failed database names are recorded in
+local `result.json`. These checks do not constitute live game/login acceptance.
