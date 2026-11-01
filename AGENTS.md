@@ -2,6 +2,7 @@
 
 - Start new work from current `origin/master` in an isolated branch/worktree. Preserve other worktrees, running game services and real player/configuration data.
 - All user-facing Mod configuration belongs in **SDGO Mod Manager**. Do not add another configuration EXE, HTTP server, per-Mod launcher or process-owning script.
+- Player-facing gameplay actions belong in the game's relevant native page. Manager owns installation, configuration, management APIs and Mod background work; it is not the gameplay UI. Hangar sorting and duplicate exchange belong in the **unit management / 机体管理** page, without a separate desktop window, global floating toolbar or required hotkey. Preserve preview/confirmation and native server acknowledgements. If another action's in-game placement is unclear, agree on it with the user before implementing that UI.
 - Every Mod must ship `manager.json`. Register readable labels, storage keys, validation and activation rules. Everyday player/server-owner operations use `audience=user`; only raw identifiers and diagnostics use `audience=developer`.
 - Automatic bug fixes use `presentation=automatic_fix` and appear in the archive. Configurable starter/gameplay/server features stay in normal management.
 - Register persistent background work with `workspace.services.register(id, title, controller, start)`. The Manager owns start/stop, health, retry and persisted enablement. Use `/api/services/<id>`; do not add module-specific worker lifecycle endpoints or restore old launcher ownership.
