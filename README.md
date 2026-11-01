@@ -16,7 +16,7 @@ Beta and Experimental labels indicate release channels.
 | Feature | Overview | Documentation |
 |---|---|---|
 | IME input fix <!-- catalog: `ime_fix` --> | Input compatibility | [Use](docs/ime-fix.md) |
-| Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Currency display compatibility | [Use](docs/capsule-currency-fix.md) |
+| Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Correct the known 9301 list and confirmation currency; install and restart required | [Use](docs/capsule-currency-fix.md) |
 | Input method freeze fix <!-- catalog: `findwindow_fix` --> | Input method compatibility | [Use](docs/findwindow-fix.md) |
 | Startup crash fix <!-- catalog: `startup_crash_fix` --> | Client startup compatibility | [Use](docs/startup-crash-fix.md) |
 | Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Relay logging compatibility | [Use](docs/agent-relay-log-fix.md) |
@@ -37,13 +37,15 @@ Beta and Experimental labels indicate release channels.
 | AI mech catalog (Beta, separate addon) <!-- catalog: `ai_catalog` --> | Custom AI rosters | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) <!-- catalog: `battle_rewards` --> | Combat reward management | [Use](docs/battle-rewards.md) |
 | Collection capsule (Beta) <!-- catalog: `collection_capsule` --> | Collection gameplay | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts (Beta) <!-- catalog: `room_random` --> | Randomized match loadouts | [Use](docs/room-random.md) |
+| Per-round random loadouts (Beta) <!-- catalog: `room_random`, `room_random_client` --> | Randomized mission and PvP loadouts | [Use](docs/room-random.md) |
 | Extended room titles (Beta) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Room title extensions | [Use](docs/room-titles.md) |
 | Battle AI difficulty (Beta) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Combat AI behavior | [Use](docs/battle-ai.md) |
-| Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Unit inventory management | [Use](docs/hangar-manager.md) |
+| Automatic hangar capacity (Beta) <!-- catalog: `hangar_capacity` --> | Ensure at least 1200 native slots at login | [Use](docs/hangar-capacity.md) |
+| Hangar manager (Beta) <!-- catalog: `hangar_manager` --> | Server sorting and GB batch exchange; 0.4.0 adds immediate GB preview and atomic server credit | [Use](docs/hangar-manager.md) |
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Operator content management | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Capsule content management | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Scheduled reward events | [Use](docs/daily-rewards.md) |
+| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection; 0.1.1 fixes lobby clicks and hover between confirmation clicks | [Use](docs/storage-claim.md) |
 
 <!-- /mod-category:gameplay -->
 

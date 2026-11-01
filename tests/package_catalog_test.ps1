@@ -1,4 +1,4 @@
-param([string]$Config = 'Release', [string]$BuildDir = 'build')
+﻿param([string]$Config = 'Release', [string]$BuildDir = 'build')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $buildRoot = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repo $BuildDir }))
@@ -73,8 +73,12 @@ try {
     } finally { $operatorArchive.Dispose() }
     $titleZip = Invoke-Package 'Full' 'room-titles' (Join-Path $work 'titles')
     Check-Package $titleZip ($baseMods + @('room_titles','room_titles_agent','room_titles_server'))
+    $capacityZip = Invoke-Package 'Full' 'hangar-capacity' (Join-Path $work 'capacity')
+    Check-Package $capacityZip ($baseMods + @('hangar_capacity'))
     $hangarZip = Invoke-Package 'Full' 'hangar-manager' (Join-Path $work 'hangar')
     Check-Package $hangarZip ($baseMods + @('hangar_manager'))
+    $storageZip = Invoke-Package 'Full' 'storage-claim' (Join-Path $work 'storage')
+    Check-Package $storageZip ($baseMods + @('storage_claim'))
     $rewardZip = Invoke-Package 'Full' 'battle-rewards' (Join-Path $work 'rewards')
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
@@ -85,7 +89,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager','collection_capsule','game_test_client','game_test_server'))
+    Check-Package $fullZip ($baseMods + @('capsule_catalog','capsule_price_probe','match_ai','pvp_ai','battle_ai','battle_ai_server','mission_ai','coop_ai','room_random','room_random_client','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_capacity','hangar_manager','storage_claim','collection_capsule','game_test_client','game_test_server'))
     $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
     Check-Package $dailyZip ($baseMods + @('daily_rewards'))
     $dailyFolder = Join-Path $work 'daily-unpacked'

@@ -7,6 +7,7 @@
 #include "../mods/battle_ai/native_capabilities.h"
 #include "../mods/battle_ai/difficulty.h"
 #include "../mods/battle_ai/native_defence.h"
+#include "../mods/battle_ai/native_protection.h"
 
 namespace {
 
@@ -170,9 +171,12 @@ int main() {
           "boost decoder uses the full sixteen-byte protected storage");
     Check(capabilities.weapons[0].valid &&
               capabilities.weapons[0].ammoReady &&
+              capabilities.weapons[0].ordinary &&
+              capabilities.weapons[0].attackStyle == 1 &&
+              capabilities.weapons[0].rangeType == 1 &&
               capabilities.weapons[0].kind ==
                   battle_ai::native::WeaponKind::Melee,
-          "zero-ammo ordinary melee remains ready");
+          "zero-ammo ordinary melee retains its native style and range type");
     Check(capabilities.weapons[1].kind ==
               battle_ai::native::WeaponKind::Hitscan,
           "zero-speed unscripted ranged weapon is immediate");
@@ -210,10 +214,38 @@ int main() {
     fixture.weapons[2][0x6A] = 4;
     Check(battle_ai::native::ReadCapabilities(fixture.unit, capabilities) &&
               capabilities.weapons[2].valid &&
+              capabilities.weapons[2].ordinary &&
+              capabilities.weapons[2].attackStyle == 1 &&
+              capabilities.weapons[2].rangeType == 4 &&
               capabilities.weapons[2].kind ==
                   battle_ai::native::WeaponKind::Other,
-          "ordinary funnel remains valid for native fallback");
+          "ordinary funnel remains a valid opaque native weapon");
 
+    Fixture protection;
+    std::uint8_t movement[0x200]{};
+    PutPointer(protection.unit,0x9C8,movement);Put(protection.unit,0x9D8,std::uint32_t{1});
+    PutPointer(movement,4,movement+0xE8);
+    auto damage=battle_ai::native::ReadDamageProtection(protection.unit);
+    Check(damage.known&&!damage.active,"ordinary native Hurt remains damageable for combos");
+    Put(protection.unit,0x9D8,std::uint32_t{2});PutPointer(movement,4,movement+0x20);
+    damage=battle_ai::native::ReadDamageProtection(protection.unit);
+    Check(damage.known&&damage.active,"authoritative knockdown remains protected after the local movement animation ends");
+    Put(protection.unit,0x9D8,std::uint32_t{1});
+    for(std::size_t stateOffset:{std::size_t(0xFC),std::size_t(0x110)}) for(std::size_t pointerOffset:{std::size_t(4),std::size_t(8)}) {
+        PutPointer(movement,4,movement+0x20);Put(movement,8,std::uint32_t{0});PutPointer(movement,pointerOffset,movement+stateOffset);
+        damage=battle_ai::native::ReadDamageProtection(protection.unit);
+        Check(damage.known&&damage.active,"actual and pending knockdown/get-up states are protected at synchronization edges");
+    }
+    PutPointer(movement,4,movement+0x20);Put(movement,8,std::uint32_t{0});protection.unit[0xEB4]=1;
+    Check(battle_ai::native::ReadDamageProtection(protection.unit).active,"native invul flag protects the target independently of hit-stun");
+    protection.unit[0xEB4]=0;
+    damage=battle_ai::native::ReadDamageProtection(protection.unit);
+    Check(damage.known&&!damage.active,"protection expires on the first fully cleared native observation");
+    PutPointer(protection.unit,0x9C8,reinterpret_cast<std::uint8_t*>(1));Put(protection.unit,0x9D8,std::uint32_t{2});
+    damage=battle_ai::native::ReadDamageProtection(protection.unit);
+    Check(damage.known&&damage.active,"unreadable movement data cannot erase authoritative knockdown protection");
+    Put(protection.unit,0x9D8,std::uint32_t{1});
+    Check(!battle_ai::native::ReadDamageProtection(protection.unit).known,"unknown movement protection fails without unsafe reads");
     std::printf("CAPABILITY CHECKS %s\n", failures ? "FAILED" : "PASSED");
     return failures ? 1 : 0;
 }

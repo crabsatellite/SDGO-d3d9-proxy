@@ -43,6 +43,7 @@ struct Plan {
     size_t removed = 0, pinned = 0, variants = 0, detailsMissing = 0;
     int64_t expectedGB = 0;
     std::map<int,int64_t> expectedItems;
+    bool serverBatch=false;
 };
 using Rules = std::map<uint32_t,Rule>;
 
@@ -145,39 +146,55 @@ inline Plan Sort(const Snapshot& s,const Rules& rules) {
 inline Plan Duplicates(const Snapshot& s,const Rules& rules,int keep,Kind reward,bool sortAfter) {
     Validate(s);
     if (keep<1 || keep>20 || reward==Kind::Swap) throw std::runtime_error("invalid duplicate policy");
+    (void)sortAfter; // Persistent sorting is a separate authenticated server request.
     Plan p;p.before=s;
     std::map<uint32_t,std::vector<Unit>> types;
     for (const auto& u:s.units) types[u.type].push_back(u);
     for (auto& entry:types) {
         const auto r=rules.find(entry.first);
         if (r==rules.end() || r->second.subrank==1) continue;
-        std::map<std::array<uint8_t,153>,std::vector<Unit>> variants;
+        if(entry.second.size()<=static_cast<size_t>(keep))continue;
+        const size_t excess=entry.second.size()-static_cast<size_t>(keep);
+        std::set<std::array<uint8_t,153>> variants;
+        std::vector<Unit> candidates;
         for (const auto& u:entry.second) {
             if (Protected(u,s.activeSlot) || u.level>1) {++p.pinned;continue;}
             if (!u.fullReady) {++p.detailsMissing;continue;}
-            variants[Signature(u)].push_back(u);
+            variants.insert(Signature(u));
+            candidates.push_back(u);
         }
         p.variants+=variants.size();
-        for (auto& group:variants) {
-            auto& copies=group.second;
-            std::sort(copies.begin(),copies.end(),[](const Unit& a,const Unit& b){return a.uid>b.uid;});
-            for (size_t i=static_cast<size_t>(keep);i<copies.size();++i) {
-                const auto& u=copies[i];
-                if ((reward==Kind::GB && r->second.gb<=0) || (reward==Kind::Item && (r->second.item<=0 || r->second.amount<=0))) continue;
-                Action a;a.kind=reward;a.first=u.uid;a.type=u.type;a.from=u.slot;a.signature=group.first;
-                p.actions.push_back(a);++p.removed;
-                if (reward==Kind::GB) p.expectedGB+=r->second.gb;
-                else p.expectedItems[r->second.item]+=r->second.amount;
-            }
+        // Duplicate identity is the authoritative server UnitNumber/type. Full
+        // records are used only to protect and revalidate the exact instance;
+        // paint, experience and other state must not split one type into groups
+        // that each retain KeepCopies and therefore make real duplicates vanish.
+        std::sort(candidates.begin(),candidates.end(),[](const Unit& a,const Unit& b){return a.uid<b.uid;});
+        const size_t remove=std::min(excess,candidates.size());
+        for(size_t i=0;i<remove;++i) {
+            const auto& u=candidates[i];
+            if ((reward==Kind::GB && r->second.gb<=0) || (reward==Kind::Item && (r->second.item<=0 || r->second.amount<=0))) continue;
+            Action a;a.kind=reward;a.first=u.uid;a.type=u.type;a.from=u.slot;a.signature=Signature(u);
+            p.actions.push_back(a);++p.removed;
+            if (reward==Kind::GB) p.expectedGB+=r->second.gb;
+            else p.expectedItems[r->second.item]+=r->second.amount;
         }
     }
-    if (sortAfter) {
-        Snapshot remaining=s;
-        for (const auto& a:p.actions) remaining=Applied(remaining,a);
-        auto reorder=Sort(remaining,rules);
-        p.actions.insert(p.actions.end(),reorder.actions.begin(),reorder.actions.end());
-    }
     return p;
+}
+
+inline Plan GBPreview(const Snapshot& current,const Rules& rules,int keep) {
+    Snapshot cached=current;
+    for(auto& unit:cached.units)unit.fullReady=true; // server validates the selected instances atomically
+    auto plan=Duplicates(cached,rules,keep,Kind::GB,false);
+    plan.before=current;plan.serverBatch=true;return plan;
+}
+inline bool SameGBPreview(const Snapshot& a,const Snapshot& b) {
+    if(!SameLayout(a,b) || a.activeSlot!=b.activeSlot)return false;
+    for(const auto& u:a.units) {
+        const auto* v=ById(b,u.uid);
+        if(u.level!=v->level || u.lock!=v->lock || u.ship!=v->ship || u.rental!=v->rental || u.special!=v->special)return false;
+    }
+    return true;
 }
 
 // Exact wire layouts copied from the verified native send sites, not a new
@@ -207,6 +224,7 @@ class Runner {
     State state_=State::Idle;
 public:
     void Start(Plan p,const Snapshot& current) {
+        if(p.serverBatch)throw std::runtime_error("server batch cannot use per-unit native runner");
         if (!SameLayout(p.before,current)) throw std::runtime_error("preview is stale");
         plan_=std::move(p);confirmed_=current;index_=0;cancel_=false;
         state_=plan_.actions.empty()?State::Complete:State::Ready;

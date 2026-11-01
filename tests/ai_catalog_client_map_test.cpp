@@ -96,6 +96,10 @@ extern "C" void __cdecl Entry(){
  HMODULE addon=LoadLibraryW(argv[2]);Check(addon!=nullptr,"actual client addon DLL loaded");auto entry=reinterpret_cast<SdgoModLoadFn>(GetProcAddress(addon,"SdgoModLoad"));Check(entry!=nullptr,"actual addon entry");
  SdgoApi api{};api.size=sizeof(api);api.version=1;api.Symbol=&Symbol;api.HookCode=&Hook;api.ModDirectory=&Directory;api.Log=&Log;
  Check(entry(&api,nullptr)!=0&&loadHook&&createHook,"production DLL bound to actual native routines");
+ using ReadRole=int(__cdecl*)(unsigned);
+ auto role=reinterpret_cast<ReadRole>(GetProcAddress(addon,"SdgoAiCatalogMasteredWeaponTypeV1"));
+ Check(role!=nullptr&&role(0)==-1,"native role provider rejects missing unit metadata");
+ for(unsigned i=0;i<count;++i){auto* row=catalog+24+i*753;unsigned type=row[28+8];Check(role(U32(row+4))==(type<=2?int(type):-1),"native unit mastered-weapon property is exposed without script-name inference");}
  unsigned npc=U32(catalog+24);const unsigned char* record=nullptr;void* node=nullptr;
  int initial=find(grid,&record,npc,41,0);Out("initial query id=");Number(npc);Out(" result=");Number(unsigned(initial));Out(" record=");Number(unsigned(record));Out(" tree-size=");Number(U32(grid+8));Out("\n");
  Check(!initial,"native API misses unregistered NPC");mapFind(grid,&node,&npc);Check(node==*reinterpret_cast<void**>(grid+4),"inline lookup misses the same NPC");

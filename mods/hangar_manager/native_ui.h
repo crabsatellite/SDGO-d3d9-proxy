@@ -47,7 +47,7 @@ public:
     void BeforeNativeRefresh();
     void AfterNativeRefresh();
 private:
-    struct Control {void* pointer; Action action; int width; bool body; std::wstring text; uint32_t color=0; bool textSet=false;};
+    struct Control {void* pointer; Action action; int width; bool body; std::wstring text; uint32_t color=0; bool textSet=false; bool notice=false;};
     struct Hidden {void* pointer; uint8_t visible;};
     Bindings bindings_;
     void* service_=nullptr;
@@ -63,6 +63,7 @@ private:
     uint32_t textColor_=0xFF8ED9FF,shadowColor_=0xFF000000;
     int buttonWidth_=0,buttonHeight_=0;
     int width_=0,height_=0;
+    int contentLeft_=0,contentTop_=0,contentWidth_=0;
     size_t page_=0;
     bool exchange_=false,busy_=false,confirm_=false,armed_=false,published_=false;
     bool Add(const wchar_t*,const wchar_t*,Action,int,int,int,int,bool);

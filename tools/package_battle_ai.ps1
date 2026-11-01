@@ -2,15 +2,19 @@ param([string]$Config='Release')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
 $tag=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
-$name='SDGO-BattleAI-0.3.3-preview-'+$tag
+$name='SDGO-BattleAI-0.4.2-preview-'+$tag
 $out=Join-Path $repo ('dist\'+$name)
 if(Test-Path -LiteralPath $out) { throw 'Package destination already exists' }
 $products=@{
- client=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json')};
+ client=[ordered]@{battle_ai=@('battle_ai.dll','battle_ai.lua','universal_ai.lua','mod.ini','manager.json','config.example.ini');match_ai=@('match_ai.dll','mod.ini','manager.json');mission_ai=@('mission_ai.dll','mission_ai.lua','mod.ini','manager.json');ai_catalog=@('ai_catalog.dll','mod.ini','manager.json')};
  server=[ordered]@{battle_ai_server=@('battle_ai_server.dll','mod.ini','manager.json');pvp_ai=@('pvp_ai.dll','mod.ini','manager.json')}
 }
 foreach($side in 'client','server') {
     $stage=Join-Path $repo "build\stage\$Config\$side"
+    $loader=if($side -eq 'client') {'d3d9.dll'} else {'winmm.dll'}
+    New-Item -ItemType Directory -Force -Path (Join-Path $out "$side\sdgo") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $stage $loader) -Destination (Join-Path $out $side)
+    Copy-Item -LiteralPath (Join-Path $stage 'sdgo\core.dll') -Destination (Join-Path $out "$side\sdgo")
     $requires=@()
     foreach($id in $products[$side].Keys) {
         $mod=Join-Path $out "$side\sdgo\mods\$id"
@@ -34,7 +38,7 @@ foreach($side in 'client','server') {
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools'),(Join-Path $out 'docs') | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'tools\install_battle_ai.ps1') -Destination (Join-Path $out 'tools')
-foreach($guide in 'battle-ai.md','battle-ai-target-selection.zh-CN.md','battle-ai-adversarial-review.zh-CN.md') {
+foreach($guide in 'battle-ai.md','battle-ai-target-selection.zh-CN.md','battle-ai-adversarial-review.zh-CN.md','coop-wingmen.md','coop-wingmen.zh-CN.md') {
     Copy-Item -LiteralPath (Join-Path $repo ('docs\'+$guide)) -Destination (Join-Path $out 'docs')
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $out
@@ -44,7 +48,7 @@ Get-ChildItem -LiteralPath $out -Recurse -File | ForEach-Object {
     $relative=$_.FullName.Substring($out.Length+1).Replace('\','/')
     $files[$relative]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$manifest=[ordered]@{schema=1;version='0.3.3-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','battle_ai_server','pvp_ai');files=$files}
+$manifest=[ordered]@{schema=1;version='0.4.2-preview';source_commit=$sourceCommit;default_difficulty='Medium';components=@('battle_ai','match_ai','mission_ai','ai_catalog','battle_ai_server','pvp_ai');files=$files}
 [IO.File]::WriteAllText((Join-Path $out 'package-manifest.json'),($manifest | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip=$out+'.zip'

@@ -1,5 +1,12 @@
 # Battle contribution rewards (Beta)
 
+The optional [solo MB progression preset](solo-mb-progression.zh-CN.md) adds mission MB floors,
+3,000 MB for the first qualifying match each day, another 27,000 for three daily matches,
+and 15,000 for twelve weekly matches. Fixed bonuses do not multiply. Three-minute native
+participation and real combat contribution are required; solo AI matches and missions count.
+It targets 49,900–79,900 MB units in two or three daily sessions. Existing configurations
+remain disabled until reviewed in Manager; update the native DLL and wallet worker together.
+
 [完整中文安装教程](battle-rewards.zh-CN.md) · [Approved rule tables](battle-reward-design.md)
 
 This server Mod is wired to native final settlement, effective HP-loss statistics,
@@ -23,7 +30,12 @@ real native/worker health; saving a file does not imply a live connection. See t
 ## Delivery and recovery
 
 G is replaced at the verified native final amount and continues through the normal
-World/wallet path. MB uses durable jobs and a database receipt keyed by match/account
+World/wallet path. The native result animation adds its base and bonus rows, while
+skipping uses the total directly. Both paths now receive the complete policy GB
+in the base row, with superseded legacy GB bonuses cleared. This base row includes
+contribution, MVP, multipliers and time scaling; it is not the old table's outcome
+minimum. Pilot/unit EXP details and separately awarded system rewards are preserved.
+MB uses durable jobs and a database receipt keyed by match/account
 and bound to the plan. A lost post-commit response can be retried without another
 credit. The worker queries fresh current MB and sends the normal `0x064B` absolute
 balance update through the existing Agent route. Recycled/offline sessions are not

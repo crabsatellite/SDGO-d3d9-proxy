@@ -1,7 +1,8 @@
 // Execute only the verified mouse/state snippets from a locally supplied client.
 // No executable entry point, imports, renderer, sockets or account are started.
 #include "hangar_page_fixture.h"
-#include "native_title_image.h" // bounded file reader and SHA-256 helper only
+#include "native_button_replay.h"
+#include "sdgo/hangar_sort_request.h"
 #include <iostream>
 
 namespace {
@@ -25,44 +26,9 @@ int __fastcall Hit(void* control,void*,int x,int y) {
     return x>=0 && y>=0 && x<Get<int>(control,0x154) && y<Get<int>(control,0x158);
 }
 
-class Snippet {
-    uint8_t* code_=nullptr;
-public:
-    Snippet(const std::vector<uint8_t>& file,uint32_t va,size_t size,const char* expected) {
-        auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(file.data());
-        auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS32*>(file.data()+dos->e_lfanew);
-        const auto rva=va-nt->OptionalHeader.ImageBase;
-        const auto* sections=IMAGE_FIRST_SECTION(nt);const uint8_t* source=nullptr;
-        for(unsigned i=0;i<nt->FileHeader.NumberOfSections;++i) {
-            const auto& section=sections[i];
-            if(rva>=section.VirtualAddress && rva-section.VirtualAddress+size<=section.SizeOfRawData)
-                source=file.data()+section.PointerToRawData+rva-section.VirtualAddress;
-        }
-        if(!source || room_title_native::detail::Sha256(source,size)!=expected)throw std::runtime_error("native snippet mismatch");
-        code_=static_cast<uint8_t*>(VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
-        if(!code_)throw std::runtime_error("snippet allocation failed");
-        memcpy(code_,source,size);
-    }
-    ~Snippet(){if(code_)VirtualFree(code_,0,MEM_RELEASE);}
-    Snippet(const Snippet&)=delete;
-    Snippet& operator=(const Snippet&)=delete;
-    template<class T>void Call(size_t offset,T target) {
-        assert(code_[offset]==0xE8);
-        const auto delta=reinterpret_cast<uintptr_t>(target)-reinterpret_cast<uintptr_t>(code_+offset+5);
-        Put<uint32_t>(code_,offset+1,static_cast<uint32_t>(delta));
-    }
-    void MouseTable() {
-        assert(code_[0xB7]==0xFF && code_[0xB8]==0x24 && code_[0xB9]==0x85);
-        Put(code_,0xBA,code_+0x1F0);
-        for(size_t i=0;i<4;++i) {
-            const uint32_t original=Get<uint32_t>(code_,0x1F0+4*i);
-            assert(original>=0xC69080 && original<0xC69270);
-            Put(code_,0x1F0+4*i,code_+original-0xC69080);
-        }
-    }
-    void Seal(){DWORD old=0;if(!VirtualProtect(code_,4096,PAGE_EXECUTE_READ,&old))throw std::runtime_error("snippet seal failed");FlushInstructionCache(GetCurrentProcess(),code_,4096);}
-    template<class T>T Function(){return reinterpret_cast<T>(code_);}
-};
+using native_button_replay::Snippet;
+void* __cdecl PacketZero(void* out,int value,size_t size){return memset(out,value,size);}
+char* __cdecl PacketCopy(char* out,const char* value,size_t size){return strncpy(out,value,size);}
 }
 
 int wmain(int argc,wchar_t** argv) {
@@ -70,6 +36,20 @@ int wmain(int argc,wchar_t** argv) {
         if(argc!=2)throw std::runtime_error("pass the supported local GOnline.exe; never started");
         const auto file=room_title_native::detail::ReadFile(argv[1]);
         if(room_title_native::detail::Sha256(file.data(),file.size())!="e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92")throw std::runtime_error("unsupported client identity");
+        Snippet mail(file,0x817360,157,"41c21e95b7572fb33bdc6a8656ab948bf20f59473a1b31b2e637bef72294aa01");
+        mail.Call(0x58,&PacketZero);for(size_t offset:{0x64u,0x77u,0x8Cu})mail.Call(offset,&PacketCopy);mail.Seal();
+        using MailCtor=void*(__thiscall*)(void*,uint32_t,const char*,uint32_t,const char*,const char*);
+        const std::string request="12345678-1234-1234-1234-123456789abc";
+        const auto expected=sdgo::hangar::ServerSortRequest("NativeFixture",request);
+        std::array<uint8_t,0x159> nativeMail{};
+        mail.Function<MailCtor>()(nativeMail.data(),0,"NativeFixture",0,sdgo::hangar::kSortRecipient,(std::string(sdgo::hangar::kSortPrefix)+request).c_str());
+        assert(nativeMail==expected); // full byte parity with the shipped producer
+        sdgo::hangar::Plan gbPlan;gbPlan.serverBatch=true;gbPlan.expectedGB=400;
+        sdgo::hangar::Action selected;selected.kind=sdgo::hangar::Kind::GB;selected.first=0x0102030405060708ULL;selected.type=10;selected.from=3;gbPlan.actions.push_back(selected);
+        for(const auto& bytes:sdgo::hangar::ServerGBRequests("NativeFixture",request,gbPlan,2,true)) {
+            nativeMail={};mail.Function<MailCtor>()(nativeMail.data(),0,"NativeFixture",0,sdgo::hangar::kSortRecipient,reinterpret_cast<const char*>(bytes.data()+0x2C));
+            assert(nativeMail==bytes);
+        }
         Snippet mouse(file,0xC69080,512,"e69debfef6104196f8d5008caa9b157036d027efdba76fef166f0ba243b92c5d");
         mouse.Call(0x1D,&BaseMouse);mouse.Call(0x101,&Focus);
         for(size_t offset:{0x7Au,0x9Cu,0x174u,0x1ABu})mouse.Call(offset,&Event);

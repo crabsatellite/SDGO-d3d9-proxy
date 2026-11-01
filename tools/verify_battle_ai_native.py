@@ -62,6 +62,18 @@ def main():
         ("sp_melee_notice_ret4",0x4C387F,b"\xc2\x04\x00"),
         ("sp_ranged_notice_ret4",0x4C3EE8,b"\xc2\x04\x00"),
         ("ordinary_state_notice_ret4",0x4CFDEF,b"\xc2\x04\x00"),
+        ("mission_player_warp_binding",0x511178,bytes.fromhex("68 b0 1f 50 00")),
+        ("mission_player_warp_calls_unit_warp",0x50205F,bytes.fromhex("e8 dc 82 17 00")),
+        ("mission_unit_warp_binding",0x511B19,bytes.fromhex("68 40 a3 67 00 68 8c 56 e4 00")),
+        ("mission_unit_warp_ret8",0x67A50E,b"\xc2\x08\x00"),
+        ("startup_opens_launcher_event",0x491521,bytes.fromhex("ff 15 f8 d2 e2 00")),
+        ("startup_missing_event_returns_zero",0x491529,bytes.fromhex("3b f3 74 17")),
+        ("startup_signals_launcher_event",0x49152E,bytes.fromhex("ff 15 f4 d2 e2 00")),
+        ("startup_closes_native_event_handle",0x491535,bytes.fromhex("ff 15 f0 d2 e2 00")),
+        ("npc_weapon_hint_shortcut",0x65EBBC,bytes.fromhex("39 91 d0 0d 00 00 74 22")),
+        ("npc_weapon_request_type",0x65EBCF,bytes.fromhex("ba 48 00 00 00")),
+        ("npc_weapon_request_slot_byte",0x65EBD4,bytes.fromhex("88 45 fc")),
+        ("npc_weapon_request_receiver",0x65EBD9,bytes.fromhex("8b 40 1c")),
     ]:
         assert bytes_at(address,len(expected))==expected,name
         contracts[name]=hex(address)

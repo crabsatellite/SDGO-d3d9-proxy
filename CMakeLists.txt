@@ -132,11 +132,15 @@ sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES 
 sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP bots" SOURCES mods/battle_ai_server/battle_ai_server.cpp)
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery" SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
-             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32)
+             SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32 ole32)
+sdgo_add_mod(storage_claim DESCRIPTION "native storage claim-all button"
+             SOURCES mods/storage_claim/storage_claim.cpp mods/storage_claim/native_ui.cpp LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
              SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
+sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
+             SOURCES mods/room_random_client/room_random_client.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
@@ -181,6 +185,8 @@ sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle
              LIBS room_metadata_common bcrypt)
 
 sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+sdgo_add_mod(hangar_capacity SERVER DESCRIPTION "automatic native 1200-slot hangar"
+             SOURCES mods/hangar_capacity/hangar_capacity.cpp LIBS ole32 oleaut32 uuid)
 
 sdgo_add_mod(collection_capsule SERVER DESCRIPTION "never-acquired base-form capsule machine"
              SOURCES mods/collection_capsule/collection_capsule.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
@@ -288,6 +294,8 @@ endif()
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+add_executable(launcher_handshake_test tests/launcher_handshake_test.cpp)
+sdgo_strict(launcher_handshake_test)
 
 add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
                mods/capsule_catalog/capsule_runtime.cpp)
@@ -301,6 +309,10 @@ add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_curre
                mods/capsule_currency_fix/capsule_currency_logic.cpp)
 target_include_directories(capsule_currency_fix_test PRIVATE mods/capsule_currency_fix)
 sdgo_strict(capsule_currency_fix_test)
+add_executable(capsule_currency_dll_test tests/capsule_currency_dll_test.cpp)
+target_link_libraries(capsule_currency_dll_test PRIVATE sdgo_api)
+sdgo_strict(capsule_currency_dll_test)
+add_dependencies(capsule_currency_dll_test capsule_currency_fix)
 add_executable(capsule_price_probe_test mods/capsule_price_probe/capsule_price_probe_test.cpp)
 sdgo_strict(capsule_price_probe_test)
 
@@ -358,6 +370,11 @@ if(BUILD_TESTING)
     add_test(NAME game_test_windows_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p test_game_test_windows.py)
     set_tests_properties(game_test_windows_offline PROPERTIES TIMEOUT 30)
+    add_test(NAME launcher_handshake_offline COMMAND launcher_handshake_test)
+    add_test(NAME capsule_currency_actual_dll COMMAND capsule_currency_dll_test "$<TARGET_FILE:capsule_currency_fix>")
+    set_tests_properties(capsule_currency_actual_dll PROPERTIES TIMEOUT 30)
+endif()
+if(BUILD_TESTING)
     foreach(test capsule_currency_fix capsule_price_probe)
         add_test(NAME ${test}_offline COMMAND ${test}_test)
         set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
@@ -421,6 +438,10 @@ if(BUILD_TESTING)
     add_test(NAME mod_manager_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_manager*.py" -v)
     set_tests_properties(mod_manager_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
+    if(SDGO_BUILD_MANAGER)
+        set_tests_properties(mod_manager_offline PROPERTIES
+            ENVIRONMENT "SDGO_MANAGER_SERVICES=${CMAKE_BINARY_DIR}/manager-services/SdgoShopServices.dll")
+    endif()
     add_test(NAME pr_ai_disclosure_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_pr_ai_disclosure.py" -v)
     set_tests_properties(pr_ai_disclosure_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
@@ -430,7 +451,7 @@ if(BUILD_TESTING)
     target_compile_options(hangar_model_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_model_offline COMMAND hangar_model_test)
     add_executable(hangar_native_test tests/hangar_native_test.cpp mods/hangar_manager/native_ui.cpp)
-    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32)
+    target_link_libraries(hangar_native_test PRIVATE sdgo_api user32 ole32)
     sdgo_strict(hangar_native_test)
     target_compile_options(hangar_native_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_native_offline COMMAND hangar_native_test)
@@ -439,6 +460,16 @@ if(BUILD_TESTING)
     sdgo_strict(hangar_page_ui_test)
     target_compile_options(hangar_page_ui_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_page_ui_offline COMMAND hangar_page_ui_test)
+    add_executable(storage_claim_model_test tests/storage_claim_model_test.cpp)
+    target_link_libraries(storage_claim_model_test PRIVATE sdgo_api)
+    sdgo_strict(storage_claim_model_test)
+    target_compile_options(storage_claim_model_test PRIVATE /UNDEBUG)
+    add_test(NAME storage_claim_model_offline COMMAND storage_claim_model_test)
+    add_executable(storage_claim_native_test tests/storage_claim_native_test.cpp mods/storage_claim/native_ui.cpp)
+    target_link_libraries(storage_claim_native_test PRIVATE sdgo_api user32)
+    sdgo_strict(storage_claim_native_test)
+    target_compile_options(storage_claim_native_test PRIVATE /UNDEBUG)
+    add_test(NAME storage_claim_native_offline COMMAND storage_claim_native_test)
     # Optional execution of two hash-pinned native UI snippets. The game image
     # is read only; no entry point, imports, rendering or networking is started.
     set(SDGO_HANGAR_NATIVE_HOST "" CACHE FILEPATH "Local supported GOnline.exe for hangar mouse replay")
@@ -449,6 +480,12 @@ if(BUILD_TESTING)
         target_compile_options(hangar_native_input_test PRIVATE /UNDEBUG)
         add_test(NAME hangar_native_input_replay COMMAND hangar_native_input_test "${SDGO_HANGAR_NATIVE_HOST}")
         set_tests_properties(hangar_native_input_replay PROPERTIES TIMEOUT 60)
+        add_executable(storage_claim_replay_test tests/storage_claim_replay_test.cpp mods/storage_claim/native_ui.cpp)
+        target_link_libraries(storage_claim_replay_test PRIVATE sdgo_api user32 bcrypt)
+        sdgo_strict(storage_claim_replay_test)
+        target_compile_options(storage_claim_replay_test PRIVATE /UNDEBUG)
+        add_test(NAME storage_claim_native_replay COMMAND storage_claim_replay_test "${SDGO_HANGAR_NATIVE_HOST}")
+        set_tests_properties(storage_claim_native_replay PROPERTIES TIMEOUT 60)
     endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
@@ -504,6 +541,11 @@ if(BUILD_TESTING)
     add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
     target_link_libraries(native_agent_cash_probe_mod PRIVATE sdgo_api)
     sdgo_strict(native_agent_cash_probe_mod)
+    # Explicit local image probe; no game bytes are bundled or required in CI.
+    add_executable(battle_reward_native_result_probe EXCLUDE_FROM_ALL tests/battle_reward_native_result_probe.cpp)
+    target_link_libraries(battle_reward_native_result_probe PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_native_result_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_native_result_probe)
     # Exercise the shipped daily reward Mod in contribution-reward coexistence tests.
     add_executable(battle_rewards_runtime_test tests/battle_rewards_runtime_test.cpp)
     target_link_libraries(battle_rewards_runtime_test PRIVATE sdgo_api)
@@ -622,6 +664,20 @@ if(BUILD_TESTING)
     sdgo_strict(room_random_test)
     add_test(NAME room_random_offline COMMAND room_random_test)
     set_tests_properties(room_random_offline PROPERTIES TIMEOUT 30)
+    add_library(room_random_head_probe SHARED tests/room_random_head_probe.cpp)
+    add_executable(room_random_client_policy_test tests/room_random_client_policy_test.cpp)
+    sdgo_strict(room_random_client_policy_test)
+    add_test(NAME room_random_client_policy COMMAND room_random_client_policy_test)
+    target_link_libraries(room_random_head_probe PRIVATE sdgo_api)
+    sdgo_strict(room_random_head_probe)
+    add_executable(room_random_client_runtime_test tests/room_random_client_runtime_test.cpp)
+    target_link_libraries(room_random_client_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(room_random_client_runtime_test)
+    add_dependencies(room_random_client_runtime_test sdgo_core room_random_client room_random_head_probe)
+    add_test(NAME room_random_client_runtime COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/room_random_client_runtime_test.ps1"
+        -BuildDir "${CMAKE_BINARY_DIR}" -Config "$<CONFIG>")
+    set_tests_properties(room_random_client_runtime PROPERTIES TIMEOUT 120)
 
     # Explicitly invoked read-only host probe; not a CTest or staged executable.
     add_executable(room_random_inventory_probe tests/room_random_inventory_probe.cpp mods/room_random/inventory.cpp)
@@ -637,13 +693,21 @@ if(BUILD_TESTING)
     add_test(NAME game_test_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test.py" -v)
     set_tests_properties(game_test_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_library(battle_ai_server_bridge_fixture SHARED tests/battle_ai_server_bridge_fixture.cpp)
+    sdgo_strict(battle_ai_server_bridge_fixture)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
         sdgo_strict(${mod}_test)
-        add_test(NAME ${mod}_offline COMMAND ${mod}_test)
+        if(mod STREQUAL "pvp_ai")
+            add_test(NAME ${mod}_offline
+                COMMAND ${mod}_test "$<TARGET_FILE:battle_ai_server_bridge_fixture>")
+        else()
+            add_test(NAME ${mod}_offline COMMAND ${mod}_test)
+        endif()
         set_tests_properties(${mod}_offline PROPERTIES TIMEOUT 30)
     endforeach()
+    add_dependencies(pvp_ai_test battle_ai_server_bridge_fixture)
     target_link_libraries(match_ai_test PRIVATE minhook)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
@@ -656,6 +720,11 @@ if(BUILD_TESTING)
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
         set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
+        add_test(NAME battle_ai_server_native_integration COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_ai_server_native_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(battle_ai_server_native_integration PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
@@ -812,6 +881,7 @@ sdgo_strict(battle_ai_loadout_test)
 add_executable(battle_ai_server_native_test tests/battle_ai_server_native_test.cpp)
 target_link_libraries(battle_ai_server_native_test PRIVATE sdgo_api)
 sdgo_strict(battle_ai_server_native_test)
+add_dependencies(battle_ai_server_native_test battle_ai_server ai_catalog_server sdgo_core)
 add_library(battle_ai_bridge_fixture SHARED tests/battle_ai_bridge_fixture.cpp)
 sdgo_strict(battle_ai_bridge_fixture)
 add_executable(match_ai_loadout_bridge_test tests/match_ai_loadout_bridge_test.cpp)
@@ -837,4 +907,23 @@ if(BUILD_TESTING)
                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
         endforeach()
     endif()
+endif()
+
+# Independent hangar policy, native ABI and opt-in SQL fixtures; never staged.
+if(BUILD_TESTING)
+    add_executable(hangar_capacity_policy_test tests/hangar_capacity_policy_test.cpp)
+    sdgo_strict(hangar_capacity_policy_test)
+    add_test(NAME hangar_capacity_policy_offline COMMAND hangar_capacity_policy_test)
+    set_tests_properties(hangar_capacity_policy_offline PROPERTIES TIMEOUT 30)
+    add_executable(hangar_capacity_native_test tests/hangar_capacity_native_test.cpp)
+    target_link_libraries(hangar_capacity_native_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(hangar_capacity_native_test)
+    add_test(NAME hangar_capacity_native_offline COMMAND hangar_capacity_native_test)
+    set_tests_properties(hangar_capacity_native_offline PROPERTIES TIMEOUT 30)
+    add_executable(hangar_capacity_sql_emit tests/hangar_capacity_sql_emit.cpp)
+    sdgo_strict(hangar_capacity_sql_emit)
+    add_executable(hangar_capacity_sql_test tests/hangar_capacity_sql_test.cpp)
+    target_link_libraries(hangar_capacity_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(hangar_capacity_sql_test)
+    target_compile_options(hangar_capacity_sql_test PRIVATE /Ob0)
 endif()

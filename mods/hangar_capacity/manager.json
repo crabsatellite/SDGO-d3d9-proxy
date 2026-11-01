@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "hangar_capacity",
+  "title": "自动机库容量",
+  "category": "gameplay",
+  "hosts": ["world"],
+  "presentation": "configurable",
+  "description": "在玩家登录读取容量前，为新旧账号保障至少 1200 格。",
+  "mechanism": "安装并启用在 WorldServer，按原生读取机库容量的请求自动执行，只增加不足的容量，不创建或删除机体。原生分页保持不变。默认关闭，由服主启用一次；正在运行的 WorldServer 要重启加载，已经登录的玩家重新登录后看到 1200 格。本版不做在线无限扩张。",
+  "settings": [
+    {"id":"locktimeoutms","key":"LockTimeoutMs","label":"容量事务锁等待（毫秒）","type":"integer","default":1000,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":0,"maximum":5000},
+    {"id":"querytimeoutseconds","key":"QueryTimeoutSeconds","label":"容量命令超时（秒）","type":"integer","default":3,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1,"maximum":10}
+  ]
+}

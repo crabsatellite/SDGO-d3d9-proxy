@@ -1,0 +1,129 @@
+{
+  "date": "2026-11-01",
+  "branch": "investigate/hangar-capacity",
+  "baseline": "e6364a7",
+  "status": "automated_scope_passed_gameplay_pending",
+  "build": {
+    "target": "Win32 Release",
+    "compiler": "MSVC",
+    "strict": true,
+    "runtime": "static CRT"
+  },
+  "source_sha256": {
+    "mods/hangar_capacity/hangar_capacity.cpp": "7f4d7a2ea4ef4527341ee0c35edcf906dd4802397200d86e47f4cd134fd2c2b2",
+    "mods/hangar_capacity/capacity_policy.h": "8b26d69a3a2edfdb12c71c46cf92c0715e3a2424080500df7c0ebff1f4e9fe3c",
+    "mods/hangar_capacity/oledb_session.h": "a205c3447fd33e88eaadd7e2d82e58f3d1b9c162556d1b20b959de1bac01ae14",
+    "mods/hangar_capacity/mod.ini": "5af243ab59e3fc8406b8553163423f4e9394aade4e3e5406e39bb04f5731ec90",
+    "mods/hangar_capacity/native_symbols.ini": "945fbbe47cf6bceb6ca5f11039aa1fa5494b4ae4e6ce9ba5af558c5619e2480d",
+    "symbols/WorldServer-548A86E3-0010C000.ini": "f8583416d0062b13f60927048e71ddf537eda132d0b2f642b44ccdc4e62e91e5",
+    "tests/hangar_capacity_policy_test.cpp": "11fce755e8841d362fa911941fbcd5cb40b800433828b409fcafd3a66d25e081",
+    "tests/hangar_capacity_native_test.cpp": "5a055fa88d21e0acbbf13a3e5c0b79f0aa6ca5e958b88c056cd0def15a468ccd",
+    "tests/hangar_capacity_sql_emit.cpp": "692e2510067f8de8a434cbf00319e4b66aa472fbf1ce582146bd90b73ac94f80",
+    "tests/hangar_capacity_sql_test.cpp": "7cba6969eaabba44d62122847df5a2c3cb0d7284c47b81a96c4f8621cdc1559c",
+    "tests/run_hangar_capacity_sql_test.py": "cf6c75146ee406dd88c037b4d506f16b3002251fb874ccfaf84e1e80271b660b",
+    "tests/package_catalog_test.ps1": "51783a5f0eb26062c976214aec603703e34385befcab92302571e8f8cc0b9580",
+    "CMakeLists.txt": "66d9401998ad25c1efebe084ec34e7576a66ba72253c269d06b29ca280e1f20b"
+  },
+  "artifact": {
+    "file": "hangar_capacity.dll",
+    "sha256": "46ee86a8e8031f640d57ba4344f44398e77bb37bd5417032148d9cf811b78ad5",
+    "machine": "x86",
+    "imports": [
+      "ole32.dll",
+      "KERNEL32.dll"
+    ],
+    "exports": [
+      "SdgoModLoad"
+    ],
+    "default_enabled": false
+  },
+  "native_symbols": {
+    "host": "WorldServer-548A86E3-0010C000",
+    "host_sha256": "82d3c4cf09679a431b9bfa639795b148f932642d8774ff66021785115dc53d46",
+    "verified": 15,
+    "rejected": 0
+  },
+  "feature_checks": {
+    "policy": 57,
+    "production_wrapper": 107,
+    "actual_core_oledb_enabled": true,
+    "actual_core_oledb_disabled": true
+  },
+  "sql": {
+    "image": "cf8f0ab2ebe6",
+    "cases": [
+      {
+        "name": "idempotency_new_old_larger",
+        "passed": true
+      },
+      {
+        "name": "native_enabled",
+        "passed": true
+      },
+      {
+        "name": "native_disabled",
+        "passed": true
+      },
+      {
+        "name": "holes_fill_and_outside_retention",
+        "passed": true
+      },
+      {
+        "name": "invalid_raw_null_negative_large",
+        "passed": true
+      },
+      {
+        "name": "missing_account_and_database_identity",
+        "passed": true
+      },
+      {
+        "name": "changed_schema_and_getter_rejected",
+        "passed": true
+      },
+      {
+        "name": "constraint_rollbacks_and_foreign_trigger_rejection",
+        "passed": true
+      },
+      {
+        "name": "ambient_transaction_and_session_options",
+        "passed": true
+      },
+      {
+        "name": "application_lock_contention_and_retry",
+        "passed": true
+      },
+      {
+        "name": "concurrent_same_and_different_accounts",
+        "passed": true
+      }
+    ],
+    "cleanup": {
+      "private_env_deleted": true,
+      "owned_container_removed": true
+    },
+    "local_receipt_sha256": "a3ec6fd97fb1e5f9fa416865ae2c995e157127c6008fef291209182d4389ad16"
+  },
+  "regressions": {
+    "initial_ctest": {
+      "total": 45,
+      "passed": 38,
+      "timeouts": 7
+    },
+    "original_limit_rerun": {
+      "passed": 5,
+      "timeouts": 2
+    },
+    "catalog_gates": "passed with a 300s limit in an owned generated CTest copy",
+    "ai_catalog": "all 24 scenarios passed across a partial CTest run (12 client + 2 server) and the remaining 10 server scenarios; compiled artifacts and assertions unchanged",
+    "single_full_ctest_green": false,
+    "source_timeout_settings_changed": false,
+    "packages_and_simulated_install": "passed"
+  },
+  "boundaries": {
+    "production_database_writes": false,
+    "game_or_server_entry_point_launched": false,
+    "installed_on_running_environment": false,
+    "gameplay_acceptance": "manual_pending",
+    "remote_push_pr_merge": false
+  }
+}

@@ -62,6 +62,13 @@ See [combined commands](room-commands.md) for both mission and PvP examples.
 
 ## Settings
 
+`mission_ai 2.0.1` redirects player-only melee searches to the native mission enemy
+search for registered wingmen. Native `PlayerWarp` stage transitions also carry
+locally simulated, living wingmen to the actual human destinations and clear their
+old attack/movement requests. Human counts, mission objectives and remote copies
+are preserved; this does not provide arbitrary combat teleports or revive bots.
+Transitions that move players without `PlayerWarp` still require separate testing.
+
 Values go in the `[settings]` section of each `mod.ini` and cannot carry inline comments.
 
 `coop_ai`, battle server, `sdgo\mods\coop_ai\mod.ini` (changes need a battle server restart):

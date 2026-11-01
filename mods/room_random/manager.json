@@ -6,7 +6,7 @@
   "hosts": [
     "battle"
   ],
-  "description": "每局从玩家自己的机库抽取机体用于战斗。",
+  "description": "每局从各自机库抽取机体，需要配套的客户端同步 Mod。",
   "settings": [
     {
       "id": "database_ini",

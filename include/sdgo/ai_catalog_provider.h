@@ -6,6 +6,18 @@
 #include "sdgo_api.h"
 
 namespace sdgo {
+// Optional native unit attribute, not a script-family or machine allow-list.
+// 0 melee, 1 ranged, 2 mixed; -1 means no compatible provider/record.
+inline int AiCatalogMasteredWeaponType(const SdgoApi* api,SdgoMod* mod,uint32_t unitId) {
+    if(!api||!api->ModDirectory) return -1;
+    std::wstring path=api->ModDirectory(mod);
+    const size_t slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos) return -1;
+    path.resize(slash);path+=L"\\ai_catalog\\ai_catalog.dll";
+    HMODULE provider=GetModuleHandleW(path.c_str());if(!provider) return -1;
+    using ReadRole=int(__cdecl*)(uint32_t);
+    auto read=reinterpret_cast<ReadRole>(GetProcAddress(provider,"SdgoAiCatalogMasteredWeaponTypeV1"));
+    return read?read(unitId):-1;
+}
 // Optional process-local extension. With no active catalog mod, the consumer's
 // existing settings and native AI-NPC filtering remain exactly the same.
 inline bool AiCatalogPool(const SdgoApi* api, SdgoMod* mod, int level, std::vector<uint32_t>& pool) {

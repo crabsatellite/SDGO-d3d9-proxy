@@ -398,6 +398,8 @@ cmake --build build --config Release
 * `build/stage/Release/client/` and `.../server/` mirror the install targets.
 * `tests/loader_test.ps1`: runs the client loader in a test exe and checks forwarding
   (plain, chained, self-chain refused) and that it starts the core.
+* `launcher_handshake_test`: checks the supported client's native `9YOU SDGO` event,
+  launcher shutdown during Mod loading, existing reset/signal semantics and handle cleanup.
 * `tests/findwindow_fix_test.ps1`: runs the real core and `findwindow_fix` against a simulated
   SDPlus hook, and checks `HookSystemExport` and its rollback.
 * `tests/install_test.ps1`: updates a throw-away install with both installers and checks that

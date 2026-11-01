@@ -1,6 +1,7 @@
 """Headless domain bridge; the retired shop EXE is never launched or needed."""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -11,8 +12,9 @@ from . import storage
 class Bridge:
     def __init__(self):
         here = Path(__file__).parent / 'engines/shop'
-        library = here / 'SdgoShopServices.dll'
-        if not library.exists(): library = Path(__file__).resolve().parents[1] / 'build/manager-services/SdgoShopServices.dll'
+        configured = os.environ.get('SDGO_MANAGER_SERVICES')
+        library = Path(configured) if configured else here / 'SdgoShopServices.dll'
+        if not configured and not library.exists(): library = Path(__file__).resolve().parents[1] / 'build/manager-services/SdgoShopServices.dll'
         if not library.exists(): raise ValueError('请先构建 Manager 的商城业务程序集')
         self.process = subprocess.Popen(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
             '-File',str(here / 'bridge.ps1'),'-Library',str(library)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

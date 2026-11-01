@@ -250,6 +250,26 @@ class HttpRuntimeTests(unittest.TestCase):
         bad_host.exception.close()
         self.assertEqual(self.workspace.read()["base_multiplier"], "10")
 
+    def test_solo_preset_and_progression_use_existing_auth_and_revision(self):
+        state = self.read('/api/rewards')
+        def post(action, body, token=None, revision=None):
+            return urlopen(Request(self.origin+'/api/providers/rewards/api/rewards/'+action,
+                data=json.dumps(body).encode(), headers={'Content-Type':'application/json','Origin':self.origin,
+                'X-ModManager-Token':state['session_token'] if token is None else token,
+                'X-Reward-Revision':state['revision'] if revision is None else revision}),timeout=3)
+        with self.assertRaises(HTTPError) as wrong: post('solo-preset',{},token='wrong')
+        self.assertEqual(wrong.exception.code,403);wrong.exception.close()
+        self.assertNotIn('progression',self.workspace.read())
+        with post('solo-preset',{}) as response: saved=json.load(response)
+        self.assertTrue(saved['progression']['config']['enabled'])
+        self.assertEqual(saved['policy']['progression']['daily_mb'],27000)
+        with self.assertRaises(HTTPError) as stale: post('solo-preset',{})
+        self.assertEqual(stale.exception.code,400);stale.exception.close()
+        p=saved['policy']['progression'];p['enabled']=False
+        with post('progression',{'progression':p},revision=saved['revision']) as response:
+            disabled=json.load(response)
+        self.assertFalse(disabled['progression']['config']['enabled'])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,10 +12,19 @@ int main() {
             const auto& source=*children.at(L"UnitDeleteBtn")->skins[i];
             assert(c.skins[i]->memory.data()!=source.memory.data() && c.skins[i]->path==source.path);
         }
-        assert(Get<int>(c.memory.data(),0x154)==128 && Get<int>(c.memory.data(),0x158)==24);
+        assert(Get<int>(c.memory.data(),0x154)==127 && Get<int>(c.memory.data(),0x158)==18);
     }
     assert(children.at(L"ModHangarSort")->color==0xFF9CB8C8);
     assert(!Shown(L"ModHangarConfirm") && Shown(L"UnitDeleteBtn") && !Shown(L"HiddenNativeIcon"));
+    assert(!Shown(L"ModHangarNotice0"));
+    ui.Status(L"正在整理\n等待服务器确认");ui.State(true,false);
+    assert(!ui.Exchange() && Shown(L"UnitDeleteBtn") && Shown(L"ModHangarNotice0"));
+    assert(children.at(L"ModHangarSort")->text==L"停止整理");
+    assert(ui.Click(Pointer(L"ModHangarSort"))==Action::Cancel && !Enabled(L"ModHangarOpen"));
+    ui.State(false,false);assert(children.at(L"ModHangarSort")->text==L"一键整理");
+    ui.Status(std::wstring(500,L'测')+L"\n超长结果");
+    assert(children.at(L"ModHangarNotice0")->text.size()<=42);
+    assert(Get<float>(Pointer(L"ModHangarNotice0"),0x14C)==51);
     const auto count=creates;assert(ui.Attach(service.data()) && creates==count);
     ui.Open();assert(!Shown(L"ModHangarSort") && !Shown(L"UnitDeleteBtn") && Shown(L"ModHangarGB"));
     assert(!Enabled(L"ModHangarConfirm") && ui.Click(Pointer(L"ModHangarConfirm"))==Action::None);
@@ -36,10 +45,12 @@ int main() {
     // Bounds follow the dialog's own coordinate system and stay below its header.
     for(const auto& entry:children)if(entry.first.find(L"ModHangar")==0) {
         auto* p=entry.second->memory.data();
-        assert(Get<float>(p,0x148)>=0 && Get<float>(p,0x148)+Get<int>(p,0x154)<=600);
-        assert(Get<float>(p,0x14C)>=0 && Get<float>(p,0x14C)+Get<int>(p,0x158)<=700);
+        assert(Get<float>(p,0x148)>=418 && Get<float>(p,0x148)+Get<int>(p,0x154)<=1024);
+        assert(Get<float>(p,0x14C)>=33 && Get<float>(p,0x14C)+Get<int>(p,0x158)<=768);
         assert(Get<void*>(p,0x15C)==dialog.data());
         assert(Get<uint8_t>(p,0x168)==0); // no constructor debug rectangles
+        if(entry.first!=L"ModHangarSort" && entry.first!=L"ModHangarOpen")
+            assert(Get<float>(p,0x14C)+Get<int>(p,0x158)<700); // no native pager overlap
     }
     Put(service.data(),0,reinterpret_cast<void*>(0xBAD));ui.Close();assert(!ui.Ready());
     Setup();failAdd=true;assert(!ui.Attach(service.data(),Bind()) && !ui.Ready());
@@ -53,5 +64,6 @@ int main() {
     Setup();auto& source=*children.at(L"UnitDeleteBtn");source.skins.pop_back();SetSkins(source);
     assert(!ui.Attach(service.data(),Bind()) && creates==0);
     Setup();Put(dialog.data(),0x154,400);assert(!ui.Attach(service.data(),Bind()) && creates==0);
+    Setup();Put(service.data(),0x48,static_cast<void*>(nullptr));assert(!ui.Attach(service.data(),Bind()) && creates==0);
     std::cout<<"HANGAR IN-GAME PAGE FIXTURE PASSED (host children, placement, pagination, two-step confirmation, original visibility, lifecycle, fail-closed layout)\n";
 }

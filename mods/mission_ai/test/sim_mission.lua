@@ -42,6 +42,12 @@ end
 function CheckObejctAlive(id) local o = W.objects[id] return o ~= nil and o.alive end
 function SDGO_Now() return W.now end
 function SDGO_Wingmen() return unpack(W.wingmen) end
+function SDGO_LocalWingmen() return unpack(W.localWingmen or W.wingmen) end
+function GetNumPlayer() return W.humans or 1 end
+function PlayerWarp(player,pos,dir)
+  W.humanWarps=(W.humanWarps or 0)+1
+  return 97
+end
 
 local Unit = {}
 Unit.__index = Unit
@@ -50,12 +56,25 @@ function Unit:GetNowPos() local p = W.objects[self._id].pos return vector3(p.x, 
 function Unit:GetAttackTarget() return W.objects[self._id].target end
 function Unit:SetAttackTarget(id) W.objects[self._id].target = id end
 function Unit:GetHp() return W.objects[self._id].hp end
+function Unit:Warp(pos,dir)
+  local unit=W.objects[self._id]
+  Check(W.humanWarps>0,'native human warp runs before wingman mirror')
+  unit.pos=pos;unit.direction=dir;unit.warps=(unit.warps or 0)+1
+end
+function Unit:SetAttackOnOff(value) W.objects[self._id].attack=value end
+function Unit:MoveStop() W.objects[self._id].stopped=true end
+function Unit:SetJumpTime(value) W.objects[self._id].jump=value end
 
 -- like the C++ search behind the global SearchLockPlayer: enemies only look at humans
 function SearchLockPlayer(id)
   local me = W.objects[id]
   if me.enemy then me.target = W.player end
-  return me.target
+  if not me.enemy and W.objects[20] and W.objects[20].alive then me.target=20 end
+  return me.target~=0
+end
+function SearchLockOnlyPlayer(id)
+  W.onlyPlayerCalls=(W.onlyPlayerCalls or 0)+1
+  return false
 end
 
 local function NewWorld(wingmen)
@@ -155,6 +174,51 @@ Check(logCount == beforeWrap + 1, "one status report after the reporting interva
 SDGO_MissionAI_Tick(mode, W.now + 1, 9)
 Check(logCount == beforeWrap + 1, "status reports remain throttled")
 
+print('scenario 10: player-only melee search uses mission enemies only for wingmen')
+NewWorld({1001})
+SDGO_MissionAI_Tick(mode,W.now,10)
+Check(SearchLockOnlyPlayer(1001)==true and W.objects[1001].target==20,
+  'living melee wingman acquires a mission NPC and preserves native search result')
+SearchLockOnlyPlayer(20)
+Check(W.onlyPlayerCalls==1,'mission enemies retain their original player-only search')
+W.now=W.now+5000
+SearchLockOnlyPlayer(1001)
+Check(W.onlyPlayerCalls==2,'expired mission cannot redirect reused object ids')
+dofile('mods/mission_ai/mission_ai.lua')
+SDGO_MissionAI_Tick(mode,W.now,10)
+W.objects[1001].target=0
+Check(SearchLockOnlyPlayer(1001)==true and W.objects[1001].target==20,
+  'hot reload does not recurse or restore the broken player-only search')
+
+print('scenario 11: actual stage warp carries only local living wingmen')
+NewWorld({1001,1002,1003})
+W.localWingmen={1001,1002}
+W.objects[1002].alive=false
+W.objects[1001].target=20
+SDGO_MissionAI_Tick(mode,W.now,11)
+local p=vector3(5000,300,-2000)
+local d=vector3(0,0,-1)
+Check(PlayerWarp(1,p,d)==97,'native PlayerWarp result is preserved')
+Check(W.objects[1001].pos==p and W.objects[1001].direction==d,
+  'wingman uses the exact rule-script destination and direction')
+Check(W.objects[1001].target==0 and W.objects[1001].attack==false and
+  W.objects[1001].stopped and W.objects[1001].jump==0,'old target and locomotion are released after warp')
+Check(not W.objects[1002].warps and not W.objects[1003].warps,'dead and remote wingmen are never warped')
+W.now=W.now+5000
+PlayerWarp(1,p,d)
+Check(W.objects[1001].warps==1,'outside a live mission only the original player warp executes')
+
+print('scenario 12: each stage loop distributes wingmen across actual human destinations once')
+NewWorld({1001,1002,1003})
+W.humans=2
+SDGO_MissionAI_Tick(mode,W.now,12)
+local p2=vector3(5200,300,-2000)
+PlayerWarp(1,p,d);PlayerWarp(2,p2,d)
+Check(W.objects[1001].pos==p and W.objects[1002].pos==p2 and W.objects[1003].pos==p,
+  'wingmen follow assigned human slots without changing GetNumPlayer')
+Check(W.objects[1001].warps==1 and W.objects[1002].warps==1 and W.objects[1003].warps==1,
+  'one native player loop does not repeatedly warp the whole squad')
+Check(GetNumPlayer()==2,'mission objective and difficulty human counts remain native')
 print("")
 if failures == 0 then
   print("ALL SCENARIOS PASSED")

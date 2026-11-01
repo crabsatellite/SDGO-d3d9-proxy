@@ -98,6 +98,8 @@ class Rewards(Provider):
             if path == '/api/rewards/preview': return engine.preview(body)
             if path == '/api/rewards/multiplier': return engine.multiplier(body['base_multiplier'], expected)
             if path == '/api/rewards/policy': return engine.save(body['policy'], expected)
+            if path == '/api/rewards/solo-preset': return engine.solo_preset(expected)
+            if path == '/api/rewards/progression': return engine.save_progression(body['progression'], expected)
         raise ValueError('奖励操作未登记')
 
 
@@ -232,6 +234,7 @@ def attach(workspace):
     from .shop import Shop
     from .ai_catalog import AiCatalog
     from .collection_capsule import CollectionCapsule
-    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule):
+    from .hangar import Hangar
+    for cls in (Rewards, Operators, Capsules, Shop, Frp, AiCatalog, CollectionCapsule, Hangar):
         provider = cls(workspace)
         workspace.providers[provider.id] = provider

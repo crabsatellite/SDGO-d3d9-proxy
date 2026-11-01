@@ -1,4 +1,8 @@
 #include <windows.h>
+#include <objbase.h>
+#ifdef small
+#undef small // RPC headers must not rewrite NativeString::data.small.
+#endif
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +12,8 @@
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/hangar_model.h"
+#include "sdgo/hangar_sort_request.h"
+#include "sdgo/inventory_app_state.h"
 #include "native_ui.h"
 
 namespace {
@@ -40,6 +46,10 @@ Runner g_runner;
 Plan g_preview;
 bool g_hasPreview=false,g_scanning=false,g_mutating=false,g_pumping=false,g_sortAfter=true;
 bool g_needsRelog=false;
+bool g_submittingGB=false;
+std::vector<std::array<uint8_t,0x159>> g_gbRequests;
+size_t g_gbIndex=0;
+Snapshot g_gbBefore;
 Kind g_scanReward=Kind::GB;
 int g_keep=2,g_maxSlots=1200;
 DWORD g_interval=150,g_timeout=10000;
@@ -58,9 +68,10 @@ std::wstring Wide(const std::string& s) {
     MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),w.data(),n);return w;
 }
 void Status(const std::wstring& s) {g_ui.Status(s);}
-bool Busy(){return g_scanning || g_mutating;}
+bool Busy(){return g_scanning || g_mutating || g_submittingGB;}
 void Stop(const wchar_t* text) {
     g_scanning=false;g_detailPending=0;g_hasPreview=false;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating)g_runner.Disconnect();
     g_mutating=false;g_needsRelog=true;
     g_ui.State(Busy(),false);
@@ -71,10 +82,7 @@ bool VisibleUnsafe() {
     if(!g_grid || Read<void*>(g_grid)!=g_gridVtable || !*g_info || !*g_profile)return false;
     auto* panel=Read<uint8_t*>(g_grid,0x44);
     if(!panel || !Read<uint8_t>(panel,0x162))return false;
-    auto* app=g_app();
-    auto* game=app?Read<uint8_t*>(app,0x4A4):nullptr;
-    if(game && Read<void*>(game,0x0C))return false; // never operate in a battle
-    return true;
+    return sdgo::inventory::MenuAvailable(g_app());
 }
 bool Visible() {
     __try {return VisibleUnsafe();} __except(EXCEPTION_EXECUTE_HANDLER){return false;}
@@ -124,7 +132,7 @@ bool SendUnsafe(const uint8_t* bytes,int size) {
 bool Send(const uint8_t* bytes,int size) {
     __try{return SendUnsafe(bytes,size);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_ui.AfterNativeRefresh();}}
+void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_page(g_grid);g_ui.AfterNativeRefresh();}}
 void RedrawNow() {__try{RedrawUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){}}
 std::wstring Label(const Unit& u) {
     auto r=g_rules.find(u.type);
@@ -141,20 +149,26 @@ void Preview(Plan p) {
         const auto* u=ById(g_preview.before,a.first);
         rows.push_back(Label(*u));
     }
-    std::wstring s=L"将兑换 "+std::to_wstring(g_preview.removed)+L" 台；每种相同状态保留 "+std::to_wstring(g_keep)+L" 台。\r\n";
+    std::wstring s=L"将兑换 "+std::to_wstring(g_preview.removed)+L" 台；每种机体至少保留 "+std::to_wstring(g_keep)+L" 台。\r\n";
     if(g_scanReward==Kind::GB)s+=L"预计 "+std::to_wstring(g_preview.expectedGB)+L" GB";
     else for(const auto& item:g_preview.expectedItems){
         std::wstring name=L"原生道具";
         for(const auto& rule:g_rules)if(rule.second.item==item.first && !rule.second.rewardName.empty()){name=rule.second.rewardName;break;}
         s+=name+L" × "+std::to_wstring(item.second)+L"  ";
     }
-    s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁、已培养及不同状态机体不兑换。";
+    s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁及已培养机体不兑换。\r\n不同涂装按同型号计数，想保留的机体请先锁定。";
+    if(!g_preview.removed)s+=L"\r\n没有可兑换机体：受保护 "+std::to_wstring(g_preview.pinned)+L" 台，详情未齐 "+std::to_wstring(g_preview.detailsMissing)+L" 台。";
+    g_api->Log(g_mod,SDGO_LOG_INFO,"duplicate preview: %u units, %u protected, %u missing details, %u candidates",static_cast<unsigned>(g_preview.before.units.size()),static_cast<unsigned>(g_preview.pinned),static_cast<unsigned>(g_preview.detailsMissing),static_cast<unsigned>(g_preview.removed));
     g_ui.Rows(std::move(rows));Status(s);g_ui.State(false,g_preview.removed!=0);
 }
 void BeginScan(Kind reward) {
     if(Busy())return;
     if(g_needsRelog){Status(L"上一笔状态尚未确认，请重新登录后再操作。");return;}
     Snapshot s;if(!GetSnapshot(s)){Status(L"请打开机库后重试；当前机库数据尚未就绪。");return;}
+    if(reward==Kind::GB) {
+        g_scanReward=reward;g_scanning=false;g_detailPending=0;
+        Preview(GBPreview(s,g_rules,g_keep));return;
+    }
     g_scanBefore=s;g_scanReward=reward;g_scanIds.clear();g_scanIndex=0;g_detailPending=0;g_hasPreview=false;
     std::map<uint32_t,int> count;for(const auto& u:s.units)++count[u.type];
     for(const auto& u:s.units) {
@@ -170,14 +184,44 @@ void StartPlan(Plan p,const Snapshot& s) {
     try {g_runner.Start(std::move(p),s);g_mutating=true;g_nextSend=0;}
     catch(const std::exception&){Status(L"预览之后机库已变化，请重新预览。");}
 }
+bool Sender(char* out) {
+    __try {
+        if(!g_profile || !*g_profile)return false;
+        memcpy(out,*g_profile+0x161,16);out[16]=0;
+        return out[0]!=0;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+std::string NewRequestId() {
+    GUID guid{};if(FAILED(CoCreateGuid(&guid)))throw std::runtime_error("request identity unavailable");
+    char id[37]={};
+    snprintf(id,sizeof(id),"%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",guid.Data1,guid.Data2,guid.Data3,
+        guid.Data4[0],guid.Data4[1],guid.Data4[2],guid.Data4[3],guid.Data4[4],guid.Data4[5],guid.Data4[6],guid.Data4[7]);
+    return id;
+}
+void SubmitGB() {
+    char sender[17]={};if(!Sender(sender)){Status(L"无法准备批量回收请求，尚未发送。");return;}
+    const auto id=NewRequestId();
+    auto requests=ServerGBRequests(sender,id,g_preview,g_keep,g_sortAfter);
+    g_gbBefore=g_preview.before;g_gbRequests=std::move(requests);g_gbIndex=0;
+    g_submittingGB=true;g_hasPreview=false;g_ui.Arm(false);
+    Status(L"正在提交服务端批量回收；完成提交前可以停止。");
+    g_api->Log(g_mod,SDGO_LOG_INFO,"server GB batch queued: %s; %u selected units, %u messages; no per-unit detail requests",id.c_str(),static_cast<unsigned>(g_preview.removed),static_cast<unsigned>(g_gbRequests.size()));
+}
 void BeginSort() {
     if(Busy())return;
     if(g_needsRelog){Status(L"上一笔状态尚未确认，请重新登录后再操作。");return;}
-    Snapshot s;if(!GetSnapshot(s)){Status(L"请打开机库后重试；容量超出配置上限时请服主核对 MaxSlots。");return;}
+    if(!Visible()){Status(L"请在机体管理页提交整理。");return;}
     try {
-        auto p=sdgo::hangar::Sort(s,g_rules);
-        Status(L"正在整理；锁定、出击中、舰队、租赁与未知机体保留原位。");StartPlan(std::move(p),s);
-    }catch(const std::exception&){Status(L"无法生成安全的排序方案，尚未发送请求。");}
+        char sender[17]={};if(!Sender(sender)){Status(L"无法准备服务端请求，尚未发送。");return;}
+        const auto id=NewRequestId();
+        const auto bytes=ServerSortRequest(sender,id);
+        if(!Send(bytes.data(),static_cast<int>(bytes.size()))){Status(L"无法提交服务端整理，请检查连接。");return;}
+        // The native mail transport has no proven client acknowledgement.
+        // A send is a submission, never proof that the server committed it.
+        g_needsRelog=true;g_hasPreview=false;
+        Status(L"已提交服务器整理，请退出并重新登录查看。");
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; persistence requires server receipt; relog required",id.c_str());
+    }catch(const std::exception&){Status(L"服务端整理请求未完成，请重新登录核对。");}
 }
 
 void UiRefreshUnsafe() {g_ui.AfterNativeRefresh();}
@@ -189,41 +233,51 @@ bool AttachUi(void* self) {__try {return g_ui.Attach(self);} __except(EXCEPTION_
 void __fastcall Init(void* self,void*) {
     g_ui.Detach();g_grid=nullptr;
     g_hasPreview=false;g_scanning=false;g_detailPending=0;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating){g_runner.Disconnect();g_mutating=false;g_needsRelog=true;}
     g_init(self);
     g_grid=static_cast<uint8_t*>(self);g_gridVtable=Read<void*>(self);g_thread=GetCurrentThreadId();
     try {
         if(!AttachUi(self))g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI unavailable; no external UI fallback");
+        else g_api->Log(g_mod,SDGO_LOG_INFO,"native unit-management UI attached; app state %u",sdgo::inventory::AppState(g_app()));
     }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI initialization failed");}
 }
 void HandleButton(void* self,void* control) {
     // An unsupported/incomplete Mod page must not swallow native lock/delete
     // events. The original service continues to own its original controls.
-    if(!g_ui.Owns(self)){g_button(self,control);return;}
-    if(!Visible())return;
+    if(!g_ui.Owns(self)){
+        if(g_ui.Click(control)!=ui::Action::None)g_api->Log(g_mod,SDGO_LOG_WARN,"unit-management button receiver does not match attached page");
+        g_button(self,control);return;
+    }
+    if(!Visible()){
+        g_api->Log(g_mod,SDGO_LOG_WARN,"unit-management click ignored: page or app state unavailable");return;
+    }
     const auto action=g_ui.Click(control);
+    if(action!=ui::Action::None)g_api->Log(g_mod,SDGO_LOG_INFO,"unit-management action %d; app state %u",static_cast<int>(action),sdgo::inventory::AppState(g_app()));
     if(action==ui::Action::None) {
         if(!g_ui.Exchange() && !Busy())g_button(self,control);
         return;
     }
     if(action==ui::Action::Cancel) {
-        if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
+        if(g_submittingGB){g_submittingGB=false;g_gbRequests.clear();Status(L"已停止提交，没有发送批量执行指令。");}
+        else if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
         else if(g_mutating){g_runner.Cancel();Status(L"停止追加请求；等待最后一笔已发送请求的结果。");}
         else {g_hasPreview=false;g_ui.Close();RedrawNow();}
     }else if(action==ui::Action::Previous)g_ui.Page(-1);
     else if(action==ui::Action::Next)g_ui.Page(1);
     else if(!Busy()) {
-        if(action==ui::Action::Sort){g_ui.Rows({});g_ui.Open();BeginSort();}
+        if(action==ui::Action::Sort){g_ui.Close();BeginSort();}
         if(action==ui::Action::Open) {
             g_hasPreview=false;g_ui.Rows({});g_ui.State(false,false);
-            Status(L"重复机体兑换：先选择奖励并预览。\n每种相同状态至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁、已培养及未知状态机体不兑换。");
+            Status(L"重复机体兑换：先选择奖励并预览。\n按机体编号统计，每种至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁及已培养机体不会被选中；自定义机体请先锁定。");
             g_ui.Open();
         }
         if(action==ui::Action::GB || action==ui::Action::Item) {g_ui.Arm(false);BeginScan(action==ui::Action::GB?Kind::GB:Kind::Item);}
         if(action==ui::Action::Confirm && g_hasPreview) {
             Snapshot s;
-            if(!GetSnapshot(s) || !SamePreview(g_preview.before,s)) {g_hasPreview=false;Status(L"机库或机体状态已变化，请重新预览。");}
+            if(!GetSnapshot(s) || !(g_preview.serverBatch?SameGBPreview(g_preview.before,s):SamePreview(g_preview.before,s))) {g_hasPreview=false;Status(L"机库或机体状态已变化，请重新预览。");}
             else if(!g_ui.Armed())g_ui.Arm(true);
+            else if(g_preview.serverBatch)SubmitGB();
             else StartPlan(g_preview,s);
         }
     }
@@ -254,7 +308,23 @@ void Pump() {
             g_hasPreview=false;
             if(g_ui.Ready())CloseUi();
         } else UiRefresh();
-        if(Busy()) {
+        if(g_submittingGB) {
+            Snapshot current;
+            if(!GetSnapshot(current) || !SameGBPreview(g_gbBefore,current)) {
+                g_submittingGB=false;g_gbRequests.clear();Status(L"机库已变化，取消批量提交；请重新预览。");
+            }else {
+                for(int sent=0;sent<4 && g_submittingGB && g_gbIndex<g_gbRequests.size();++sent) {
+                    const auto& packet=g_gbRequests[g_gbIndex];
+                    if(!Send(packet.data(),static_cast<int>(packet.size()))){Stop(L"提交状态不明，请重新登录核对；不会自动重试。");break;}
+                    ++g_gbIndex;
+                }
+                if(g_submittingGB && g_gbIndex==g_gbRequests.size()) {
+                    g_submittingGB=false;g_gbRequests.clear();g_needsRelog=true;
+                    CloseUi();Status(L"已提交服务端批量回收，请退出并重新登录查看 GB。");
+                }
+            }
+        }
+        if(g_scanning || g_mutating) {
             Snapshot s;
             if(!GetSnapshot(s)){Stop(L"已停止：已离开机库或连接发生变化。请重新登录核对最后一笔状态。");g_pumping=false;return;}
             if(g_scanning) {
@@ -272,7 +342,7 @@ void Pump() {
                     Status(L"正在核对详情 "+std::to_wstring(g_scanIndex+1)+L" / "+std::to_wstring(g_scanIds.size())+L"；尚未兑换。");
                 }
                 if(g_scanning && !g_detailPending && g_scanIndex==g_scanIds.size()) {
-                    g_scanning=false;Preview(Duplicates(s,g_rules,g_keep,g_scanReward,g_sortAfter));
+                    g_scanning=false;Preview(Duplicates(s,g_rules,g_keep,g_scanReward,false));
                 }
             } else {
                 g_runner.Observe(s,now,g_timeout);
@@ -285,13 +355,14 @@ void Pump() {
                 }
                 const auto state=g_runner.state();
                 if(state==State::Complete) {
-                    g_mutating=false;RedrawNow();
-                    Status(L"完成 "+std::to_wstring(g_runner.completed())+L" 笔原生操作，机库已按回包同步，无需重新登录。\r\n奖励按服务器配置发放；道具使用原生奖励领取流程。");
+                    g_mutating=false;CloseUi();RedrawNow();
+                    Status(L"已确认兑换 "+std::to_wstring(g_runner.completed())+L" 台；奖励以服务器配置为准。");
                     g_api->Log(g_mod,SDGO_LOG_INFO,"completed %u native operations",static_cast<unsigned>(g_runner.completed()));
+                    if(g_sortAfter && g_runner.completed())BeginSort();
                 } else if(state==State::Unknown) {
                     g_mutating=false;g_needsRelog=true;Status(L"操作已暂停。已确认 "+std::to_wstring(g_runner.completed())+L" 笔，最后一笔状态未知。\r\n请重新登录核对；不会自动重试，请勿立即再次兑换。");
                 } else if(state==State::Stopped) {
-                    g_mutating=false;RedrawNow();Status(L"已停止，保留已确认的 "+std::to_wstring(g_runner.completed())+L" 笔结果。需要继续时请重新预览。");
+                    g_mutating=false;CloseUi();RedrawNow();Status(L"已停止，保留已确认的 "+std::to_wstring(g_runner.completed())+L" 笔结果。需要继续时请重新预览。");
                 } else Status(L"正在等待服务器确认 "+std::to_wstring(g_runner.completed())+L" / "+std::to_wstring(g_runner.total())+L"。可停止，不会回滚已确认结果。");
             }
         }
@@ -309,6 +380,7 @@ void __fastcall Page(void* self,void*) {
 }
 void __fastcall Clear(void* self,void*) {
     ++g_epoch;g_hasPreview=false;g_scanning=false;g_detailPending=0;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating){g_runner.Disconnect();g_mutating=false;Status(L"连接或机库缓存已重建，请重新预览。");}
     g_clear(self);
     g_needsRelog=false;

@@ -70,7 +70,7 @@ inline void* __fastcall Find(void* owner,void*,const NativeString* key,int type)
     assert(owner==dialog.data() && type==4);auto it=children.find(Copy(key));return it==children.end()?nullptr:it->second->memory.data();
 }
 inline void __fastcall Text(void* owner,void*,int index,const NativeString* value,int x,int y,int w,int h,uint32_t color,uint32_t,uint8_t,uint32_t font,int align) {
-    assert(index==0 && x==2 && y==3 && w>0 && h==14 && font==1 && (align==1 || align==2));
+    assert(index==0 && x==2 && (y==3 || y==0) && w>0 && h==14 && font==1 && (align==1 || align==2));
     for(auto& entry:children)if(entry.second->memory.data()==owner){entry.second->text=Copy(value);entry.second->color=color;entry.second->align=align;return;}
     assert(false);
 }
@@ -88,13 +88,15 @@ inline void Setup(void* existingService=nullptr) {
     children.clear();nodes.clear();dialog={};service={};creates=skinCalls=throwSkinAt=0;failAdd=failSkin=false;
     head={head.data(),head.data(),nullptr};Put(dialog.data(),0x23C,head.data());
     Put(dialog.data(),0,static_cast<void*>(reinterpret_cast<void*>(0x87654300)));
-    Put(dialog.data(),0x154,600);Put(dialog.data(),0x158,700);Put<uint8_t>(dialog.data(),0x162,1);
-    auto& original=Create(L"UnitDeleteBtn",132,0,128,24);
+    // Actual 1330.uir: full-screen parent, separate right-hand unit grid.
+    Put(dialog.data(),0x154,1024);Put(dialog.data(),0x158,768);Put<uint8_t>(dialog.data(),0x162,1);
+    auto& lock=Create(L"UnitLockBtn",418,33,127,18);
+    auto& original=Create(L"UnitDeleteBtn",551,33,127,18);
     for(int i=0;i<3;++i)AddSkin(original,L"synthetic/native-button-state-"+std::to_wstring(i),0,0,0);
     auto& hidden=Create(L"HiddenNativeIcon",0,100,20,20);hidden.memory[0x162]=0;
     void* s=existingService?existingService:service.data();
     Put(s,0,static_cast<void*>(reinterpret_cast<void*>(0x12345678)));
-    Put(s,0x44,dialog.data());Put(s,0x4C,original.memory.data());
+    Put(s,0x44,dialog.data());Put(s,0x48,lock.memory.data());Put(s,0x4C,original.memory.data());
 }
 inline void* Pointer(const wchar_t* name) {return children.at(name)->memory.data();}
 inline bool Shown(const wchar_t* name) {return Get<uint8_t>(Pointer(name),0x162)!=0;}

@@ -14,7 +14,9 @@ std::array<uint8_t,0x80> session{};
 uint8_t* infoPointer=info.data();uint8_t* profilePointer=profile.data();
 std::vector<Unit> owned;
 std::vector<uint8_t> pending;
+std::vector<std::vector<uint8_t>> mailRequests;
 int sends=0,paints=0,gb=0,items=0,nativeClicks=0;
+std::string refreshOrder;
 bool rejected=false;
 template<class T>void Put(void* p,size_t offset,T value){memcpy(static_cast<uint8_t*>(p)+offset,&value,sizeof(value));}
 Unit Make(uint64_t uid,uint32_t type,uint16_t slot){
@@ -23,7 +25,9 @@ Unit Make(uint64_t uid,uint32_t type,uint16_t slot){
 }
 uint8_t* __cdecl App(){return app.data();}
 uint8_t* __cdecl Session(){return session.data();}
-void __fastcall Page(void*,void*){++paints;}
+void __fastcall Page(void*,void*){++paints;refreshOrder+='P';}
+void __fastcall View(void*,void*){refreshOrder+='V';}
+void __fastcall Redraw(void*,void*){refreshOrder+='R';}
 void __fastcall Clear(void*,void*){owned.clear();}
 void __fastcall Sync(void*,void*,const uint8_t*){}
 void __fastcall NativeClick(void*,void*,void*){++nativeClicks;}
@@ -36,24 +40,28 @@ void __fastcall Brief(void*,void*,void* out,uint16_t slot){
 }
 void __fastcall Full(void*,void*,void* out,uint16_t slot){memset(out,0,153);for(const auto& u:owned)if(u.slot==slot && u.fullReady)memcpy(out,u.full.data(),153);}
 int __fastcall Send(void*,void*,int connection,const uint8_t* data,int size,int flags){
-    assert(connection==7 && flags==0 && pending.empty());pending.assign(data,data+size);++sends;return 1;
+    assert(connection==7 && flags==0);
+    if(Read<uint16_t>(data)==0x891)mailRequests.emplace_back(data,data+size);else assert(pending.empty());
+    pending.assign(data,data+size);++sends;return 1;
 }
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 SdgoApi api{};
 void Setup(){
     g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
-    pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;
+    pending.clear();mailRequests.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;refreshOrder.clear();
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
-    Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,static_cast<void*>(nullptr));
+    memcpy(profile.data()+0x161,"NativeFixture",14);
+    Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,reinterpret_cast<void*>(0xBAADF00D));
     Put(grid.data(),0,reinterpret_cast<void*>(0x12345678));Put(grid.data(),0x44,panel.data());panel[0x162]=1;
     Put(session.data(),0x14,7);Put(session.data(),0x58,uint32_t{0});Put(session.data(),0x5C,uint32_t{0});
     g_info=&infoPointer;g_profile=&profilePointer;g_grid=grid.data();g_gridVtable=Read<void*>(grid.data());
     g_app=&App;g_session=&Session;g_brief=reinterpret_cast<NativeGet>(&Brief);g_full=reinterpret_cast<NativeGet>(&Full);
-    g_send=reinterpret_cast<NativeSend>(&Send);g_page=reinterpret_cast<NativeVoid>(&Page);g_view=g_page;g_redraw=g_page;
+    g_send=reinterpret_cast<NativeSend>(&Send);g_page=reinterpret_cast<NativeVoid>(&Page);g_view=reinterpret_cast<NativeVoid>(&View);g_redraw=reinterpret_cast<NativeVoid>(&Redraw);
     g_clear=reinterpret_cast<NativeVoid>(&Clear);g_sync=reinterpret_cast<NativeSync>(&Sync);g_thread=GetCurrentThreadId();g_epoch=1;
     g_button=reinterpret_cast<ButtonFn>(&NativeClick);
-    api.Log=&Log;g_api=&api;g_scanning=g_mutating=g_hasPreview=g_needsRelog=false;g_detailPending=0;g_runner=Runner{};
+    api.Log=&Log;g_api=&api;g_scanning=g_mutating=g_hasPreview=g_needsRelog=false;g_detailPending=0;g_runner=Runner{};g_sortAfter=false;
+    g_submittingGB=false;g_gbRequests.clear();g_gbIndex=0;
     g_rules.clear();for(uint32_t i=1;i<=4;++i){Rule r;r.unit=i*10;r.rank=static_cast<int>(i);r.subrank=2;r.gb=static_cast<int>(i*400);r.item=2220008;r.amount=static_cast<int>(i*3);r.name=L"Synthetic unit";g_rules[r.unit]=r;}
 }
 Snapshot Capture(){Snapshot s;assert(GetSnapshot(s));return s;}
@@ -94,42 +102,63 @@ int main(){
     fixture::Setup();auto duplicates=Duplicates(fixture::Capture(),g_rules,2,Kind::GB,true);assert(duplicates.removed==1);
     fixture::Run(duplicates);assert(fixture::gb==400 && fixture::Capture().units.size()==4);
     fixture::Setup();fixture::Run(Duplicates(fixture::Capture(),g_rules,2,Kind::Item,false));assert(fixture::items==3 && fixture::gb==0);
-    fixture::Setup();BeginScan(Kind::GB);assert(g_scanning && g_scanIds.size()==3 && fixture::sends==0);
+    fixture::Setup();BeginScan(Kind::GB);assert(!g_scanning && g_hasPreview && g_preview.serverBatch && fixture::sends==0);
+    fixture::Setup();BeginScan(Kind::Item);assert(g_scanning && g_scanIds.size()==3 && fixture::sends==0);
     g_detailPending=101;DetailPacket detail;detail.uid=101;assert(::Send(reinterpret_cast<uint8_t*>(&detail),sizeof(detail)));fixture::Deliver();assert(g_detailObserved);
     fixture::Setup();s=fixture::Capture();auto plan=sdgo::hangar::Sort(s,g_rules);g_runner.Start(plan,s);auto action=*g_runner.Next(s);auto bytes=Packet(action);
     fixture::rejected=true;g_runner.Sent(1,::Send(bytes.data(),static_cast<int>(bytes.size())));fixture::Deliver();g_runner.Observe(fixture::Capture(),200,100);assert(g_runner.state()==State::Unknown);
     const auto epoch=g_epoch;::Clear(fixture::info.data(),nullptr);assert(g_epoch!=epoch);
     fixture::Setup();fixture::panel[0x162]=0;Snapshot invalid;assert(!GetSnapshot(invalid));
     fixture::Setup();fixture::info[0x20]=0;assert(!GetSnapshot(invalid) && fixture::sends==0);
-    fixture::Setup();fixture::Put(fixture::mode.data(),0x0C,reinterpret_cast<void*>(1));assert(!Visible() && !GetSnapshot(invalid));
+    fixture::Setup();fixture::Put(fixture::app.data(),0x4A0,uint32_t{22});assert(!Visible() && !GetSnapshot(invalid));
+    // The real lobby's service object has no game-mode member at +0C. Both
+    // nonzero neighboring heap bytes and an unreadable service must be ignored.
+    fixture::Setup();fixture::Put(fixture::app.data(),0x4A4,reinterpret_cast<void*>(1));assert(Visible() && GetSnapshot(invalid));
+    auto* guarded=static_cast<uint8_t*>(VirtualAlloc(nullptr,8192,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));assert(guarded);
+    DWORD oldProtection=0;assert(VirtualProtect(guarded+4096,4096,PAGE_NOACCESS,&oldProtection));
+    fixture::Put(fixture::app.data(),0x4A4,guarded+4096-8);assert(Visible() && GetSnapshot(invalid));
+    assert(VirtualFree(guarded,0,MEM_RELEASE));
+    for(uint32_t state:{0u,4u,21u,22u,23u,24u,25u,30u,UINT32_MAX}){
+        fixture::Put(fixture::app.data(),0x4A0,state);assert(!Visible() && !GetSnapshot(invalid));
+    }
     fixture::Setup();fixture::owned[1].lock=1;s=fixture::Capture();assert(ById(s,102)->lock==1);fixture::Run(sdgo::hangar::Sort(s,g_rules));assert(ById(fixture::Capture(),102)->slot==3);
     // Failed Mod initialization leaves the original unit-management actions usable.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());page_fixture::failSkin=true;
     assert(!g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"UnitDeleteBtn"));
     assert(fixture::nativeClicks==1 && fixture::sends==0);
+    // Sorting submits exactly one native authenticated server request. It never
+    // moves client-only slots or reports transport acceptance as completion.
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));
+    assert(!g_mutating && g_needsRelog && !g_ui.Exchange() && page_fixture::Shown(L"UnitDeleteBtn"));
+    assert(fixture::sends==1 && fixture::pending.size()==0x159 && Read<uint16_t>(fixture::pending.data())==0x891);
+    assert(!memcmp(fixture::pending.data()+0x1B,kSortRecipient,sizeof(kSortRecipient)-1));
+    assert(fixture::refreshOrder.empty() && ById(fixture::Capture(),102)->slot==3);
+    assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"已提交")!=std::wstring::npos);
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarSort"));assert(fixture::sends==1);
     // Exercise the production native page event handler all the way through
     // detail requests, preview, both confirmations and synthetic native replies.
     fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarOpen"));
     assert(g_ui.Exchange() && fixture::sends==0);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarGB"));
-    for(int i=0;i<20 && g_scanning;++i) {
-        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
-    }
-    assert(!g_scanning && g_hasPreview && g_preview.removed==1 && !g_mutating && fixture::gb==0);
+    assert(!g_scanning && g_hasPreview && g_preview.removed==1 && !g_mutating && fixture::gb==0 && fixture::sends==0);
     const auto beforeConfirm=fixture::sends;
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
     assert(g_ui.Armed() && !g_mutating && fixture::sends==beforeConfirm);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
-    assert(g_mutating && fixture::sends==beforeConfirm);
-    for(int i=0;i<30 && g_mutating;++i) {
-        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
-    }
-    assert(!g_mutating && fixture::gb==400 && fixture::owned.size()==4);
+    assert(g_submittingGB && !g_mutating && fixture::sends==beforeConfirm);
+    for(int i=0;i<30 && g_submittingGB;++i){g_nextTick=0;Pump();}
+    assert(!g_submittingGB && g_needsRelog && fixture::mailRequests.size()==3 && fixture::gb==0 && fixture::owned.size()==5);
+    assert(std::string(reinterpret_cast<const char*>(fixture::mailRequests.back().data()+0x2C)).back()=='C');
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    g_ui.Open();BeginScan(Kind::GB);g_ui.Arm(true);SubmitGB();
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));g_nextTick=0;Pump();
+    assert(!g_submittingGB && fixture::sends==0);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));assert(!g_ui.Exchange());
     // A second confirmation must never bypass the current native snapshot.
-    g_ui.Open();g_scanReward=Kind::GB;Preview(Duplicates(fixture::Capture(),g_rules,1,Kind::GB,false));
+    g_ui.Open();g_scanReward=Kind::GB;Preview(GBPreview(fixture::Capture(),g_rules,1));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));assert(g_ui.Armed());
     fixture::owned[0].lock=1;const auto beforeChange=fixture::sends;
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));

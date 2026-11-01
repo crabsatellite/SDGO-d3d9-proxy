@@ -24,6 +24,9 @@ struct Weapon {
     float cycleMs;
     float projectileSpeed;
     std::uint32_t id;
+    std::uint8_t attackStyle;
+    std::uint8_t rangeType;
+    bool ordinary;
 };
 
 struct Capabilities {
@@ -300,7 +303,7 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
     for (int slot = 0; slot < 4; ++slot) {
         value.weapons[slot] = Weapon{
             slot, false, false, false, false, WeaponKind::Other,
-            0.0f, 0.0f, 0.0f, 0.0f, 0
+            0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, false
         };
     }
 
@@ -399,6 +402,10 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
         const bool hasProjectileInitializer =
             projectileInitializerType != 0 ||
             projectileInitializerFirstCharacter != 0;
+        const bool ordinary = slot < ordinaryCount && attackStyle != 2;
+        weapon.attackStyle = attackStyle;
+        weapon.rangeType = rangeType;
+        weapon.ordinary = ordinary;
         weapon.kind = Classify(attackStyle, rangeType, speedRate,
                                hasRangedScript, hasProjectileInitializer);
         weapon.movingShot = movingShot != 0;
@@ -437,7 +444,6 @@ inline bool ReadOnce(std::uint8_t* unit, Capabilities& out) noexcept {
         // Every non-fatal record in an ordinary slot can still be executed by
         // the native FSM.  Keep scripted/funnel records valid as Other so the
         // caller can retain native behavior instead of making the unit stop.
-        const bool ordinary = slot < ordinaryCount && attackStyle != 2;
         weapon.valid = ordinary;
         const bool unlimitedMelee = rangeType == 1 && maxAmmo == 0;
         weapon.ammoReady = unlimitedMelee || (maxAmmo > 0 && ammo > 0);

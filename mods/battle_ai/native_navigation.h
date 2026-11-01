@@ -52,6 +52,7 @@ constexpr std::size_t kDocumentQuadTree = 0x82C4;
 constexpr std::size_t kOwnerScene = 0x34;
 constexpr std::size_t kSceneBackPointer = 0x0C;
 constexpr std::size_t kObjectId = 0x04;
+constexpr std::size_t kObjectTeam = 0x20;
 constexpr std::size_t kSceneAabb = 0xBC;
 constexpr std::size_t kObbCount = 0xD4;
 constexpr std::size_t kObbArray = 0xD8;
@@ -94,7 +95,8 @@ inline bool ValidAabb(const Aabb& bounds) noexcept {
 
 inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* document,
                                  std::uint8_t* owner, std::uint32_t targetId,
-                                 Vec3 from, Vec3 to) noexcept {
+                                 Vec3 from, Vec3 to,
+                                 bool ignoreFriendly = false) noexcept {
     if (!api.query || !api.segmentAabb || !api.terrainRay || !api.rayObb ||
         !api.raySphere || !document || !owner || targetId == 0 ||
         !Finite(from) || !Finite(to)) {
@@ -139,6 +141,7 @@ inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* documen
         if (scene == ownerScene) continue;
 
         auto* object = *reinterpret_cast<std::uint8_t**>(scene + kSceneBackPointer);
+        if (object == owner) continue;
         if (object && *reinterpret_cast<std::uint32_t*>(object + kObjectId) == targetId) {
             continue;
         }
@@ -158,6 +161,19 @@ inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* documen
                 return false;
             }
             continue;
+        }
+        // Native ranged visibility ignores a non-neutral same-team body.
+        // Strict callers such as melee leave ignoreFriendly disabled.
+        if (ignoreFriendly && object) {
+            const int ownerTeam =
+                *reinterpret_cast<const int*>(owner + kObjectTeam);
+            const int objectTeam =
+                *reinterpret_cast<const int*>(object + kObjectTeam);
+            if (ownerTeam != 0 && ownerTeam != 5 &&
+                objectTeam != 0 && objectTeam != 5 &&
+                ownerTeam == objectTeam) {
+                continue;
+            }
         }
 
         const int obbCount = *reinterpret_cast<const int*>(scene + kObbCount);
@@ -198,16 +214,19 @@ inline bool FreshLineClearUnsafe(const NavigationApi& api, std::uint8_t* documen
 
 inline bool FreshLineClear(const NavigationApi& api, std::uint8_t* document,
                            std::uint8_t* owner, std::uint32_t targetId,
-                           Vec3 from, Vec3 to) noexcept {
+                           Vec3 from, Vec3 to,
+                           bool ignoreFriendly = false) noexcept {
 #if defined(_MSC_VER) && defined(_WIN32)
     // Keep the SEH frame free of objects with non-trivial destructors.
     __try {
-        return detail::FreshLineClearUnsafe(api, document, owner, targetId, from, to);
+        return detail::FreshLineClearUnsafe(
+            api, document, owner, targetId, from, to, ignoreFriendly);
     } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
         return false;
     }
 #else
-    return detail::FreshLineClearUnsafe(api, document, owner, targetId, from, to);
+    return detail::FreshLineClearUnsafe(
+        api, document, owner, targetId, from, to, ignoreFriendly);
 #endif
 }
 

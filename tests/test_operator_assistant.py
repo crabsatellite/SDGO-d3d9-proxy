@@ -281,6 +281,7 @@ class HTTPTests(unittest.TestCase):
         config=configparser.ConfigParser()
         config.read_string(package.read('client/sdgo/mods/operator_catalog/display.ini').decode('utf-16'))
         self.assertEqual(config['operator:60003']['FixedName'],'1')
+        self.assertEqual(config['operator:60003']['MissionParts'],'1')
 
     def test_foreign_origin_token_and_host_cannot_write(self):
         for kw in [{'token':False},{'origin':'https://unrelated.invalid'},{'host':'unrelated.invalid'}]:

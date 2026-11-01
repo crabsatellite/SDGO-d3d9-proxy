@@ -161,6 +161,15 @@ template<class T> bool Bind(T& target, const char* name) {
 }
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoAiCatalogMasteredWeaponTypeV1(uint32_t unitId) {
+    for(const auto& row:g_catalog.records) if(row.unitId==unitId) {
+        // Packed native UnitData: UnitNumber + four byte attributes precede
+        // MasteredWeaponType. Same schema as backend/ai_catalog.py UNIT_FIELDS.
+        int role=row.nativeUnitPrefix[8];return role<=2?role:-1;
+    }
+    return -1;
+}
+
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
     std::string error;

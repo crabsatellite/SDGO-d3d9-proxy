@@ -164,6 +164,7 @@ namespace
     GameCalls g_game = {};
 
     std::vector<uint32_t> g_wingmen; // object ids of the AI participants of this mission
+    std::vector<uint32_t> g_localWingmen; // only this client's simulated participants
 
     int RecordCount(uint8_t* room, size_t begin, size_t end)
     {
@@ -177,6 +178,7 @@ namespace
     void SpawnAiParticipants(uint8_t* mode)
     {
         g_wingmen.clear();
+        g_localWingmen.clear();
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
@@ -226,6 +228,8 @@ namespace
             g_game.addAiUnit(um, unit);
             *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = *reinterpret_cast<uint32_t*>(record + kRecordServerId);
             g_wingmen.push_back(objectId);
+            if (local)
+                g_localWingmen.push_back(objectId);
             g_api->Log(g_mod, SDGO_LOG_INFO, "AI participant %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)),
                        static_cast<unsigned long>(objectId), static_cast<unsigned long>(npcData), team, slot,
@@ -247,6 +251,12 @@ namespace
 
     void __fastcall MissionInit(uint8_t* mode, void* /*edx*/)
     {
+        // Rule initialization may warp humans before spawning the new wingmen.
+        // Never expose the previous mission's reused object ids to that callback.
+        if (*reinterpret_cast<const void* const*>(mode) == g_game.missionVtable) {
+            g_wingmen.clear();
+            g_localWingmen.clear();
+        }
         g_game.originalInit(mode);
         // CAINormalGameMode and the other AI modes derive from CMissionMode and spawn
         // their AI participants themselves: only a plain co-op mission is handled here.
@@ -279,6 +289,13 @@ namespace
         for (uint32_t id : g_wingmen)
             g_lua.pushnumber(L, static_cast<double>(id));
         return static_cast<int>(g_wingmen.size());
+    }
+
+    int __cdecl Lua_LocalWingmen(lua_State* L)
+    {
+        for (uint32_t id : g_localWingmen)
+            g_lua.pushnumber(L, static_cast<double>(id));
+        return static_cast<int>(g_localWingmen.size());
     }
 
     // ---- loading Lua source into the game's state --------------------------
@@ -354,6 +371,7 @@ namespace
         SetGlobalFunction(L, "SDGO_Log", Lua_Log);
         SetGlobalFunction(L, "SDGO_Now", Lua_Now);
         SetGlobalFunction(L, "SDGO_Wingmen", Lua_Wingmen);
+        SetGlobalFunction(L, "SDGO_LocalWingmen", Lua_LocalWingmen);
         if (!RunChunk(L, g_configChunk, "=mission_ai config"))
             return false;
         std::string chunkName = "@" + g_scriptPath;

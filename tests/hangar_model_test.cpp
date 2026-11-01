@@ -1,4 +1,5 @@
 #include "sdgo/hangar_model.h"
+#include "sdgo/hangar_sort_request.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -16,7 +17,21 @@ Snapshot Execute(Plan p) {
     auto s=p.before;for(const auto& a:p.actions){assert(Allowed(s,a));s=Applied(s,a);Validate(s);}return s;
 }
 int main() {
+    const auto request=ServerSortRequest("NativeFixture","12345678-1234-1234-1234-123456789abc");
+    assert(request[0]==0x91 && request[1]==0x08 && !request[2]);
+    for(const auto& invalid:std::vector<std::string>{"",std::string(36,'Z'),std::string(36,'0')}) {
+        bool rejected=false;try{ServerSortRequest("NativeFixture",invalid);}catch(const std::invalid_argument&){rejected=true;}assert(rejected);
+    }
     const auto rules=Definitions();
+    {
+        auto s=Base();for(int i=1;i<=50;++i){auto u=Make(i,10,static_cast<uint16_t>(i));u.fullReady=false;s.units.push_back(u);}s.capacity=60;s.activeSlot=60;
+        auto plan=GBPreview(s,rules,2);assert(plan.serverBatch && plan.removed==48 && plan.expectedGB==48*400);
+        const auto requests=ServerGBRequests("NativeFixture","12345678-1234-1234-1234-123456789abc",plan,2,false);
+        assert(requests.size()==8 && std::string(reinterpret_cast<const char*>(requests.back().data()+0x2C)).back()=='C');
+        for(const auto& bytes:requests)assert(strlen(reinterpret_cast<const char*>(bytes.data()+0x2C))<=300);
+        bool rejected=false;try{Runner run;run.Start(plan,s);}catch(const std::runtime_error&){rejected=true;}assert(rejected);
+        auto updated=s;updated.units[0].lock=1;assert(!SameGBPreview(s,updated));
+    }
     {
         auto s=Base();s.units={Make(1,10,1),Make(2,40,4),Make(3,30,7),Make(4,20,8)};
         auto after=Execute(Sort(s,rules));assert(ById(after,2)->slot==1);assert(ById(after,3)->slot==2);assert(ById(after,1)->slot==3);assert(ById(after,4)->slot==8);
@@ -35,19 +50,20 @@ int main() {
     }
     {
         auto s=Base();s.units={Make(1,10,1),Make(2,10,2),Make(3,10,3),Make(4,10,4),Make(5,10,5),Make(6,20,8)};
-        s.units[3].full[40]=7; // different paint/custom state is not redundant
+        s.units[3].full[40]=7; // state variants remain duplicates of one UnitNumber
         s.units[4].level=2; // trained copy never exchanged
-        auto plan=Duplicates(s,rules,2,Kind::GB,false);assert(plan.removed==1 && plan.expectedGB==400);
-        assert(plan.actions[0].first==1);auto after=Execute(plan);assert(ById(after,4) && ById(after,5) && ById(after,2) && ById(after,3));
-        plan=Duplicates(s,rules,2,Kind::Item,true);assert(plan.expectedItems[2220008]==3);assert(plan.actions[0].kind==Kind::Item);Execute(plan);
-        s.units[0].fullReady=false;assert(Duplicates(s,rules,2,Kind::GB,false).removed==0);
+        auto plan=Duplicates(s,rules,2,Kind::GB,false);assert(plan.removed==3 && plan.expectedGB==1200);
+        assert(plan.actions[0].first==1 && plan.actions[1].first==2 && plan.actions[2].first==3);
+        auto after=Execute(plan);assert(ById(after,4) && ById(after,5));
+        plan=Duplicates(s,rules,2,Kind::Item,true);assert(plan.expectedItems[2220008]==9);assert(plan.actions[0].kind==Kind::Item);Execute(plan);
+        s.units[0].fullReady=false;assert(Duplicates(s,rules,2,Kind::GB,false).removed==3);
     }
     {
         auto s=Base();s.units={Make(1,10,1),Make(2,10,2),Make(3,10,3)};
-        s.units[0].lock=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==0);
-        s.units[0].lock=0;s.units[0].rental=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==0);
-        s.units[0].rental=0;s.units[0].ship=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==0);
-        s.units[0].ship=0;s.activeSlot=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==0);
+        s.units[0].lock=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==1);
+        s.units[0].lock=0;s.units[0].rental=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==1);
+        s.units[0].rental=0;s.units[0].ship=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==1);
+        s.units[0].ship=0;s.activeSlot=1;assert(Duplicates(s,rules,2,Kind::GB,false).removed==1);
         auto bad=s;bad.units[1].uid=1;bool rejected=false;try{Validate(bad);}catch(...){rejected=true;}assert(rejected);
         rejected=false;try{Duplicates(s,rules,0,Kind::GB,false);}catch(...){rejected=true;}assert(rejected);
     }

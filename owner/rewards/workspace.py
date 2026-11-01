@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import threading
 import uuid
-from . import model
+from . import model, progression
 from .runtime_control import RuntimeControl
 
 
@@ -47,6 +47,7 @@ class Workspace:
                 "human_rule": "1.1^(human_count-1)",
                 "ai_match_tier": "same_as_pvp",
                 "event_multiplier_source": "double_time_component",
+                "progression": progression.public(policy),
             })
 
     def save(self, value, expected):
@@ -63,11 +64,11 @@ class Workspace:
             self._write(candidate)
             try:
                 self.runtime.publish(candidate)
-            except OSError as error:
+            except (OSError, ValueError) as error:
                 self._write(current)
                 try:
                     self.runtime.publish(current)
-                except OSError:
+                except (OSError, ValueError):
                     pass
                 raise error
             return self.public()
@@ -75,6 +76,16 @@ class Workspace:
     def multiplier(self, value, expected):
         with self.lock:
             return self.save(model.with_multiplier(self.read(), value), expected)
+
+    def solo_preset(self, expected):
+        with self.lock:
+            return self.save(progression.solo_policy(self.read()), expected)
+
+    def save_progression(self, value, expected):
+        with self.lock:
+            policy = self.read()
+            policy["progression"] = progression.validate(copy.deepcopy(value))
+            return self.save(policy, expected)
 
     def preview(self, value):
         with self.lock:

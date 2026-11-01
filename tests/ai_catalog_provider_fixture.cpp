@@ -1,4 +1,7 @@
 #include <cstdint>
+extern "C" __declspec(dllexport) int __cdecl SdgoAiCatalogMasteredWeaponTypeV1(uint32_t unit) {
+    return unit==700?0:unit==701?1:-1;
+}
 // An isolated provider contract fixture; never staged into a game package.
 extern "C" __declspec(dllexport) int __cdecl SdgoAiCatalogPoolV1(int level,uint32_t* ids,uint32_t capacity) {
     if(level==2) return 0;
