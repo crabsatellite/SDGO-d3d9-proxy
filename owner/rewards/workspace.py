@@ -64,11 +64,11 @@ class Workspace:
             self._write(candidate)
             try:
                 self.runtime.publish(candidate)
-            except OSError as error:
+            except (OSError, ValueError) as error:
                 self._write(current)
                 try:
                     self.runtime.publish(current)
-                except OSError:
+                except (OSError, ValueError):
                     pass
                 raise error
             return self.public()

@@ -86,6 +86,16 @@ class ProgressionTests(unittest.TestCase):
             self.assertTrue(repo.bonus_policy['enabled'])
             self.assertIn(b'CurrentMb=4000', (worker.receipts/path.name).read_bytes())
 
+    def test_snapshot_conflict_restores_canonical_policy_and_native_revision(self):
+        with tempfile.TemporaryDirectory() as root:
+            w=Workspace(root);state=w.public();before=w.path.read_bytes();native=w.runtime.policy_path.read_bytes()
+            candidate=progression.solo_policy(w.read())
+            collision=w.runtime.root/'policies'/(model.revision(candidate)+'.json')
+            collision.write_text('{}')
+            with self.assertRaises(ValueError):w.solo_preset(state['revision'])
+            self.assertEqual(w.path.read_bytes(),before)
+            self.assertEqual(w.runtime.policy_path.read_bytes(),native)
+
 
 class ProgressionSqlTests(sql_fixture.RewardRepositorySqlIntegrationTests):
     def setUp(self):
