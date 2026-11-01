@@ -19,6 +19,7 @@
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
 | 军衔回退修复 | 防止较高子等级误将当前军衔降级，例如 `15-1 → 5-2` | `rank_progression_fix` | World 服务器 | [使用说明](docs/rank-progression-fix.zh-CN.md) |
+| 新账号起始资料修复 | 新账号默认 5,000 GP、0 点券、下士；首次建档自动赠送最多一台机体，保留已有养成 | `new_account_profile` | World 服务器 | [使用说明](docs/new-account-profile.zh-CN.md) |
 <!-- /mod-category:fixes -->
 
 军衔修复通过 WorldServer 的框架加载，将对应结算调用交给 Mod 自己的修正版过程，保留原生过程，无需更新玩家客户端。

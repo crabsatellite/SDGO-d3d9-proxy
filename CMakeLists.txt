@@ -151,6 +151,8 @@ sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle
              SOURCES mods/room_titles_server/room_titles_server.cpp mods/room_titles_server/room_titles_server_logic.cpp
              LIBS room_metadata_common bcrypt)
 
+sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
 add_custom_target(sdgo_data ALL
@@ -278,7 +280,8 @@ if(BUILD_TESTING)
         add_test(NAME installer_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_test.ps1"
             -BuildDir "${CMAKE_BINARY_DIR}")
-        set_tests_properties(installer_offline PROPERTIES TIMEOUT 60)
+        # Exercises repeated client/Battle/World updates in child PowerShell processes.
+        set_tests_properties(installer_offline PROPERTIES TIMEOUT 180)
         add_test(NAME mod_staging_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/staging_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
@@ -380,4 +383,15 @@ if(BUILD_TESTING)
         add_test(NAME room_title_native_offline COMMAND room_title_native_test "${SDGO_ROOM_TITLE_NATIVE_HOST}")
         set_tests_properties(room_title_native_offline PROPERTIES TIMEOUT 30)
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(new_account_policy_test tests/new_account_policy_test.cpp)
+    sdgo_strict(new_account_policy_test)
+    add_test(NAME new_account_policy COMMAND new_account_policy_test)
+    set_tests_properties(new_account_policy PROPERTIES TIMEOUT 30)
+    # Opt-in SQL fixture: needs an isolated container and local credentials.
+    add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
+    target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(new_account_sql_test)
 endif()

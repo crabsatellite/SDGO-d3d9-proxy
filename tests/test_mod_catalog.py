@@ -43,6 +43,14 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix"}.issubset({m["id"] for m in c["mods"]}))
         self.assertTrue(all(m["category"] == "fixes" for m in c["mods"]))
 
+    def test_starter_policy_is_a_default_server_fix(self):
+        c = catalog.select_catalog(catalog.read_catalog(self.root), "base")
+        mod = next(m for m in c["mods"] if m["id"] == "new_account_profile")
+        self.assertEqual(mod["target"], "server")
+        self.assertTrue(mod["enabled_by_default"])
+        self.assertEqual(mod["config_files"], ["config.ini"])
+        self.assertEqual(mod["hosts"], ["WorldServer-548A86E3-0010C000"])
+
     def test_catalog_and_package_contents_follow_category_order(self):
         c = catalog.read_catalog(self.root)
         order = {key: i for i, key in enumerate(c["categories"])}
