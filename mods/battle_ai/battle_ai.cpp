@@ -18,6 +18,9 @@
 #include "native_capabilities.h"
 #include "native_navigation.h"
 #include "difficulty.h"
+#include "defence_math.h"
+#include "native_defence.h"
+#include "native_loadout.h"
 
 namespace {
 struct lua_State;
@@ -85,12 +88,19 @@ MessageFn g_message=nullptr;
 void* g_contactReturn=nullptr;
 IntentFn g_queueSwing=nullptr,g_faceTarget=nullptr;
 IntentFn g_attackAdmission=nullptr;
+IntentFn g_facingUpdate=nullptr;
 RotateFn g_rotate=nullptr;
 thread_local uint8_t* g_receiptFsm=nullptr;
 using AppFn=uint8_t*(__cdecl*)();
 using SkillGateFn=bool(__thiscall*)(uint8_t*);
+using SpecialNoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
+using CanonicalFn=uint32_t(__thiscall*)(uint8_t*,uint32_t);
 AppFn g_app=nullptr;
 SkillGateFn g_playerSkillGate=nullptr;
+SpecialNoticeFn g_specialNotice=nullptr;
+SpecialNoticeFn g_meleeNotice=nullptr,g_rangedNotice=nullptr;
+SpecialNoticeFn g_spStateNotice=nullptr,g_skillNotice=nullptr;
+CanonicalFn g_canonical=nullptr;
 int g_appliedRoomDifficulty=-1;
 void* g_plainProjectileEntry=nullptr;
 GoalFn g_setGoal=nullptr;
@@ -99,6 +109,15 @@ DeleteFn g_delete=nullptr;
 uint8_t** g_document=nullptr;
 battle_ai::native::NavigationApi g_navigation={};
 struct RuntimeSettings { bool generic=false,enabled=true,aim=true,lead=true; int maxLeadMs=3000,difficulty=1,quickSwing=80; } g_runtime;
+struct DefencePlan {
+    battle_ai::DefenceThreat threats[32];size_t count=0;
+    battle_ai::DefenceMove movement;
+    Vec3 shieldThreat;
+    uint32_t routeTarget=0;
+    ULONGLONG at=0;
+    bool threatened=false,shielding=false;
+    bool shieldHitKnown=false;uint8_t shieldHitType=0;
+};
 struct Actor {
     uint64_t generation=0;
     ULONGLONG seen=0,aimAt=0,nextPulse=0;
@@ -117,6 +136,13 @@ struct Actor {
     uint32_t startupTarget=0;
     float cueAngle=0;
     int specialSlotLease=-1;
+    DefencePlan defence;
+    ULONGLONG turnedAt=0,defenceRepathAt=0;
+    bool defenceMoveOwned=false;
+    uint32_t expectedSpecialWeapon=0;
+    ULONGLONG expectedSpecialAt=0;
+    bool specialAcknowledged=false;
+    ULONGLONG specialAcknowledgedAt=0;
 };
 std::unordered_map<uint8_t*,Actor> g_actors;
 void ClearStartup(uint8_t*,Actor&,bool);
@@ -126,6 +152,8 @@ struct RangedActivity {ULONGLONG time=0,primaryAt=0;uint32_t target=0,weapon=0,p
 std::unordered_map<uint8_t*,RangedActivity> g_rangedShots;
 struct Contact {uint32_t target=0,action=0;int combo=0;ULONGLONG time=0;uint8_t* victim=nullptr;};
 std::unordered_map<uint8_t*,Contact> g_contacts;
+struct Incoming {uint32_t attacker=0;Vec3 point;ULONGLONG time=0;bool melee=false;uint8_t hitType=0;bool hitKnown=false;};
+std::unordered_map<uint8_t*,std::vector<Incoming>> g_incoming;
 struct LearnedSpeed { float perUpdate=0;int modifier=0;ULONGLONG seen=0;bool nonlinear=false; };
 struct FlightRun { uint64_t key=0;float speed=0;int stable=0;ULONGLONG seen=0;Vec3 end; };
 std::unordered_map<uint64_t,LearnedSpeed> g_speeds;
@@ -135,6 +163,15 @@ thread_local bool g_nativeFallback=false;
 std::atomic<DWORD> g_gameThread{0};
 std::mutex g_pendingMutex;
 std::vector<uint8_t*> g_pendingInit;
+struct SpNotice {uint32_t pilot=0,weapon=0;int32_t value=-1;ULONGLONG time=0;uint64_t sequence=0;bool begin=false,stateOnly=false,finish=false;};
+std::mutex g_spMutex;
+std::vector<SpNotice> g_pendingSp;
+std::atomic<uint64_t> g_spSequence{0};
+struct SpSnapshot {uint64_t sequence=0;int32_t value=0;};
+std::unordered_map<uint8_t*,SpSnapshot> g_spSnapshots;
+std::mutex g_loadoutMutex;
+std::unordered_map<uint8_t*,battle_ai::loadout::ClientApplyState> g_loadouts;
+battle_ai::loadout::ClientNativeFunctions g_loadoutNative;
 int g_observationFaults=0;
 
 uint64_t SpeedKey(uint32_t unitId,uint32_t weaponId,bool alternate) {
@@ -180,6 +217,45 @@ bool Owned(uint8_t* unit) {
             *reinterpret_cast<uint32_t*>(unit+0x3238)>=3604001 &&
             *reinterpret_cast<uint32_t*>(unit+0x3238)<=3607000;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool ClientLoadoutProfile(void* context,const void*,battle_ai::loadout::NativeProfile* output) {
+    using namespace battle_ai::native::detail;
+    auto unit=static_cast<uint8_t*>(context);uint8_t* fsm=nullptr;uint8_t* definition=nullptr;uint8_t alternate=0;
+    if(!output||!ReadPointer(unit,0x9CC,fsm)||!ReadPointer(unit,0x9C4,definition)||!Read(unit,0xE34,alternate)||alternate>1) return false;
+    battle_ai::loadout::WeaponProfile weapons[3]={};size_t count=0;
+    for(size_t slot=0;slot<3;++slot) {
+        uint32_t id=0,recordId=0;uint8_t* record=nullptr;uint8_t rangeType=0,style=0;
+        if(!Read(definition,0x249+slot*4,id)) return false;
+        if(!id) continue;
+        auto bank=alternate?0x56C:0x24C;
+        if(!ReadPointer(fsm,bank+slot*0xC8+0xC,record)||!Read(record,0,recordId)||recordId!=id||
+           !Read(record,0x69,style)||!Read(record,0x6A,rangeType)) return false;
+        if(style==2) continue;
+        if(style<1||style>3||rangeType<1||rangeType>8) return false;
+        auto& facts=weapons[count++];facts.style=style;facts.rangeType=rangeType;
+        if(!Read(record,0x6C,facts.damage)||!Read(record,0x72,facts.range)||!Read(record,0x7C,facts.magazine)||!Read(record,0x264,facts.maxCombo)) return false;
+    }
+    *output=battle_ai::loadout::ProfileFromWeapons(weapons,count);return count!=0;
+}
+void ApplyNativeAbsoluteSp(uint8_t*,int32_t);
+battle_ai::loadout::ApplyResult InitializeLoadout(uint8_t* unit,int options,uint32_t generation) {
+    __try {
+        int difficulty=options&0xFF;bool initial=(options&0x100)!=0;
+        if(!unit||!generation||!g_api||g_preparationFault||difficulty<0||difficulty>2||
+           (options&~0x1FF)!=0||
+           GetPrivateProfileIntW(L"settings",L"Enabled",1,g_config.c_str())==0) return battle_ai::loadout::ApplyResult::InvalidArgument;
+        auto npc=*reinterpret_cast<uint32_t*>(unit+0x3238);
+        if(npc<3604001||npc>3607000) return battle_ai::loadout::ApplyResult::InvalidArgument;
+        auto definition=*reinterpret_cast<uint8_t**>(unit+0x9C4);
+        battle_ai::loadout::NativeLoadout plan;
+        battle_ai::loadout::NativeProfileSource source{unit,ClientLoadoutProfile};
+        if(!battle_ai::loadout::FromNativeSource(static_cast<battle_ai::Difficulty>(difficulty),source,definition,&plan)) return battle_ai::loadout::ApplyResult::NativeUnavailable;
+        if(g_loadouts.size()>2048) g_loadouts.clear();
+        auto& state=g_loadouts[unit];
+        bool newGeneration=!battle_ai::loadout::SameGeneration(state,unit,generation);
+        if(initial&&difficulty>=1&&newGeneration) ApplyNativeAbsoluteSp(unit,0);
+        return battle_ai::loadout::ApplyClient(unit,generation,plan,g_loadoutNative,&state);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return battle_ai::loadout::ApplyResult::NativeUnavailable;}
 }
 Vec3 Position(uint8_t* unit) { return *reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(unit+8)+0x88); }
 Vec3 AimPoint(uint8_t* unit) {
@@ -231,10 +307,20 @@ bool FairSpecialResource(uint8_t* fsm,uint8_t* owner) {
             battle_ai::native::detail::Read(controller,0x2C0,restriction)&&restriction==0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
+bool PlayerBotRulesMode() {
+    __try {
+        auto app=g_app?g_app():nullptr;if(!app) return false;
+        auto service=*reinterpret_cast<uint8_t**>(app+0x4A4);if(!service) return false;
+        auto mode=*reinterpret_cast<uint8_t**>(service+0xC);if(!mode) return false;
+        auto room=*reinterpret_cast<uint8_t**>(mode+8);if(!room) return false;
+        auto kind=*reinterpret_cast<uint16_t*>(room+0x66);
+        return kind!=5&&kind!=8&&kind!=10&&kind!=11&&kind!=12;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
 void RestoreIntent(uint8_t* unit,Actor& a) {
     __try {
         ClearStartup(unit,a,!ControlBlocked(unit));
-        if(a.controlled) { g_setIntent(unit,0);g_stop(unit); }
+        if(a.controlled||a.defenceMoveOwned) { g_setIntent(unit,0);g_stop(unit); }
         if(a.ownsIntent) *reinterpret_cast<int*>(unit+0x31F4)=a.savedWait;
         if(a.ownsAim) {
             *reinterpret_cast<float*>(unit+0x3204)=a.savedYawError;
@@ -242,6 +328,7 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
     a.controlled=false;a.ownsIntent=false;a.ownsAim=false;a.aimTarget=0;a.suppressMelee=false;a.path.clear();
+    a.defenceMoveOwned=false;a.defence={};
 }
 void FollowPath(uint8_t* unit,Actor& a) {
     if(a.path.empty()) return;
@@ -269,6 +356,8 @@ struct TargetObservation {
     float distance=0;
     bool visible=false,enemy=false,attackable=false,rangedFiring=false,meleeTracking=false,meleeSwinging=false,hurt=false;
     uint32_t selectedTarget=0;
+    uint8_t hitType=0;bool hitKnown=false;
+    bool meleeApproaching=false;
     Vec3 point,ground,velocity,forward;
 };
 struct AllyObservation {uint32_t id=0,target=0;Vec3 pos;bool meleeTracking=false,meleeSwinging=false;RangedActivity ranged;Contact contact;};
@@ -284,6 +373,37 @@ struct Observation {
     TargetObservation targets[128];
     size_t count=0;
 };
+void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
+    if(actor.defence.at&&now-actor.defence.at<80&&(!o.meleePressure||actor.defence.shielding)) return;
+    bool continuing=actor.defence.threatened&&now-actor.defence.at<250;
+    actor.defence={};
+    if(!g_runtime.enabled||g_runtime.difficulty<1) return;
+    auto& plan=actor.defence;plan.at=now;
+    Vec3 forward=*reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(g_current+8)+0x6C);
+    forward=battle_ai::Horizontal(forward);
+    if(!battle_ai::Finite(forward)||battle_ai::Length(forward)<0.5) return;
+    double nearest=1e30;auto add=[&](uint32_t id,Vec3 point,float weight,bool melee,uint8_t hitType,bool hitKnown) {
+        if(!battle_ai::Finite(point)||battle_ai::Length(point-o.pos)<1) return;
+        auto direction=battle_ai::Horizontal(point-o.pos);
+        double facing=battle_ai::Dot(forward,direction);
+        if(facing<-0.12||(continuing&&facing<0.995)||melee) plan.threatened=true;
+        if(plan.count<32) plan.threats[plan.count++]={point,weight};
+        auto distance=battle_ai::Length(point-o.pos);
+        if(!plan.routeTarget) plan.routeTarget=id;
+        if(melee&&distance<nearest) {nearest=distance;plan.shieldThreat=point;plan.shielding=true;plan.shieldHitType=hitType;plan.shieldHitKnown=hitKnown;}
+    };
+    for(size_t i=0;i<o.count;++i) {
+        const auto& t=o.targets[i];if(!t.visible||!t.attackable||t.hp<=0) continue;
+        bool melee=t.selectedTarget==o.id&&(t.meleeTracking||t.meleeSwinging)&&t.distance<600;
+        add(t.id,t.ground,melee?1.8f:(t.selectedTarget==o.id?1.2f:1.0f),melee,t.hitType,t.hitKnown);
+    }
+    auto received=g_incoming.find(g_current);
+    if(received!=g_incoming.end()) for(const auto& incoming:received->second)
+        if(now-incoming.time<=1000) add(incoming.attacker,incoming.point,incoming.melee?1.8f:1.2f,incoming.melee,incoming.hitType,incoming.hitKnown);
+    if(!plan.threatened||!plan.count) return;
+    plan.movement=battle_ai::DefensivePosition(o.pos,forward,plan.threats,plan.count);
+    if(g_runtime.difficulty<2) plan.shielding=false;
+}
 bool CaptureUnsafe(Observation& o) {
     if(!Owned(g_current)||!g_document||!*g_document||GetCurrentThreadId()!=g_gameThread) return false;
     if(!battle_ai::native::ReadCapabilities(g_current,o.caps)) return false;
@@ -360,12 +480,17 @@ bool CaptureUnsafe(Observation& o) {
             t.forward=*reinterpret_cast<Vec3*>(*reinterpret_cast<uint8_t**>(candidate+8)+0x6C);
             t.selectedTarget=candidateFsm?*reinterpret_cast<uint32_t*>(candidateFsm+0x200):0;
             t.meleeTracking=battle_ai::native::detail::InState(candidateFsm,0x48);t.meleeSwinging=battle_ai::native::detail::InState(candidateFsm,0x5C);
+            uint8_t* attackRecord=nullptr;
+            t.hitKnown=battle_ai::native::detail::ReadPointer(candidateFsm,0x248,attackRecord)&&
+                battle_ai::native::detail::Read(attackRecord,0x6B,t.hitType)&&t.hitType<=3;
             if((t.meleeTracking||t.meleeSwinging)&&t.selectedTarget==o.id) {
                 battle_ai::native::Capabilities attacking={};
                 if(battle_ai::native::ReadCapabilities(candidate,attacking))
                     for(const auto& w:attacking.weapons) if(w.valid&&w.slot==attacking.selectedSlot&&w.kind==battle_ai::native::WeaponKind::Melee&&distance<=w.range+150) o.meleePressure=true;
             }
             t.velocity=Velocity(candidate,id,point,now);
+            if(attackRecord&&(attackRecord[0x6A]==1||attackRecord[0x6A]==8))
+                t.meleeApproaching=battle_ai::Dot(battle_ai::Horizontal(o.pos-t.ground),t.velocity)>30;
             t.visible=battle_ai::native::FreshLineClear(g_navigation,*g_document,unit,id,ray.origin,point);
             // A target's entire loadout/boost does not need decoding just to
             // notice gun input. The event hook below also retains brief shots.
@@ -379,7 +504,8 @@ bool CaptureUnsafe(Observation& o) {
         }
         if(traversed>=4096) return false;
     }
-    return battle_ai::Finite(o.pos)&&battle_ai::Finite(o.goal);
+    if(!battle_ai::Finite(o.pos)||!battle_ai::Finite(o.goal)) return false;
+    PlanDefence(o,actor,now);return true;
 }
 bool Capture(Observation& o) {
     __try { return CaptureUnsafe(o); }
@@ -417,13 +543,17 @@ int __cdecl Observe(lua_State* L) {
     auto attackFsm=*reinterpret_cast<uint8_t**>(g_current+0x9CC);
     Number(L,"moveCancelOpen",attackFsm&&attackFsm[0xB38]==1);
     Number(L,"nativeTarget",attackFsm?*reinterpret_cast<uint32_t*>(attackFsm+0x200):0);
+    uint32_t emergencyAttacker=0;auto incoming=g_incoming.find(g_current);ULONGLONG latest=0;
+    if(incoming!=g_incoming.end()) for(const auto& hit:incoming->second)
+        if(hit.melee&&GetTickCount64()-hit.time<1000&&hit.time>=latest) {emergencyAttacker=hit.attacker;latest=hit.time;}
+    Number(L,"meleeAttacker",emergencyAttacker);
     auto selectedRecord=attackFsm?*reinterpret_cast<uint8_t**>(attackFsm+0x248):nullptr;
     Number(L,"specialSelected",o.caps.selectedSlot==3&&selectedRecord&&selectedRecord[0x69]==2);
     Number(L,"specialRange",o.caps.weapons[3].range);
     uint8_t* specialRecord=nullptr;
     bool specialKnown=attackFsm&&battle_ai::native::detail::ReadPointer(attackFsm,(o.caps.alternate?0x56C:0x24C)+3*0xC8+0xC,specialRecord)&&
         battle_ai::native::detail::Readable(specialRecord,0x6A)&&specialRecord[0x69]==2;
-    Number(L,"specialAvailable",specialKnown&&o.caps.weapons[3].id!=0&&o.caps.weapons[3].range>0);
+    Number(L,"specialAvailable",PlayerBotRulesMode()&&specialKnown&&o.caps.weapons[3].id!=0&&o.caps.weapons[3].range>0);
     uint8_t* movement=nullptr;int restriction=1;
     bool controllerKnown=attackFsm&&battle_ai::native::detail::ReadPointer(attackFsm,0xB30,movement)&&
         battle_ai::native::detail::Read(movement,0x2C0,restriction);
@@ -474,6 +604,7 @@ int __cdecl Observe(lua_State* L) {
         Number(L,"enemy",t.enemy);Number(L,"visible",t.visible);Number(L,"attackable",t.attackable);
         Number(L,"rangedFiring",t.rangedFiring);Vector(L,"pos",t.point);Vector(L,"groundPos",t.ground);Vector(L,"velocity",t.velocity);
         Number(L,"hurt",t.hurt);
+        Number(L,"meleeApproaching",t.meleeApproaching);
         Vector(L,"forward",t.forward);Number(L,"selectedTarget",t.selectedTarget);Number(L,"meleeTracking",t.meleeTracking);Number(L,"meleeSwinging",t.meleeSwinging);
         g_lua.settable(L,-3);
     }
@@ -512,7 +643,7 @@ int __cdecl CancelRoute(lua_State*) {
     if(Owned(g_current)) {
         auto& a=ActorFor(g_current);
         if(!a.path.empty()) g_stop(g_current);
-        a.path.clear();
+        a.path.clear();a.defenceMoveOwned=false;
     }
     return 0;
 }
@@ -603,7 +734,7 @@ int __cdecl Route(lua_State* L) {
     double number=g_lua.tonumber(L,1);
     Vec3 frozen={};
     bool provided=g_lua.gettop(L)>=5;
-    if(Owned(g_current)) ActorFor(g_current).pathRanged=g_lua.gettop(L)>=6&&g_lua.tonumber(L,6)==1;
+    if(Owned(g_current)) {auto& actor=ActorFor(g_current);actor.pathRanged=g_lua.gettop(L)>=6&&g_lua.tonumber(L,6)==1;actor.defenceMoveOwned=false;}
     if(provided) frozen={static_cast<float>(g_lua.tonumber(L,3)),static_cast<float>(g_lua.tonumber(L,4)),static_cast<float>(g_lua.tonumber(L,5))};
     bool ok=std::isfinite(number)&&number>0&&number<=0xffffffff &&
             (!provided||battle_ai::Finite(frozen)) && LoadRoute(static_cast<uint32_t>(number),provided?&frozen:nullptr);
@@ -666,6 +797,71 @@ bool WantsGeneric(uint8_t* unit) {
 }
 bool WantsAim(uint8_t* unit) {
     return g_runtime.enabled&&g_runtime.aim&&(g_runtime.generic||g_runtime.difficulty==1)&&Owned(unit)&&!g_preparationFault;
+}
+Vec3 ShieldDirection(uint8_t* unit,const DefencePlan& plan,Vec3 current) {
+    auto shield=battle_ai::native::ReadShield(unit);
+    if(!plan.shielding||!shield.intact||(shield.type!=0&&(!plan.shieldHitKnown||shield.type!=plan.shieldHitType))) return plan.movement.facing.direction;
+    Vec3 toward=battle_ai::Horizontal(plan.shieldThreat-Position(unit));
+    if(battle_ai::Length(toward)<0.5) return plan.movement.facing.direction;
+    Vec3 best=plan.movement.facing.direction;double bestRisk=1e30;
+    for(unsigned kind=1;kind<=4;++kind) {
+        if(!battle_ai::native::ShieldCovers(shield,kind)) continue;
+        double offset=kind==2?battle_ai::kPi:(kind==3?-battle_ai::kPi/2:(kind==4?battle_ai::kPi/2:0));
+        Vec3 candidate=battle_ai::Heading(battle_ai::Bearing(toward)+offset);
+        double worst=0;
+        for(size_t i=0;i<plan.count;++i) {
+            Vec3 incoming=battle_ai::Horizontal(plan.threats[i].point-Position(unit));
+            double risk=(1-battle_ai::Dot(candidate,incoming))*plan.threats[i].weight;
+            if(battle_ai::Dot(incoming,toward)>0.95) risk*=0.1; // the intact shield faces this attack
+            worst=(std::max)(worst,risk);
+        }
+        double cost=worst+std::abs(battle_ai::WrapAngle(battle_ai::Bearing(candidate)-battle_ai::Bearing(current)))*0.001;
+        if(cost<bestRisk) {bestRisk=cost;best=candidate;}
+    }
+    return best;
+}
+void ApplyDefence(uint8_t* unit,Actor& a) {
+    auto now=GetTickCount64();auto& plan=a.defence;
+    if(!plan.threatened||now-plan.at>250) {
+        if(a.defenceMoveOwned) {
+            if(!ControlBlocked(unit)) g_stop(unit);
+            a.path.clear();a.defenceMoveOwned=false;
+        }
+        return;
+    }
+    auto fsm=*reinterpret_cast<uint8_t**>(unit+0x9CC);
+    auto movement=*reinterpret_cast<uint8_t**>(unit+0x9C8);
+    if(a.sideCue||!fsm||!movement) return;
+    for(size_t offset:{size_t(0xD4),size_t(0x138),size_t(0x160),size_t(0x174),size_t(0x188)})
+        if(battle_ai::native::detail::InState(movement,offset)) return;
+    battle_ai::native::Capabilities caps={};
+    if(!battle_ai::native::ReadCapabilities(unit,caps)||caps.specialBusy) return;
+    if(plan.movement.relocate&&!ControlBlocked(unit)&&now>=a.defenceRepathAt&&plan.routeTarget) {
+        a.defenceRepathAt=now+650;a.pathRanged=true;
+        a.defenceMoveOwned=LoadRoute(plan.routeTarget,&plan.movement.destination);
+    }
+    auto node=*reinterpret_cast<uint8_t**>(unit+8);auto scene=*reinterpret_cast<uint8_t**>(unit+0x34);
+    if(!node||!scene) return;
+    Vec3 forward=*reinterpret_cast<Vec3*>(node+0x6C),cache=*reinterpret_cast<Vec3*>(unit+0x3090);
+    if(!battle_ai::Finite(forward)||!battle_ai::Finite(cache)||battle_ai::Length(battle_ai::Horizontal(forward))<0.5||battle_ai::Length(battle_ai::Horizontal(cache))<0.5) return;
+    Vec3 desired=ShieldDirection(unit,plan,forward);
+    float step=battle_ai::TurnStepDegrees(forward,desired,900,a.turnedAt?static_cast<double>(now-a.turnedAt):16.0);
+    a.turnedAt=now;
+    if(std::abs(step)<0.01f) return;
+    Vec3 bounded=battle_ai::Heading(battle_ai::Bearing(forward)+step*battle_ai::kPi/180);
+    // rotate_y changes the desired direction cache. Account for the native AI's
+    // existing desired direction so the *consumed scene turn* stays bounded.
+    float cacheDelta=static_cast<float>(battle_ai::WrapAngle(battle_ai::Bearing(bounded)-battle_ai::Bearing(cache))*180/battle_ai::kPi);
+    g_rotate(unit,cacheDelta,0);
+}
+void __fastcall FacingUpdate(uint8_t* unit,void*) {
+    if(GetCurrentThreadId()==g_gameThread&&unit==g_current&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault&&Owned(unit)&&*reinterpret_cast<int*>(unit+0x38)>0) {
+        __try {
+            auto actor=g_actors.find(unit);
+            if(actor!=g_actors.end()) ApplyDefence(unit,actor->second);
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    g_facingUpdate(unit);
 }
 int __cdecl Dispatch(const char* name,uint8_t* unit) {
     if(GetCurrentThreadId()!=g_gameThread) return g_dispatch(name,unit);
@@ -782,10 +978,123 @@ void __fastcall AttackAdmission(uint8_t* fsm,void*) {
             auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
             // This is the shared ordinary/special admission function. Apply
             // the player SP rule only to AttackStyle 2, never normal shots.
-            if(Owned(owner)&&record&&record[0x69]==2&&!FairSpecialResource(fsm,owner)) return;
+            if(Owned(owner)&&record&&record[0x69]==2) {
+                if(!FairSpecialResource(fsm,owner)) return;
+                auto& actor=ActorFor(owner);auto now=GetTickCount64();auto weapon=*reinterpret_cast<uint32_t*>(record);
+                if(actor.expectedSpecialWeapon!=weapon||now-actor.expectedSpecialAt>3000) {actor.expectedSpecialAt=now;actor.expectedSpecialWeapon=weapon;}
+            }
         } __except(EXCEPTION_EXECUTE_HANDLER) {return;}
     }
     g_attackAdmission(fsm);
+}
+struct AbsoluteSpMessage {uint16_t type=0x18,padding=0;uint32_t reserved[3]={};int32_t value=0;};
+static_assert(sizeof(AbsoluteSpMessage)==20);
+void ApplyNativeAbsoluteSp(uint8_t* unit,int32_t value) {
+    AbsoluteSpMessage message;message.value=value;
+    using ReceiveFn=void(__thiscall*)(uint8_t*,const AbsoluteSpMessage*);
+    auto vtable=*reinterpret_cast<void***>(unit);
+    if(vtable&&vtable[7]) reinterpret_cast<ReceiveFn>(vtable[7])(unit,&message);
+}
+void ApplySpNotice(const SpNotice& notice) {
+    if(notice.value<0||notice.value>30000||GetTickCount64()-notice.time>3000) return;
+    __try {
+        if(!g_document||!*g_document) return;
+        auto unit=FindObject(g_canonical(*g_document,notice.pilot));auto found=g_actors.find(unit);
+        if(!unit||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
+        auto npc=*reinterpret_cast<uint32_t*>(unit+0x3238);if(npc<3604001||npc>3607000) return;
+        auto latest=g_spSnapshots.find(unit);
+        if(latest!=g_spSnapshots.end()&&notice.sequence<latest->second.sequence) {
+            // An old ordinary handler may have completed on a worker after a
+            // newer state was drained. Restore the newer authoritative value.
+            ApplyNativeAbsoluteSp(unit,latest->second.value);return;
+        }
+        if(notice.stateOnly) {
+            if(notice.finish&&found!=g_actors.end()) found->second.specialAcknowledged=false;
+            if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
+            g_spSnapshots[unit]={notice.sequence,notice.value};
+            ApplyNativeAbsoluteSp(unit,notice.value);return;
+        }
+        if(!g_runtime.enabled||g_runtime.difficulty<1||g_preparationFault) return;
+        if(!Owned(unit)||found==g_actors.end()||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
+        auto& actor=found->second;
+        if(notice.begin) {
+            if(!notice.weapon||actor.expectedSpecialWeapon!=notice.weapon||notice.time<actor.expectedSpecialAt||notice.time-actor.expectedSpecialAt>3000) return;
+            actor.expectedSpecialWeapon=0;actor.specialAcknowledged=true;actor.specialAcknowledgedAt=notice.time;
+        } else {
+            if(!actor.specialAcknowledged||notice.time<actor.specialAcknowledgedAt||notice.time-actor.specialAcknowledgedAt>60000) return;
+            actor.specialAcknowledged=false;
+        }
+        if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
+        g_spSnapshots[unit]={notice.sequence,notice.value};
+        ApplyNativeAbsoluteSp(unit,notice.value);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
+uint64_t NextSpSequence() {return g_spSequence.fetch_add(16,std::memory_order_relaxed)+16;}
+bool ParseSpNotice(const uint8_t* packet,size_t valueOffset,bool begin,SpNotice& notice,uint64_t sequence) {
+    __try {
+        if(!packet||!g_gameThread) return false;
+        notice.pilot=*reinterpret_cast<const uint32_t*>(packet+6);
+        if(!(notice.pilot&0x80000000u)) return false;
+        notice.value=*reinterpret_cast<const int32_t*>(packet+valueOffset);notice.begin=begin;notice.time=GetTickCount64();notice.sequence=sequence;
+        if(begin) notice.weapon=*reinterpret_cast<const uint32_t*>(packet+0xA);
+        return notice.value>=0&&notice.value<=30000;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+void SubmitSpNotice(const SpNotice& notice) {
+    std::lock_guard<std::mutex> lock(g_spMutex);
+    if(g_pendingSp.size()>=256) g_pendingSp.erase(g_pendingSp.begin());
+    g_pendingSp.push_back(notice);
+}
+void DrainSpNotices() {
+    std::vector<SpNotice> pending;
+    {std::lock_guard<std::mutex> lock(g_spMutex);pending.swap(g_pendingSp);}
+    std::sort(pending.begin(),pending.end(),[](const SpNotice& a,const SpNotice& b){return a.sequence<b.sequence;});
+    for(const auto& notice:pending) ApplySpNotice(notice);
+}
+int __fastcall SpecialNotice(uint8_t* handler,void*,const uint8_t* packet) {
+    SpNotice notice;bool valid=ParseSpNotice(packet,0x12,true,notice,NextSpSequence());
+    int result=g_specialNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
+}
+int __fastcall MeleeNotice(uint8_t* handler,void*,const uint8_t* packet) {
+    SpNotice notice;bool valid=ParseSpNotice(packet,0xE,false,notice,NextSpSequence());
+    int result=g_meleeNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
+}
+int __fastcall RangedNotice(uint8_t* handler,void*,const uint8_t* packet) {
+    SpNotice notice;bool valid=ParseSpNotice(packet,0xA,false,notice,NextSpSequence());
+    int result=g_rangedNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
+}
+int __fastcall SkillNotice(uint8_t* handler,void*,const uint8_t* packet) {
+    SpNotice notice;bool valid=ParseSpNotice(packet,0x1F,false,notice,NextSpSequence());
+    int result=g_skillNotice(handler,packet);
+    if(valid) {notice.stateOnly=true;SubmitSpNotice(notice);}return result;
+}
+bool IsSpStateOnly(const uint8_t* packet) {
+    __try {return packet&&*reinterpret_cast<const uint16_t*>(packet)==0x779&&packet[0xA]==0xFF&&packet[0x17]==0&&
+        *reinterpret_cast<const uint32_t*>(packet+0x13)==0&&(*reinterpret_cast<const uint32_t*>(packet+6)&0x80000000u)!=0;}
+    __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+size_t CaptureOrdinarySp(const uint8_t* packet,SpNotice* notices,uint64_t sequence) {
+    size_t used=0;
+    __try {
+        SpNotice caster;if(ParseSpNotice(packet,0xB,false,caster,sequence)) {caster.stateOnly=true;notices[used++]=caster;}
+        unsigned count=packet[0x17];if(count>12) return used;
+        for(unsigned i=0;i<count;++i) {
+            auto row=packet+0x18+i*0x12;SpNotice victim;victim.pilot=*reinterpret_cast<const uint32_t*>(row);
+            victim.value=*reinterpret_cast<const int32_t*>(row+8);victim.time=GetTickCount64();victim.sequence=sequence+i+1;victim.stateOnly=true;
+            if((victim.pilot&0x80000000u)&&victim.value>=0&&victim.value<=30000) notices[used++]=victim;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return used;
+}
+int __fastcall SpStateNotice(uint8_t* handler,void*,const uint8_t* packet) {
+    auto sequence=NextSpSequence();
+    if(IsSpStateOnly(packet)) {
+        SpNotice notice;if(ParseSpNotice(packet,0xB,false,notice,sequence)) {notice.stateOnly=true;notice.finish=true;SubmitSpNotice(notice);}
+        return 1; // do not issue native command1C, HP, hurt or effect processing
+    }
+    SpNotice snapshots[13]={};size_t count=CaptureOrdinarySp(packet,snapshots,sequence);
+    int result=g_spStateNotice(handler,packet);
+    for(size_t i=0;i<count;++i) SubmitSpNotice(snapshots[i]);return result;
 }
 bool Roll(Actor& a,int percent,uint32_t id) {
     if(!a.rng) a.rng=id^static_cast<uint32_t>(a.generation*2654435761u)^0xA341316Cu;
@@ -878,11 +1187,26 @@ void __fastcall SwingUpdate(uint8_t* fsm,void*,void* event) {
 }
 bool __fastcall DeliverMessage(uint8_t* document,void*,uint32_t victim,void* message,uint32_t tag) {
     void* caller=_ReturnAddress();Contact receipt;uint8_t* attacker=nullptr;
+    Incoming incoming;uint8_t* receiver=nullptr;
+    uint64_t attackerGeneration=0,receiverGeneration=0;
+    if(GetCurrentThreadId()==g_gameThread&&message&&tag==0) {
+        __try {
+            auto m=static_cast<uint8_t*>(message);auto other=FindObject(victim);
+            if(Owned(other)&&*reinterpret_cast<uint16_t*>(m)==0xC&&*reinterpret_cast<int*>(m+0x14)>0) {
+                auto id=*reinterpret_cast<uint32_t*>(m+0x3C);auto source=FindObject(id);
+                if(source&&id&&id!=victim) {
+                    receiver=other;incoming={id,Position(source),GetTickCount64(),caller==g_contactReturn,m[0x1A],m[0x1A]<=3};
+                    auto life=g_generations.find(receiver);if(life!=g_generations.end()) receiverGeneration=life->second;
+                }
+            }
+        } __except(EXCEPTION_EXECUTE_HANDLER) {receiver=nullptr;}
+    }
     if(GetCurrentThreadId()==g_gameThread && caller==g_contactReturn && message && tag==0) {
         __try {
             auto m=static_cast<uint8_t*>(message);
             if(*reinterpret_cast<uint16_t*>(m)==0xC && *reinterpret_cast<int*>(m+0x14)>0) {
                 attacker=FindObject(*reinterpret_cast<uint32_t*>(m+0x3C));
+                auto life=g_generations.find(attacker);if(life!=g_generations.end()) attackerGeneration=life->second;
                 auto fsm=attacker?*reinterpret_cast<uint8_t**>(attacker+0x9CC):nullptr;
                 if(fsm && *reinterpret_cast<uint8_t**>(fsm+4)==fsm+0x5C) {
                     receipt={victim,*reinterpret_cast<uint32_t*>(fsm+0x224),*reinterpret_cast<int*>(fsm+0x968),GetTickCount64(),FindObject(victim)};
@@ -891,7 +1215,17 @@ bool __fastcall DeliverMessage(uint8_t* document,void*,uint32_t victim,void* mes
         } __except(EXCEPTION_EXECUTE_HANDLER) {attacker=nullptr;}
     }
     bool result=g_message(document,victim,message,tag);
-    if(result&&attacker&&receipt.target&&receipt.victim) {
+    auto sameLife=[&](uint8_t* unit,uint64_t before) {
+        auto life=g_generations.find(unit);return (life==g_generations.end()?0:life->second)==before;
+    };
+    if(result&&receiver&&sameLife(receiver,receiverGeneration)&&battle_ai::Finite(incoming.point)) {
+        auto defending=g_actors.find(receiver);if(defending!=g_actors.end()) defending->second.defence.at=0;
+        if(g_incoming.size()>2048) g_incoming.clear();
+        auto& sources=g_incoming[receiver];bool updated=false;
+        for(auto& old:sources) if(old.attacker==incoming.attacker) {old=incoming;updated=true;break;}
+        if(!updated) {if(sources.size()>=8) sources.erase(sources.begin());sources.push_back(incoming);}
+    }
+    if(result&&attacker&&sameLife(attacker,attackerGeneration)&&receipt.target&&receipt.victim) {
         if(g_contacts.size()>2048) g_contacts.clear();
         g_contacts[attacker]=receipt;
     }
@@ -1159,7 +1493,7 @@ void GuardedPrepare() {
 void ResetLifecycle(uint8_t* unit) {
     if(g_generations.size()>=1024) g_generations.clear();
     g_generations[unit]=++g_serial;
-    g_actors.erase(unit);g_rangedShots.erase(unit);g_contacts.erase(unit);
+    g_actors.erase(unit);g_rangedShots.erase(unit);g_contacts.erase(unit);g_incoming.erase(unit);g_spSnapshots.erase(unit);
 }
 void DrainPendingInit() {
     std::vector<uint8_t*> pending;
@@ -1171,6 +1505,7 @@ bool __fastcall Think(uint8_t* unit, void*) {
     g_gameThread.compare_exchange_strong(expected,thread);
     if(thread!=g_gameThread) return g_think(unit);
     DrainPendingInit();
+    DrainSpNotices();
     if (!g_loading && !g_preparationFault) { g_loading = true; GuardedPrepare(); g_loading = false; }
     uint8_t* prior = g_current; g_current = unit;
     // Init can precede loading in fixtures or a late loader; give that unit an identity.
@@ -1204,9 +1539,9 @@ bool __fastcall Think(uint8_t* unit, void*) {
                 ClearStartup(unit,startup->second,!ControlBlocked(unit));
         } __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
-    if(WantsGeneric(unit)) {
+    if(WantsGeneric(unit)||(g_runtime.enabled&&g_runtime.difficulty>=1&&Owned(unit))) {
         auto it=g_actors.find(unit);
-        if(it!=g_actors.end() && !it->second.path.empty()) {
+        if(it!=g_actors.end() && !it->second.path.empty()&&(WantsGeneric(unit)||it->second.defenceMoveOwned)) {
             __try { FollowPath(unit,it->second); } __except(EXCEPTION_EXECUTE_HANDLER) { it->second.path.clear(); }
         }
     }
@@ -1220,6 +1555,15 @@ void __fastcall Init(uint8_t* unit, void*, void* data) {
 }
 }
 
+// match_ai calls this optional endpoint only after native spawn/deck creation.
+// Missing/disabled battle_ai leaves match_ai's original standalone behavior.
+extern "C" __declspec(dllexport) void __cdecl SdgoBattleAiInitializeUnit(uint8_t* unit,int difficulty,uint32_t generation) {
+    std::lock_guard<std::mutex> lock(g_loadoutMutex);
+    auto result=InitializeLoadout(unit,difficulty,generation);
+    if(g_api&&result!=battle_ai::loadout::ApplyResult::Applied&&result!=battle_ai::loadout::ApplyResult::AlreadyApplied&&
+       result!=battle_ai::loadout::ApplyResult::InvalidArgument)
+        g_api->Log(g_mod,SDGO_LOG_WARN,"native bot loadout initialization incomplete (%d)",static_cast<int>(result));
+}
 SDGO_MOD_ENTRY {
     g_api = api; g_mod = mod;
     if (!Bind(g_lua.state,"lua_tinker.state") || !Bind(g_lua.gettop,"lua.gettop") ||
@@ -1238,6 +1582,8 @@ SDGO_MOD_ENTRY {
     if(!Bind(g_app,"game.app")||!Bind(g_queueSwing,"combat.queue_melee_swing")||!Bind(g_faceTarget,"npc.face_target")||!Bind(g_rotate,"unit.rotate_y")) return 0;
     if(!Bind(g_contactReturn,"combat.melee_contact_return")) return 0;
     if(!Bind(g_playerSkillGate,"combat.player_sp_gate")) return 0;
+    if(!Bind(g_canonical,"um.object_id_from_pilot")) return 0;
+    if(!Bind(g_loadoutNative.setUnitLevel,"loadout.set_unit_level")||!Bind(g_loadoutNative.applySkillPart,"loadout.apply_skill_part")) return 0;
     std::wstring dir = api->ModDirectory(mod);
     g_script = dir + L"\\battle_ai.lua"; g_config = dir + L"\\config.ini";
     g_universalScript=dir+L"\\universal_ai.lua";
@@ -1249,9 +1595,15 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod,"npc.dispatch_ai",reinterpret_cast<void*>(&Dispatch),reinterpret_cast<void**>(&g_dispatch)) ||
         !api->HookCode(mod,"npc.ranged_ray",reinterpret_cast<void*>(&RangedRay),reinterpret_cast<void**>(&g_ray)) ||
         !api->HookCode(mod,"npc.attack_intent",reinterpret_cast<void*>(&AttackIntent),reinterpret_cast<void**>(&g_intent)) ||
+        !api->HookCode(mod,"npc.facing_update",reinterpret_cast<void*>(&FacingUpdate),reinterpret_cast<void**>(&g_facingUpdate)) ||
         !api->HookCode(mod,"combat.ranged_shot",reinterpret_cast<void*>(&RangedShot),reinterpret_cast<void**>(&g_shot)) ||
         !api->HookCode(mod,"combat.fire_receipts",reinterpret_cast<void*>(&FireReceipts),reinterpret_cast<void**>(&g_fireReceipts)) ||
         !api->HookCode(mod,"combat.attack_admission",reinterpret_cast<void*>(&AttackAdmission),reinterpret_cast<void**>(&g_attackAdmission)) ||
+        !api->HookCode(mod,"game.special_notice",reinterpret_cast<void*>(&SpecialNotice),reinterpret_cast<void**>(&g_specialNotice)) ||
+        !api->HookCode(mod,"game.special_melee_notice",reinterpret_cast<void*>(&MeleeNotice),reinterpret_cast<void**>(&g_meleeNotice)) ||
+        !api->HookCode(mod,"game.special_ranged_notice",reinterpret_cast<void*>(&RangedNotice),reinterpret_cast<void**>(&g_rangedNotice)) ||
+        !api->HookCode(mod,"game.sp_state_notice",reinterpret_cast<void*>(&SpStateNotice),reinterpret_cast<void**>(&g_spStateNotice)) ||
+        !api->HookCode(mod,"game.skill_state_notice",reinterpret_cast<void*>(&SkillNotice),reinterpret_cast<void**>(&g_skillNotice)) ||
         !api->HookCode(mod,"npc.tracking_entry",reinterpret_cast<void*>(&TrackingEntry),reinterpret_cast<void**>(&g_trackingEntry)) ||
         !api->HookCode(mod,"npc.tracking_update",reinterpret_cast<void*>(&TrackingUpdate),reinterpret_cast<void**>(&g_trackingUpdate)) ||
         !api->HookCode(mod,"npc.swing_entry",reinterpret_cast<void*>(&SwingEntry),reinterpret_cast<void**>(&g_swingEntry)) ||

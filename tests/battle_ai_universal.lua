@@ -186,6 +186,10 @@ observation.selectedSlot=1;observation.shots=1;Tick(200)
 Check(SDGO_BattleAI_Universal.states[20].weave.stage=='shoot','two-shot weave requires the second distinct native primary fire')
 observation.shots=2;Tick(300)
 Check(SDGO_BattleAI_Universal.states[20].weave.stage=='return','second primary fire completes the two-shot weave')
+SetupWeave();observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+Tick(0);observation.meleeBusy=0;observation.meleeSwinging=0;Tick(100)
+Check(calls.switch==1 and SDGO_BattleAI_Universal.states[20].weave.stage=='shoot',
+      'full SP does not replace a supported melee weave with special capture and interrupt allied damage')
 Reset({ReactionMs=0});calls.roll=1;t=observation.targets[2];t.pos={x=1000,y=100,z=0}
 calls.coverCandidate={valid=1,hide={x=0,y=0,z=0},peek={x=70,y=0,z=0}};observation.shots=0;Tick(0)
 Check(calls.routeX==70 and calls.fire==true,'selected cover opportunity moves to the sampled smallest fireable edge')
@@ -217,6 +221,9 @@ observation.rangedBusy=0;observation.weapons[2].ready=0;Tick(400)
 Check(calls.fire==false,'orbwalking does not bypass the true weapon cooldown')
 observation.weapons[2].ready=1;Tick(500)
 Check(calls.fire==true,'orbwalking resumes firing when the weapon is natively ready')
+Reset({ReactionMs=0});observation.targets[2].meleeApproaching=1;observation.shots=0;Tick(0)
+observation.shots=1;observation.rangedBusy=1;observation.moveCancelOpen=1;Tick(100)
+Check(calls.moves==1 and calls.fire==true,'a moving-shot weapon orbwalks against a closing melee loadout before its tracking dash starts')
 Reset({Difficulty=1});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=0
 SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.switch==nil,'Medium cannot use the NPC unconditional SP override without the player resource gate')
@@ -244,6 +251,11 @@ observation.hurt=1;observation.specialControlAllowed=1;SDGO_BattleAI_ProfileUpda
 Check(calls.switch==3,'a native style-2-permitted hurt window may request a special without overriding forbidden states')
 observation.selectedSlot=3;observation.specialSelected=1;observation.specialControlAllowed=0;now=100;SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.fire==false,'a queued special loses attack intent immediately when a forbidden control state arrives')
+Reset({Difficulty=1});observation.nativeTarget=1;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
+observation.hurt=1;observation.meleeBusy=1;observation.specialControlAllowed=1;observation.meleeAttacker=2
+SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==3 and SDGO_BattleAI_Universal.profiles[20].special.target==2,
+      'a player-permitted hurt cancel requests special against the actual melee attacker instead of the old front target')
 Reset({Difficulty=0});observation.nativeTarget=2;observation.specialAvailable=1;observation.specialRange=1800;observation.spReady=1
 SDGO_BattleAI_ProfileUpdate(npc)
 Check(calls.switch==nil and calls.fire==nil,'Easy never adds special attack requests')

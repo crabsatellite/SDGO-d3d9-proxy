@@ -115,6 +115,8 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP bots"
+             SOURCES mods/battle_ai_server/battle_ai_server.cpp)
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery"
              SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 
@@ -141,6 +143,18 @@ add_executable(battle_ai_navigation_test tests/battle_ai_navigation_test.cpp)
 sdgo_strict(battle_ai_navigation_test)
 add_executable(battle_ai_special_budget_test tests/battle_ai_special_budget_test.cpp)
 sdgo_strict(battle_ai_special_budget_test)
+add_executable(battle_ai_items_test tests/battle_ai_items_test.cpp)
+sdgo_strict(battle_ai_items_test)
+add_executable(battle_ai_loadout_test tests/battle_ai_loadout_test.cpp)
+sdgo_strict(battle_ai_loadout_test)
+add_executable(battle_ai_server_native_test tests/battle_ai_server_native_test.cpp)
+target_link_libraries(battle_ai_server_native_test PRIVATE sdgo_api)
+sdgo_strict(battle_ai_server_native_test)
+add_library(battle_ai_bridge_fixture SHARED tests/battle_ai_bridge_fixture.cpp)
+sdgo_strict(battle_ai_bridge_fixture)
+add_executable(match_ai_loadout_bridge_test tests/match_ai_loadout_bridge_test.cpp)
+target_link_libraries(match_ai_loadout_bridge_test PRIVATE sdgo_api)
+sdgo_strict(match_ai_loadout_bridge_test)
 
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.

@@ -34,6 +34,7 @@ struct Unit {
         int result=native_world::Dispatch("VSAI_Gunfighter_01_Update",bytes);
         Check(result==123,"native dispatcher callback preserves its return value");
         reinterpret_cast<native_world::Callbacks*>(this)->Intent();
+        if(*reinterpret_cast<uint8_t**>(bytes+8)) reinterpret_cast<native_world::Callbacks*>(this)->FacingUpdate();
         return true;
     }
     __declspec(noinline) void Init(void* data) { bytes[0x100]=static_cast<unsigned char>(reinterpret_cast<uintptr_t>(data)); }
@@ -139,6 +140,48 @@ int wmain(int argc,wchar_t** argv) {
         } else {
             Check(profileRay.direction.x>0.9f && *reinterpret_cast<float*>(unit.bytes+0x3204)==0,
                   "Medium corrects native shot aim while retaining original AI");
+            using InitializeFn=void(__cdecl*)(uint8_t*,int,uint32_t);
+            auto initializeUnit=reinterpret_cast<InitializeFn>(GetProcAddress(GetModuleHandleW(L"battle_ai.dll"),"SdgoBattleAiInitializeUnit"));
+            Check(initializeUnit!=nullptr,"optional match_ai native loadout endpoint is exported by its stable name");
+            if(initializeUnit) {
+                native_world::Put(unit.bytes,0xBC8,int32_t(18000));initializeUnit(unit.bytes,0x101,1);
+                Check(*reinterpret_cast<int*>(unit.bytes+0xB0C)==12&&native_world::lastPart==0&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,
+                      "Medium first spawn applies native level12/no part and clears pooled SP to the authoritative match start");
+                int priorParts=native_world::partApplications;initializeUnit(unit.bytes,1,1);
+                Check(native_world::partApplications==priorParts,"duplicate spawn/deck generation never reconstructs a client part");
+                native_world::Put(unit.bytes,0xBC8,int32_t(12000));initializeUnit(unit.bytes,0x101,1);
+                Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==12000,"duplicate initial-spawn delivery cannot erase earned SP");
+                initializeUnit(unit.bytes,2,2);
+                Check(*reinterpret_cast<int*>(unit.bytes+0xB0C)==13&&native_world::lastPart==75002,
+                      "Hard applies native EX13 and a full-width legal mobility part for a mixed ranged loadout");
+                Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==12000,"respawn/deck generation preserves the match SP resource");
+                native_world::Put(unit.bytes,0xBC8,int32_t(0));
+                native_world::Put(unit.bytes,0xB0C,int32_t(1));priorParts=native_world::partApplications;initializeUnit(unit.bytes,0,3);
+                Check(*reinterpret_cast<int*>(unit.bytes+0xB0C)==1&&native_world::partApplications==priorParts,
+                      "Easy spawn keeps the native level and optional part unchanged");
+                uint8_t range1=native_world::weapons[1][0x6A],range2=native_world::weapons[2][0x6A];
+                native_world::weapons[1][0x6A]=native_world::weapons[2][0x6A]=1;initializeUnit(unit.bytes,2,4);
+                Check(native_world::lastPart==75003,"native melee-only weapon properties select the full-width fighting part on the client");
+                native_world::weapons[1][0x6A]=range1;native_world::weapons[2][0x6A]=range2;
+            }
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+            native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-500});
+            native_world::Put(unit.bytes,0x3090,native_world::Vec3{-1,0,0});Sleep(90);unit.Think();
+            auto facing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+            Check(facing.z>0.95f&&std::abs(facing.x)>0.01f,"Medium rear defence requests a bounded native scene turn even when old desired cache points elsewhere");
+            for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
+            facing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+            Check(facing.z<-0.98f,"Medium quickly faces an enemy attacking from behind over visible native frames");
+            native_world::Put(native_world::enemy1.data(),0x38,int32_t(1000));
+            native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{0,0,1000});
+            native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,-1000});
+            native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+            int beforeDefenceMoves=native_world::moves;Sleep(90);unit.Think();
+            Check(native_world::moves>beforeDefenceMoves&&std::abs(reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078)->x)>1,
+                  "Medium proposes a native lateral route to reduce front/rear crossfire");
+            native_world::Put(native_world::nodes[1].data(),0x88,native_world::Vec3{1000,0,0});
+            native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{1400,0,100});
+            native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});Sleep(90);unit.Think();
             auto fsm=native_world::fsms[0].data();auto special=native_world::weapons[3].data();
             memcpy(special,native_world::weapons[1].data(),native_world::weapons[3].size());
             native_world::Put(special,0,uint32_t(104));special[0x69]=2;
@@ -159,6 +202,21 @@ int wmain(int argc,wchar_t** argv) {
                   "Medium requests special slot through the native weapon-change API at full SP");
             unit.Think();Check(unit.bytes[0x312A]!=0,"Medium waits for special selection commit then requests native attack");
             nativeRequest(fsm);Check(native_world::attackAdmissions==beforeRequests+1,"legal native special request forwards to original authorization path");
+            native_world::Put(unit.bytes,0x2B68,uint32_t(0x80000014));uint8_t accepted[0x18]={};
+            native_world::Put(accepted,6,uint32_t(0x80000014));native_world::Put(accepted,0xA,uint32_t(104));native_world::Put(accepted,0x12,int32_t(20000));
+            using NoticeFn=int(__thiscall*)(uint8_t*,const uint8_t*);
+            NoticeFn volatile notify=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpecialNotice));
+            int noticeReturn=notify(native_world::document.data(),accepted);unit.Think();
+            Check(noticeReturn==0x51A7&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==20000,
+                  "matched server special acceptance preserves native return and applies authoritative SP through native command18");
+            native_world::Put(unit.bytes,0xBC8,int32_t(15000));notify(native_world::document.data(),accepted);unit.Think();
+            Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==15000,"duplicate special notice without a pending request cannot refund NPC SP");
+            uint8_t terminal[0x20]={};native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
+            NoticeFn volatile meleeNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::MeleeNotice));
+            int terminalResult=meleeNotice(native_world::document.data(),terminal);unit.Think();
+            Check(terminalResult==0x51B1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"actual melee completion606 applies authoritative remaining SP through native command18");
+            native_world::Put(terminal,0xE,int32_t(20000));meleeNotice(native_world::document.data(),terminal);unit.Think();
+            Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"duplicate terminal notification cannot refund a finished special");
             unit.bytes[0x31C4]=1;nativeRequest(fsm);unit.bytes[0x31C4]=0;
             Check(native_world::attackAdmissions==beforeRequests+1,"native special gate rejects explicit unit restriction");
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(1));nativeRequest(fsm);
@@ -166,6 +224,54 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(native_world::movements[0].data(),0x2C0,int32_t(0));
             native_world::Put(unit.bytes,0xBC8,int32_t(0));nativeRequest(fsm);
             Check(native_world::attackAdmissions==beforeRequests+1,"final native special gate enforces SP, restriction and controller permissions despite NPC overrides");
+            native_world::Put(unit.bytes,0xBC8,int32_t(30000));nativeRequest(fsm);notify(native_world::document.data(),accepted);unit.Think();
+            NoticeFn volatile rangedNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::RangedNotice));
+            native_world::Put(terminal,0xA,int32_t(0));
+            int offThreadResult=0;
+            std::thread noticeWorker([&]{offThreadResult=rangedNotice(native_world::document.data(),terminal);});noticeWorker.join();
+            Check(offThreadResult==0x51B2&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==20000,"off-thread ranged completion forwards original and queues SP without touching game-thread actor state");
+            unit.Think();Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"game thread drains ranged completion789 authoritative SP before the next decision");
+            native_world::Put(unit.bytes,0xBC8,int32_t(30000));nativeRequest(fsm);notify(native_world::document.data(),accepted);unit.Think();
+            NoticeFn volatile spState=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpStateNotice));
+            uint8_t state[0xF0]={};native_world::Put(state,0,uint16_t(0x779));native_world::Put(state,6,uint32_t(0x80000014));
+            state[0xA]=0xFF;native_world::Put(state,0xB,int32_t(0));native_world::Put(state,0xF,uint32_t(104));
+            int priorDamageNotices=native_world::ordinaryNotices;int oldHp=*reinterpret_cast<int*>(unit.bytes+0x38);
+            int stateResult=spState(native_world::document.data(),state);unit.Think();
+            Check(stateResult==1&&native_world::ordinaryNotices==priorDamageNotices&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==0&&*reinterpret_cast<int*>(unit.bytes+0x38)==oldHp,
+                  "fixed-size zero-victim SP state updates use native command18 without damage, hurt, effects or attack processing");
+            state[0xA]=0;native_world::Put(state,0xB,int32_t(1000));int ordinaryResult=spState(native_world::document.data(),state);
+            Check(ordinaryResult==0x51D0&&native_world::ordinaryNotices==priorDamageNotices+1,
+                  "ordinary0779 notification preserves its original return and processing");
+            state[0xA]=0xFF;native_world::Put(state,0xB,int32_t(0));
+            std::thread stateWorker([&]{spState(native_world::document.data(),state);});stateWorker.join();
+            state[0xA]=0;native_world::Put(state,0xB,int32_t(4000));
+            std::thread gainWorker([&]{spState(native_world::document.data(),state);});gainWorker.join();
+            unit.Think();Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==4000,
+                  "ordered off-thread state and ordinary damage snapshots cannot overwrite a newer earned SP gain");
+            state[0xA]=0xFF;native_world::Put(state,0xB,int32_t(0));
+            std::thread oldState([&]{spState(native_world::document.data(),state);});oldState.join();
+            state[0xA]=0;native_world::Put(state,0xB,int32_t(5000));spState(native_world::document.data(),state);unit.Think();
+            Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==5000,"older worker state cannot overwrite a newer main-thread ordinary SP gain");
+            native_world::Put(state,0xB,int32_t(6000));
+            std::thread oldGain([&]{spState(native_world::document.data(),state);});oldGain.join();
+            state[0xA]=0xFF;native_world::Put(state,0xB,int32_t(0));spState(native_world::document.data(),state);unit.Think();
+            Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"older worker gain cannot refund a newer main-thread terminal SP state");
+            uint8_t lateOrdinary[0xF0]={};memcpy(lateOrdinary,state,sizeof(state));lateOrdinary[0xA]=0;native_world::Put(lateOrdinary,0xB,int32_t(7000));
+            native_world::ordinaryEntered=false;native_world::releaseOrdinary=false;native_world::stallOrdinary=true;
+            std::thread lateGain([&]{spState(native_world::document.data(),lateOrdinary);});
+            for(int i=0;i<1000&&!native_world::ordinaryEntered;++i) Sleep(1);
+            Check(native_world::ordinaryEntered,"controlled old ordinary handler has entered before the newer state");
+            spState(native_world::document.data(),state);unit.Think();
+            native_world::releaseOrdinary=true;lateGain.join();native_world::stallOrdinary=false;
+            Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==7000,"controlled legacy worker finishes its old native SP write after the newer state");
+            unit.Think();Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,
+                  "late old native writes are corrected to the last authoritative sequence before AI decisions");
+            std::thread oldBeforeSkill([&]{spState(native_world::document.data(),state);});oldBeforeSkill.join();
+            uint8_t skillPacket[40]={};native_world::Put(skillPacket,0,uint16_t(0x6AA));native_world::Put(skillPacket,6,uint32_t(0x80000014));native_world::Put(skillPacket,0x1F,int32_t(9000));
+            NoticeFn volatile skillNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SkillNotice));
+            int skillResult=skillNotice(native_world::document.data(),skillPacket);unit.Think();
+            Check(skillResult==0x51D1&&*reinterpret_cast<int*>(unit.bytes+0xBC8)==9000,
+                  "native skill-state SP snapshots share the same sequence and cannot be rolled back by an older queued clear");
             native_world::deferSwitch=true;
             Config("[settings]\nDifficulty=Easy\n");Sleep(2100);unit.Think();
             Check(native_world::requestedSlot==1&&*reinterpret_cast<int*>(fsm+0x240)==3,
@@ -331,6 +437,46 @@ int wmain(int argc,wchar_t** argv) {
         beforeUpdates=native_world::trackUpdates;callbacks->TrackingEntry(input);callbacks->TrackingUpdate(input);unit.Think();
         Check(native_world::trackUpdates==beforeUpdates+1&&Eval("assert(sample.hurt==1)"),"pure MovementFSM hurt blocks quick swing without consuming CheckHurt latch");
         native_world::Put(movement,4,movement+0x20);native_world::Put(fsm,4,fsm+0x20);
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+        native_world::Put(native_world::enemy2.data(),0x38,int32_t(100));
+        native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,150});
+        auto enemyFsm=native_world::fsms[2].data();native_world::Put(enemyFsm,4,enemyFsm+0x5C);native_world::Put(enemyFsm,0x200,uint32_t(20));
+        native_world::Put(enemyFsm,0x240,int32_t(0));native_world::Put(enemyFsm,0x248,native_world::weapons[0].data());
+        native_world::Put(unit.bytes,0x2B70,500.0f);native_world::Put(unit.bytes,0x2B74,500.0f);
+        native_world::Put(native_world::definitions[0].data(),0x145,int32_t(500));native_world::definitions[0][0x149]=0;
+        native_world::definitions[0][0x14E]=4;native_world::definitions[0][0x14F]=4;
+        native_world::Put(movement,4,movement+0xE8);unit.bytes[0x30DC]=0;
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        Sleep(16);unit.Think();auto shieldFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(shieldFacing.z>0.95f&&std::abs(shieldFacing.x)>0.01f&&unit.bytes[0x30DC]==0,
+              "Hard begins a smooth back-shield turn during native hurt without forcing a movement escape");
+        for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
+        shieldFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(shieldFacing.z<-0.98f,"Hard presents an intact rear shield to the melee attacker");
+        native_world::Put(unit.bytes,0x2B70,0.0f);Sleep(16);unit.Think();
+        auto brokenFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(brokenFacing.z>-0.999f&&brokenFacing.z<0,"shield break immediately starts a bounded turn back toward front defence");
+        for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
+        brokenFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(brokenFacing.z>0.98f,"broken rear shield never leaves the bot intentionally exposing its back");
+        native_world::blocked=true;native_world::Put(unit.bytes,0x2B70,500.0f);native_world::definitions[0][0x149]=2;
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        native_world::Put(message,0x3C,uint32_t(2));message[0x19]=1;message[0x1A]=2;
+        native_world::EmitContact(native_world::document.data(),20,message,0);
+        for(int i=0;i<16;++i) {Sleep(16);unit.Think();}
+        shieldFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+        Check(shieldFacing.z<-0.98f,"a recent delivered attacker uses message HitType at +1A, not adjacent RangeType +19, when visibility is lost");
+        native_world::blocked=false;native_world::definitions[0][0x149]=0;
+        for(uint8_t sideMode:{uint8_t(2),uint8_t(1)}) {
+            native_world::definitions[0][0x14E]=sideMode;native_world::definitions[0][0x14F]=sideMode;
+            native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+            for(int i=0;i<8;++i) {Sleep(16);unit.Think();}
+            auto sideFacing=*reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C);
+            Check(sideMode==2?sideFacing.x<-0.98f:sideFacing.x>0.98f,
+                  sideMode==2?"class-3 shield presents its numeric side with forward -X to attacker +Z":"class-4 shield uses the opposite native yaw sign with forward +X");
+        }
+        native_world::Put(unit.bytes,0x2B70,0.0f);
+        native_world::Put(movement,4,movement+0x20);
         Eval("SDGO_BattleAI_GenericUpdate=savedGeneric");
         Config("[settings]\nGenericMode=1\nEnabled=0\n");Sleep(2100);unit.Think();
         reinterpret_cast<native_world::Callbacks*>(native_world::fsms[0].data())->Ray(&ray);

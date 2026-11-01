@@ -6,6 +6,7 @@
 
 #include "../mods/battle_ai/native_capabilities.h"
 #include "../mods/battle_ai/difficulty.h"
+#include "../mods/battle_ai/native_defence.h"
 
 namespace {
 
@@ -43,7 +44,7 @@ void EncodeProtectedFloat(std::uint8_t* unit, std::size_t permutationOffset,
 }
 
 struct Fixture {
-    std::uint8_t unit[0x1000]{};
+    std::uint8_t unit[0x3300]{};
     std::uint8_t definition[0x300]{};
     std::uint8_t fsm[0xA00]{};
     std::uint8_t weapons[3][0x700]{};
@@ -105,6 +106,20 @@ int main() {
     Check(battle_ai::RoomDifficulty(L"!aimer hard")==-1&&battle_ai::RoomDifficulty(L"!ai harder")==-1,
           "partial command and partial difficulty tokens are rejected");
     battle_ai::native::Capabilities capabilities{};
+    Put(fixture.unit,0x2B70,500.0f);Put(fixture.unit,0x2B74,500.0f);
+    Put(fixture.definition,0x145,std::int32_t{500});fixture.definition[0x149]=1;fixture.definition[0x14E]=4;
+    auto shield=battle_ai::native::ReadShield(fixture.unit);
+    Check(battle_ai::native::ShieldCovers(shield,2)&&!battle_ai::native::ShieldCovers(shield,1),
+          "live native back-shield mode is rear coverage, not an invented front shield");
+    Put(fixture.unit,0x2B70,0.0f);shield=battle_ai::native::ReadShield(fixture.unit);
+    Check(shield.known&&!shield.intact&&!battle_ai::native::ShieldCovers(shield,2),
+          "zero shield HP removes rear shield protection immediately");
+    Put(fixture.unit,0x2B70,500.0f);fixture.definition[0x14E]=6;
+    Check(battle_ai::native::ShieldCovers(battle_ai::native::ReadShield(fixture.unit),1),
+          "active weapon/form coverage is read afresh instead of cached by machine ID");
+    fixture.definition[0x14E]=9;
+    Check(!battle_ai::native::ReadShield(fixture.unit).known,"unknown shield coverage is rejected");
+    fixture.definition[0x14E]=0;
 
     Check(battle_ai::native::ReadCapabilities(fixture.unit, capabilities),
           "reads a complete standard-bank capability snapshot");

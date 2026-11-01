@@ -49,6 +49,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "../battle_ai/difficulty.h"
 
 namespace
 {
@@ -123,6 +124,7 @@ namespace
     using AddDeckUnitFn = void(__thiscall*)(uint8_t* unit, uint32_t unitDataId);
     using SwitchDeckFn = void(__thiscall*)(uint8_t* unit, int index, char flag);
     using PlaybackUnitFn = int(__thiscall*)(void* self, uint8_t* packet);
+    using BattleAiInitializeUnitFn = void(__cdecl*)(uint8_t* unit, int roomDifficulty, uint32_t generation);
 
     constexpr size_t kAppGameMain = 0x4A4;      // game-main service* of the game application
     constexpr size_t kServiceMode = 0x0C;       // game mode* of the game-main service
@@ -188,6 +190,8 @@ namespace
     AddDeckUnitFn g_addDeckUnit = nullptr;
     SwitchDeckFn g_switchDeck = nullptr;
     PlaybackUnitFn g_originalPlaybackUnit = nullptr;
+    HMODULE g_battleAiModule = nullptr;
+    BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
 
     // The AI players spawned for the current battle and its game mode; their AI is switched
     // on at game ready.
@@ -209,8 +213,12 @@ namespace
         const uint8_t* deckNpcData[4] = {};
         int form = 0;
         int pendingForm = -1;
+        uint32_t generation = 0;
+        bool pendingInitialize = false;
     };
     std::vector<Bot> g_botTable;
+    int g_roomDifficulty = 1;
+    uint32_t g_nextUnitGeneration = 0;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
@@ -237,6 +245,75 @@ namespace
             if (g_vtables[i] && vtable == g_vtables[i])
                 return i;
         return -1;
+    }
+
+    // The client battle room begins with its native std::wstring title.  A missing or
+    // malformed title keeps the requested default, Medium.  This is deliberately the same
+    // parser battle_ai uses, so "!ai easy/medium/hard" has one meaning in both mods.
+    int BattleDifficulty(const uint8_t* room)
+    {
+        wchar_t title[21] = {};
+        size_t length = 0;
+        __try {
+            if (!room)
+                return 1;
+            length = *reinterpret_cast<const uint32_t*>(room + 0x10);
+            size_t capacity = *reinterpret_cast<const uint32_t*>(room + 0x14);
+            if (length > 20 || capacity < 7 || capacity < length || capacity > 0x1000)
+                return 1;
+            const wchar_t* text =
+                capacity < 8 ? reinterpret_cast<const wchar_t*>(room)
+                             : *reinterpret_cast<const wchar_t* const*>(room);
+            if (!text || text[length] != L'\0')
+                return 1;
+            memcpy(title, text, length * sizeof(wchar_t));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 1;
+        }
+        int difficulty = battle_ai::RoomDifficulty(std::wstring_view(title, length));
+        return difficulty >= 0 && difficulty <= 2 ? difficulty : 1;
+    }
+
+    uint32_t NextUnitGeneration()
+    {
+        ++g_nextUnitGeneration;
+        if (g_nextUnitGeneration == 0)
+            ++g_nextUnitGeneration;
+        return g_nextUnitGeneration;
+    }
+
+    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    {
+        HMODULE module = GetModuleHandleW(L"battle_ai.dll");
+        if (!module) {
+            g_battleAiModule = nullptr;
+            g_battleAiInitializeUnit = nullptr;
+            return nullptr;
+        }
+        if (module != g_battleAiModule || !g_battleAiInitializeUnit) {
+            g_battleAiModule = module;
+            g_battleAiInitializeUnit = reinterpret_cast<BattleAiInitializeUnitFn>(
+                GetProcAddress(module, "SdgoBattleAiInitializeUnit"));
+        }
+        return g_battleAiInitializeUnit;
+    }
+
+    void InitializeBattleAiUnit(Bot& bot, bool initialMatchSpawn = false)
+    {
+        BattleAiInitializeUnitFn initialize = OptionalBattleAiInitializer();
+        if (!initialize || !bot.unit || bot.generation == 0)
+            return;
+        // The low byte is the public room difficulty.  0x100 marks only the first
+        // completed spawn in this match; respawns and deck changes must retain SP.
+        int difficultyAndFlags = g_roomDifficulty | (initialMatchSpawn ? 0x100 : 0);
+        __try {
+            initialize(bot.unit, difficultyAndFlags, bot.generation);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "battle_ai initialization fault %08lX for AI player %08lX generation %lu; initialization aborted",
+                       GetExceptionCode(), static_cast<unsigned long>(bot.pilotId),
+                       static_cast<unsigned long>(bot.generation));
+        }
     }
 
     // What each PvP Init sets in a player's slot (+0x48, the score the HUD sums per team)
@@ -522,6 +599,8 @@ namespace
             BuildAiDeck(bot, npcData);
             g_creatingAiUnit = false;
         }
+        bot.generation = NextUnitGeneration();
+        InitializeBattleAiUnit(bot, true);
         g_botTable.push_back(bot);
         g_logPackets = true;
         ++c.spawned;
@@ -557,6 +636,7 @@ namespace
         uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
         if (!room)
             return;
+        g_roomDifficulty = BattleDifficulty(room);
         int count = RecordCount(room, kRoomAiBegin, kRoomAiEnd);
         if (count == 0)
             return;
@@ -977,21 +1057,32 @@ namespace
     void SwitchPendingDecks()
     {
         for (Bot& bot : g_botTable) {
-            if (bot.pendingForm < 0)
+            if (bot.pendingForm < 0 && !bot.pendingInitialize)
                 continue;
             int form = bot.pendingForm;
             bot.pendingForm = -1;
-            int size = DeckSize(bot.unit);
-            if (size < 2 || form >= size) {
-                g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: deck index %d, but the unit deck has %d entries",
-                           static_cast<unsigned long>(bot.pilotId), form, size);
-                continue;
+            if (form >= 0) {
+                int size = DeckSize(bot.unit);
+                if (size < 2 || form >= size) {
+                    g_api->Log(g_mod, SDGO_LOG_WARN,
+                               "AI player %08lX: deck index %d, but the unit deck has %d entries",
+                               static_cast<unsigned long>(bot.pilotId), form, size);
+                    bot.pendingInitialize = false;
+                    continue;
+                } else {
+                    g_switchDeck(bot.unit, form, 0);
+                    *reinterpret_cast<int*>(bot.unit + kUnitDeckIndex) = form;
+                    bot.form = form;
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: now deck unit %d (NPC %lu)",
+                               static_cast<unsigned long>(bot.pilotId), form,
+                               static_cast<unsigned long>(bot.deckNpc[form]));
+                }
             }
-            g_switchDeck(bot.unit, form, 0);
-            *reinterpret_cast<int*>(bot.unit + kUnitDeckIndex) = form;
-            bot.form = form;
-            g_api->Log(g_mod, SDGO_LOG_INFO, "AI player %08lX: now deck unit %d (NPC %lu)",
-                       static_cast<unsigned long>(bot.pilotId), form, static_cast<unsigned long>(bot.deckNpc[form]));
+            if (bot.pendingInitialize) {
+                bot.pendingInitialize = false;
+                bot.generation = NextUnitGeneration();
+                InitializeBattleAiUnit(bot);
+            }
         }
     }
 
@@ -1274,6 +1365,10 @@ namespace
                     *reinterpret_cast<uint32_t*>(bot->unit + kUnitNpcDataId) = bot->deckNpc[colour];
                     bot->pendingForm = colour;
                 }
+                // PlaybackUnit completes the native respawn (and any pending deck switch).
+                // Reapply only after that point, with a fresh generation even when the same
+                // deck entry respawns.
+                bot->pendingInitialize = true;
                 g_originalSetSlotColour(um, bot->slot, colour);
                 return;
             }

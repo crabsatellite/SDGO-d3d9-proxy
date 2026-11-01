@@ -2,8 +2,10 @@
 #include <array>
 #include <vector>
 #include <cstring>
+#include <atomic>
 #include "../mods/battle_ai/combat_math.h"
 #include "../mods/battle_ai/native_navigation.h"
+#include "../mods/battle_ai/defence_math.h"
 // Private native ABI world. No code from GOnline is executed by this fixture.
 namespace native_world {
 using battle_ai::Vec3;
@@ -33,6 +35,10 @@ inline int lastWait=0;
 inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
 inline int swingInput=-1;
 inline int attackAdmissions=0;
+inline int levelApplications=0,partApplications=0;
+inline uint32_t lastPart=0;
+inline int ordinaryNotices=0;
+inline std::atomic<bool> stallOrdinary{false},ordinaryEntered{false},releaseOrdinary{false};
 inline bool deferSwitch=false;
 inline int requestedSlot=-1,switchRequests=0;
 inline void* messageEntry=nullptr;
@@ -52,6 +58,29 @@ template<class T> inline void* Address(T method) {
     static_assert(sizeof(T)==sizeof(void*));void* result;memcpy(&result,&method,sizeof(result));return result;
 }
 struct Callbacks {
+    __declspec(noinline) void SetLevel(int level) {++levelApplications;Put(reinterpret_cast<uint8_t*>(this),0xB0C,level);}
+    __declspec(noinline) void ApplyPart(uint32_t part) {++partApplications;lastPart=part;}
+    __declspec(noinline) int SpecialNotice(const uint8_t*) {return 0x51A7;}
+    __declspec(noinline) int MeleeNotice(const uint8_t*) {return 0x51B1;}
+    __declspec(noinline) int RangedNotice(const uint8_t*) {return 0x51B2;}
+    __declspec(noinline) int SkillNotice(const uint8_t* packet) {Put(source,0xBC8,*reinterpret_cast<const int32_t*>(packet+0x1F));return 0x51D1;}
+    __declspec(noinline) int SpStateNotice(const uint8_t* packet) {
+        ++ordinaryNotices;
+        if(stallOrdinary) {ordinaryEntered=true;while(!releaseOrdinary) Sleep(1);}
+        if(source&&*reinterpret_cast<const uint32_t*>(packet+6)==*reinterpret_cast<uint32_t*>(source+0x2B68))
+            Put(source,0xBC8,*reinterpret_cast<const int32_t*>(packet+0xB));
+        return 0x51D0;
+    }
+    __declspec(noinline) uint32_t Canonical(uint32_t pilot) {return source&&*reinterpret_cast<uint32_t*>(source+0x2B68)==pilot?20:0;}
+    __declspec(noinline) void Receive(const uint8_t* message) {
+        auto unit=reinterpret_cast<uint8_t*>(this);
+        if(*reinterpret_cast<const uint16_t*>(message)==0x18) Put(unit,0xBC8,*reinterpret_cast<const int32_t*>(message+0x10));
+    }
+    __declspec(noinline) void FacingUpdate() {
+        auto unit=reinterpret_cast<uint8_t*>(this);auto node=*reinterpret_cast<uint8_t**>(unit+8);
+        auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
+        Put(node,0x6C,battle_ai::Horizontal(cache));Put(unit,0xD98,0.0f);
+    }
     __declspec(noinline) void AttackAdmission() {++attackAdmissions;}
     __declspec(noinline) bool PlayerSpGate() {
         auto owner=*reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(this)+0xB2C);
@@ -61,10 +90,15 @@ struct Callbacks {
     __declspec(noinline) void TrackingUpdate(void*) { ++trackUpdates; }
     __declspec(noinline) void SwingEntry(void*) { ++swingEntries; }
     __declspec(noinline) void SwingUpdate(void* event) {swingInput=static_cast<uint8_t*>(event)[0xD];}
-    __declspec(noinline) bool Message(uint32_t id,void*,uint32_t) {return id==1||id==2;}
+    __declspec(noinline) bool Message(uint32_t id,void*,uint32_t) {return id==1||id==2||id==20;}
     __declspec(noinline) void QueueSwing() {auto fsm=reinterpret_cast<uint8_t*>(this);Put(fsm,8,fsm+0x5C);}
     __declspec(noinline) void Face() {++faces;}
-    __declspec(noinline) void Rotate(float degrees,int dispatch) {++rotations;Put(reinterpret_cast<uint8_t*>(this),0xD98,degrees);Put(reinterpret_cast<uint8_t*>(this),0x100,dispatch);}
+    __declspec(noinline) void Rotate(float degrees,int dispatch) {
+        ++rotations;auto unit=reinterpret_cast<uint8_t*>(this);auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
+        double radians=degrees*battle_ai::kPi/180;
+        Vec3 rotated={static_cast<float>(cache.x*std::cos(radians)+cache.z*std::sin(radians)),cache.y,static_cast<float>(cache.z*std::cos(radians)-cache.x*std::sin(radians))};
+        Put(unit,0x3090,rotated);Put(unit,0xD98,static_cast<float>(radians));Put(unit,0x100,dispatch);
+    }
     __declspec(noinline) void Receipts(void*) {Shot(0,0,0);Shot(0,1,0);Shot(0,0,1);}
     __declspec(noinline) bool CanAttack(uint8_t*) { return true; }
     __declspec(noinline) bool Projectile(void* opaque) {
@@ -161,6 +195,7 @@ inline void Configure(uint8_t* unit,size_t index,uint32_t id,int team,int hp,flo
     Put(unit,8,node);Put(unit,0x34,scene);Put(unit,0x9C4,def);Put(unit,0x9CC,fsm);
     auto movement=movements[index].data();Put(unit,0x9C8,movement);Put(movement,4,movement+0x20);Put(movement,8,uint32_t(0));
     Put(node,0x88,Vec3{x,0,z});Put(scene,0,sceneVtable.data());Put(scene,0x0C,unit);
+    Put(node,0x6C,Vec3{0,0,1});Put(unit,0x3090,Vec3{0,0,1});
     Put(scene,0xBC,Aabb{{x-40,50,z-40},{x+40,150,z+40}});
     Put(def,0,uint32_t(987654+index));def[0x247]=3;
     for(int i=0;i<3;++i) {
@@ -185,6 +220,7 @@ inline int Jump(lua_State*){++jumps;return 0;}
 inline void Initialize(uint8_t* unit,lua_State* L) {
     state=L;source=unit;blocked=false;jumps=moves=frees=queries=0;
     unitVtable[10]=Address(&Callbacks::CanAttack);sceneVtable[5]=Address(&Callbacks::IsTerrain);
+    unitVtable[7]=Address(&Callbacks::Receive);
     for(int i=0;i<3;++i) {
         auto w=weapons[i].data();Put(w,0,uint32_t(101+i));w[0x69]=1;w[0x6A]=i==0?1:3;
         Put(w,0x6C,int32_t(i==0?800:500));Put(w,0x70,uint16_t(i==0?0:20));
@@ -203,6 +239,15 @@ inline void Initialize(uint8_t* unit,lua_State* L) {
     lua_pop(L,1);
 }
 inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
+    symbol(f,"loadout.set_unit_level",Address(&Callbacks::SetLevel),false);
+    symbol(f,"loadout.apply_skill_part",Address(&Callbacks::ApplyPart),false);
+    symbol(f,"game.sp_state_notice",Address(&Callbacks::SpStateNotice),false);
+    symbol(f,"game.special_notice",Address(&Callbacks::SpecialNotice),false);
+    symbol(f,"game.special_melee_notice",Address(&Callbacks::MeleeNotice),false);
+    symbol(f,"game.special_ranged_notice",Address(&Callbacks::RangedNotice),false);
+    symbol(f,"game.skill_state_notice",Address(&Callbacks::SkillNotice),false);
+    symbol(f,"um.object_id_from_pilot",Address(&Callbacks::Canonical),false);
+    symbol(f,"npc.facing_update",Address(&Callbacks::FacingUpdate),false);
     symbol(f,"combat.attack_admission",Address(&Callbacks::AttackAdmission),false);
     symbol(f,"combat.player_sp_gate",Address(&Callbacks::PlayerSpGate),false);
     SetRoomTitle(L"",true);symbol(f,"game.app",reinterpret_cast<void*>(&App),false);

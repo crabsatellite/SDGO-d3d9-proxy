@@ -250,7 +250,7 @@ local function CoverStep(npc,o,s,w,t,now)
 end
 local function Orbwalk(npc,o,s,w,t,now)
   if w.kind=='melee' or not Flag(t.visible) or t.distance>w.range or
-     (not Flag(t.meleeTracking) and not Flag(t.meleeSwinging) and not Flag(t.hurt) and not Support(o,t,now)) then return false,false end
+     (not Flag(t.meleeApproaching) and not Flag(t.meleeTracking) and not Flag(t.meleeSwinging) and not Flag(t.hurt) and not Support(o,t,now)) then return false,false end
   local count=o.shots or 0
   if s.orbShots==nil then s.orbShots=count end
   if count>s.orbShots then
@@ -326,7 +326,7 @@ local function Evade(npc,o,s,w,t,now,canFire)
   Log(s,'ranged duel: air strafe',now)
   return true
 end
-local function ProfileTick(npc,o,now)
+local function ProfileTick(npc,o,now,deferSpecial)
   if C.Difficulty<1 or not Flag(o.valid) or o.hp<=0 then return false end
   if not U.profiles then U.profiles={} end
   if now>=(U.profileSweepAt or 0) then
@@ -340,6 +340,7 @@ local function ProfileTick(npc,o,now)
   p.seen=now
   local specialControl=not Flag(o.hurt)
   if o.specialControlAllowed~=nil then specialControl=Flag(o.specialControlAllowed) end
+  local lockedAttack=Flag(o.meleeBusy) and not Flag(o.hurt)
   local q=p.special
   local function ReturnWeapon()
     q.returning=true
@@ -360,7 +361,7 @@ local function ProfileTick(npc,o,now)
     if q.active or now-q.started>2200 then
       return ReturnWeapon()
     end
-    if not specialControl or Flag(o.meleeBusy) then
+    if not specialControl or lockedAttack then
       npc:SetAttackOnOff(false)
       return true
     end
@@ -383,11 +384,18 @@ local function ProfileTick(npc,o,now)
     end
     return true
   end
-  if now<p.nextSpecial or not Flag(o.specialAvailable) or not Flag(o.spReady) or
-     not specialControl or Flag(o.meleeBusy) or Flag(o.specialBusy) or Flag(o.rangedBusy) then return false end
+  if deferSpecial or now<p.nextSpecial or not Flag(o.specialAvailable) or not Flag(o.spReady) or
+     not specialControl or lockedAttack or Flag(o.specialBusy) or Flag(o.rangedBusy) then return false end
   local target=nil
+  if Flag(o.hurt) or Flag(o.meleePressure) then
+    for _,t in pairs(o.targets or {}) do
+      local pressing=t.id==o.meleeAttacker or (t.selectedTarget==o.id and (Flag(t.meleeTracking) or Flag(t.meleeSwinging)))
+      if pressing and t.hp>0 and Flag(t.visible) and Flag(t.attackable) and t.distance<=(o.specialRange or 0) and
+         (not target or t.distance<target.distance) then target=t end
+    end
+  end
   for _,t in pairs(o.targets or {}) do
-    if t.id==o.nativeTarget and t.hp>0 and Flag(t.visible) and Flag(t.attackable) and t.distance<=(o.specialRange or 0) then target=t end
+    if not target and t.id==o.nativeTarget and t.hp>0 and Flag(t.visible) and Flag(t.attackable) and t.distance<=(o.specialRange or 0) then target=t end
   end
   if not target then return false end
   p.special={target=target.id,slot=o.selectedSlot,started=now,switchAt=now+300}
@@ -406,7 +414,7 @@ local function Tick(npc)
     -- decisions are generic and do not read the original script's shared globals.
     SDGO_BattleAI_Native(1)
   end
-  if ProfileTick(npc,o,now) then s.weave=nil;s.cover=nil;return 123 end
+  if ProfileTick(npc,o,now,s.weave~=nil and not Flag(o.hurt)) then s.weave=nil;s.cover=nil;return 123 end
   if o.hp<=0 or Flag(o.hurt) then
     npc:SetAttackOnOff(false); npc:MoveStop(); s.readyAt=nil; s.recoverUntil=nil
     SDGO_BattleAI_CancelRoute()

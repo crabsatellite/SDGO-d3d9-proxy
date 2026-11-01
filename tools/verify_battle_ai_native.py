@@ -52,6 +52,16 @@ def main():
         ("room_title_decoder_assign",0x72DDD9,bytes.fromhex("8b ce e8 10 49 cd ff")),
         ("room_title_start_assign",0xA63212,bytes.fromhex("8b ce e8 d7 f4 99 ff")),
         ("room_title_inline_capacity_and_length",0x6E90A0,bytes.fromhex("8b c1 33 c9 c7 40 14 07 00 00 00 89 48 10")),
+        ("npc_facing_consumer_ret0",0x656400,b"\xc3"),
+        ("scene_yaw_consumes_native_input",0x662893,bytes.fromhex("f3 0f 10 8e 98 0d 00 00")),
+        ("melee_range_message_plus19",0x6B256A,bytes.fromhex("8a 48 6a 88 8d 45 ff ff ff")),
+        ("melee_hit_type_message_plus1a",0x6B2579,bytes.fromhex("8a 50 6b 49 88 95 46 ff ff ff")),
+        ("native_part_full_width_ret4",0x6705A8,b"\xc2\x04\x00"),
+        ("native_level_ret4",0x67061B,b"\xc2\x04\x00"),
+        ("sp_begin_notice_ret4",0x4C33F7,b"\xc2\x04\x00"),
+        ("sp_melee_notice_ret4",0x4C387F,b"\xc2\x04\x00"),
+        ("sp_ranged_notice_ret4",0x4C3EE8,b"\xc2\x04\x00"),
+        ("ordinary_state_notice_ret4",0x4CFDEF,b"\xc2\x04\x00"),
     ]:
         assert bytes_at(address,len(expected))==expected,name
         contracts[name]=hex(address)
