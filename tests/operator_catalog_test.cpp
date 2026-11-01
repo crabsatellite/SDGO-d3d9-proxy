@@ -114,6 +114,13 @@ int wmain(int argc,wchar_t** argv)
     Put(file,L"operator:60047",L"AvatarProfile",L"60013");
     Put(file,L"operator:60047",L"Name",L"new operator");
     Put(file,L"operator:60047",L"AvatarSprite",L"sdgo\\mods\\operator_catalog\\assets\\60047.spr");
+    for (uint32_t id:{60013u,60018u,60025u,60041u}) {
+        const std::wstring section=L"operator:"+std::to_wstring(id);
+        Put(file,section.c_str(),L"Category",std::to_wstring(1219000+id-60000).c_str());
+        Put(file,section.c_str(),L"Template",L"60003");
+        Put(file,section.c_str(),L"AvatarProfile",L"60013");
+        Put(file,section.c_str(),L"Name",L"default support");
+    }
     NativeRow(g_a,60003,L"avatarA");NativeRow(g_b,60013,L"avatarB");NativeRow(g_unrelated,60001,L"unrelated");
     g_category.fill(0);WriteId(g_category.data(),1210001);g_category[4]=1;WriteId(g_category.data()+105,60001);
     g_existing.fill(0);WriteId(g_existing.data(),1210002);WriteId(g_existing.data()+105,60003);
@@ -145,10 +152,13 @@ int wmain(int argc,wchar_t** argv)
     Require(invoke(Grid(),nullptr,L"gdrs\\0255.gdt",0x2C)==1 && g_originalCalls==2);
     Require(g_unrelated==otherBefore && g_existing==categoryBefore);
     Require(g_a[1200]==before[1200]);
+    Require(g_a[kMissionPartsOffset]==1);
+    for (uint32_t id:{60013u,60018u,60025u,60041u}) Require(g_rows.at({static_cast<int>(id),0x2C}).data[kMissionPartsOffset]==1);
     for(size_t i=0;i<7;++i) Require(!memcmp(g_a.data()+kAvatarOffsets[i],g_b.data()+kAvatarOffsets[i],kAvatarCapacities[i]*2));
     wchar_t name[100]={};memcpy(name,g_a.data()+5,200);Require(name[0]==0x540C && name[1]==0x89F3 && name[2]==L'"');
     Require(g_rows.count({60047,0x2C}) && g_rows.count({1219047,0x22}));
     const auto& created=g_rows.at({60047,0x2C});Require(ReadId(created.data)==60047 && created.data[1200]==before[1200]);
+    Require(created.data[kMissionPartsOffset]==before[kMissionPartsOffset]);
     for(size_t i=0;i<7;++i) {
         wchar_t path[54]={};memcpy(path,created.data+kAvatarOffsets[i],kAvatarCapacities[i]*2);
         Require(std::wstring(path)==L"sdgo\\mods\\operator_catalog\\assets\\60047_"+std::to_wstring(i)+L".spr");
