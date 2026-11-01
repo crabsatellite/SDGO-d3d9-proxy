@@ -19,6 +19,7 @@ For people who build the framework or write mods. Installing is covered in the
 ```
 GOnline.exe      ── static import ──> d3d9.dll   (loader/d3d9)
 BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
+AgentServer.exe / WorldServer.exe ──> winmm.dll (same server loader)
         │  DllMain: redirect the exe's kernel32!GetSystemTimeAsFileTime import
         │  first CRT call (__security_init_cookie): restore it, then boot      (loader/common)
         ▼
@@ -29,7 +30,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
   sdgo/mods/<id>/<id>.dll
 ```
 
-* Both host executables import a DLL from their own folder at start-up (`d3d9.dll`, and
+* The supported hosts import a DLL from their own folder at start-up (`d3d9.dll`, and
   `winmm.dll` for `timeGetTime`), so a DLL of that name next to the exe is loaded before
   any of the program's own code runs. Neither name is a Windows KnownDLL.
 * The loader does two things. It forwards its exports to the real DLL (system32, or the DLL
