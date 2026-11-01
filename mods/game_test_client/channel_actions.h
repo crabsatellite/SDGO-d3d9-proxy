@@ -103,6 +103,7 @@ public:
         lobbyChannelReplyDispatch_ =
             Symbol<ChannelReplyDispatchFn>(
                 "flow.lobby_join_channel_reply_dispatch");
+        lobbyBattleEntry_=Symbol<LobbyBattleEntryFn>("flow.lobby_battle_channel_entry");
 
         if (!api_ || !mod_ || !native_ || !profilePointer_ ||
             !serviceManagedPointer_ || !serviceFindByName_ ||
@@ -152,6 +153,8 @@ public:
             active_ = nullptr;
             return false;
         }
+        if(!api_->HookCode(mod_,"flow.lobby_join_channel_business",reinterpret_cast<void*>(&ObserveNativeLobbyChoice),
+            reinterpret_cast<void**>(&lobbyJoinChannel_)))return false;
 
         bound_ = true;
         Reset();
@@ -167,7 +170,9 @@ public:
         requiredType_=channelType;
         const auto selected=native_->OnboardingState();
         if (selected.native_app_state!=kLobbyAppState)return Publish(kWaitingForLobby,0);
+        if(choiceFailed_)return Publish(kNativeStateMismatch,choiceGroup_);
         if (RequestSent())return EnsureVsGroup(static_cast<uint32_t>(InterlockedCompareExchange(&requestTargetGroup_,0,0)));
+        if(choiceArmed_)return Publish(kNativeRequestPending,choiceGroup_);
         uint32_t target=0;
         const auto found=FindGroupForType(selected.channel_group,selected.channel_id,&target);
         if (found!=kAccepted)return Publish(found,target);
@@ -331,6 +336,16 @@ public:
         }
     }
 
+    bool ExcludeSelectedChannel()
+    {
+        const auto selected=native_ ? native_->OnboardingState():NativeActions::OnboardingObservation{};
+        if (!selected.channel_id || excludedCount_>=64)return false;
+        if (!IsExcluded(selected.channel_id))excludedChannels_[excludedCount_++]=selected.channel_id;
+        InterlockedExchange(&requestSent_,0);
+        return true;
+    }
+    bool TakeSceneReloadRequirement(){const bool value=sceneReloadRequired_;sceneReloadRequired_=false;return value;}
+
     void Reset()
     {
         InterlockedExchange(&requestSent_, 0);
@@ -346,6 +361,9 @@ public:
         currentPage_ = 0;
         maxPage_ = 0;
         requiredType_ = 0;
+        excludedCount_ = 0;
+        battleEntryAttempts_=0;
+        choiceArmed_=choiceFailed_=sceneReloadRequired_=false;choiceOwner_=nullptr;
     }
 
     Observation State() const
@@ -502,6 +520,7 @@ private:
     using VsChannelOpenFn = void(__thiscall*)(void*, int);
     using LobbyJoinChannelFn =
         void(__thiscall*)(void*, uint16_t);
+    using LobbyBattleEntryFn=void(__thiscall*)(void*);
     using ChannelReplyDispatchFn =
         int(__thiscall*)(void*, int, int, int, int, void*);
 
@@ -599,7 +618,7 @@ private:
             if (*reinterpret_cast<const uint16_t*>(
                     entry + kChannelId) == channelId &&
                 *reinterpret_cast<const uint32_t*>(
-                    entry + kChannelCategory) == group.category &&
+                    entry + kChannelCategory) == group.category && !IsExcluded(channelId) &&
                 (!requiredType_ || *reinterpret_cast<const uint32_t*>(entry+kChannelType)==requiredType_))
                 return true;
         }
@@ -628,6 +647,7 @@ private:
                 *reinterpret_cast<const uint32_t*>(
                     entry + kChannelPopulation);
             if (channelId &&
+                !IsExcluded(channelId) &&
                 category == group.category &&
                 (!requiredType_ || *reinterpret_cast<const uint32_t*>(entry+kChannelType)==requiredType_) &&
                 capacity != 0 &&
@@ -657,6 +677,12 @@ private:
             }
             return kNoAvailableChannel;
         }__except(EXCEPTION_EXECUTE_HANDLER){return kNativeFault;}
+    }
+
+    bool IsExcluded(uint16_t channel)const
+    {
+        for (uint32_t i=0;i<excludedCount_;++i)if(excludedChannels_[i]==channel)return true;
+        return false;
     }
 
     Result FindCandidate(
@@ -746,12 +772,22 @@ private:
         if (*reinterpret_cast<const uint32_t*>(
                 serviceBytes + kLobbyRequestState) != 0)
             return Publish(kNativeRequestPending, targetGroup);
-
-        uint16_t channel = 0;
-        const Result candidate =
-            FindAvailableChannel(group, &channel);
-        if (candidate != kAccepted)
-            return Publish(candidate, targetGroup);
+        uint16_t channel=0;
+        const Result candidate=FindAvailableChannel(group,&channel);
+        if(candidate!=kAccepted)return Publish(candidate,targetGroup);
+        if (*reinterpret_cast<const uint32_t*>(serviceBytes+0x70)!=1) {
+            if (!lobbyBattleEntry_ || battleEntryAttempts_>=4)return Publish(kNativeStateMismatch,targetGroup);
+            const uint32_t oldMode=*reinterpret_cast<const uint32_t*>(serviceBytes+0x70);
+            choiceArmed_=true;choiceOwner_=service;choiceGroup_=targetGroup;choiceChannel_=channel;
+            ++battleEntryAttempts_;
+            lobbyBattleEntry_(service);
+            if(api_ && api_->Log)api_->Log(mod_,SDGO_LOG_INFO,
+                "native VS entry initialized upper-menu mode=%u->%u request_state=%u attempt=%u",
+                oldMode,*reinterpret_cast<const uint32_t*>(serviceBytes+0x70),
+                *reinterpret_cast<const uint32_t*>(serviceBytes+kLobbyRequestState),battleEntryAttempts_);
+            if (*reinterpret_cast<const uint32_t*>(serviceBytes+0x70)!=1)return Publish(kNativeStateMismatch,targetGroup);
+            return Publish(kNativeRequestPending,targetGroup);
+        }
 
         targetChannel_ = channel;
         targetRow_ = 0;
@@ -762,6 +798,7 @@ private:
         const NativeActions::TransportObservation before =
             native_->TransportState();
         const ReplySnapshot replyBefore = ReadReply();
+        sceneReloadRequired_=native_->OnboardingState().channel_group!=targetGroup;
         lobbyJoinChannel_(service, channel);
         const NativeActions::TransportObservation after =
             native_->TransportState();
@@ -790,6 +827,37 @@ private:
             static_cast<LONG>(replyBefore.sequence));
         InterlockedExchange(&requestSent_, 1);
         return Publish(kRequestSent, targetGroup);
+    }
+
+    static void __fastcall ObserveNativeLobbyChoice(void* self,void*,uint16_t automaticChannel)
+    {
+        auto* actions=active_;
+        if(!actions || !actions->lobbyJoinChannel_)return;
+        if(!actions->choiceArmed_ || self!=actions->choiceOwner_ ||
+            *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self)+0x70)!=1) {
+            actions->lobbyJoinChannel_(self,automaticChannel);return;
+        }
+        // Supply the scenario's choice at the original VS selection callback,
+        // after the game's own list/mode initialization. The original worker
+        // still constructs/transports the request and consumes the real reply.
+        const auto before=actions->native_->TransportState();const auto reply=actions->ReadReply();
+        actions->sceneReloadRequired_=actions->native_->OnboardingState().channel_group!=actions->choiceGroup_;
+        actions->lobbyJoinChannel_(self,actions->choiceChannel_);
+        const auto after=actions->native_->TransportState();actions->choiceArmed_=false;
+        if(after.send_sequence==before.send_sequence || after.opcode!=kJoinChannelRequestOpcode ||
+            after.packet_size!=kJoinChannelRequestSize || !after.result ||
+            *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self)+kLobbyRequestState)!=kLobbyJoinPending) {
+            actions->choiceFailed_=true;return;
+        }
+        actions->targetChannel_=actions->choiceChannel_;
+        InterlockedExchange(&actions->requestTargetGroup_,static_cast<LONG>(actions->choiceGroup_));
+        InterlockedExchange(&actions->requestTargetChannel_,actions->choiceChannel_);
+        InterlockedExchange(&actions->requestTransportSequence_,static_cast<LONG>(after.send_sequence));
+        InterlockedExchange(&actions->requestReplyBaseline_,static_cast<LONG>(reply.sequence));
+        InterlockedExchange(&actions->requestSent_,1);
+        if(actions->api_ && actions->api_->Log)actions->api_->Log(actions->mod_,SDGO_LOG_INFO,
+            "native initialized VS choice automatic=%u scenario=%u group=%u original_transport=%u",
+            automaticChannel,actions->choiceChannel_,actions->choiceGroup_,after.send_sequence);
     }
 
     void* ResolveService(
@@ -1044,6 +1112,11 @@ private:
     ChannelReplyDispatchFn vsChannelReplyDispatch_ = nullptr;
     void* lobbyUiVtable_ = nullptr;
     LobbyJoinChannelFn lobbyJoinChannel_ = nullptr;
+    LobbyBattleEntryFn lobbyBattleEntry_ = nullptr;
+    uint32_t battleEntryAttempts_=0;
+    bool choiceArmed_=false,choiceFailed_=false,sceneReloadRequired_=false;
+    void* choiceOwner_=nullptr;
+    uint32_t choiceGroup_=0;uint16_t choiceChannel_=0;
     ChannelReplyDispatchFn lobbyChannelReplyDispatch_ = nullptr;
     bool bound_ = false;
 
@@ -1063,6 +1136,8 @@ private:
     mutable volatile LONG replyConsumed_ = 0;
     uint16_t targetChannel_ = 0;
     uint32_t requiredType_ = 0;
+    uint16_t excludedChannels_[64]{};
+    uint32_t excludedCount_ = 0;
     uint32_t targetRow_ = 0;
     uint32_t targetPage_ = 0;
     uint32_t currentPage_ = 0;

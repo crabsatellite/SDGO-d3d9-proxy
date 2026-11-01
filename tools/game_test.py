@@ -115,7 +115,7 @@ def copy_ignore(directory: str, names: list[str]) -> set[str]:
             lowered in IGNORED_DIRECTORIES
             or Path(lowered).suffix in IGNORED_SUFFIXES
             or "backup" in lowered
-            or "备份" in name
+            or "澶囦唤" in name
             or (parent == "sdgo" and lowered == "gametest")
         ):
             ignored.add(name)
@@ -410,6 +410,9 @@ class QuietRuntime:
     def __init__(self,metadata: dict,receipt_dir: Path):
         self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
         self.proof_file_written=False
+        self.guard_unavailable_since=None
+        self.guard_proxy=0
+        self.background_unavailable_since=None
         self.receipt={'status':'preparing','audio':'muted','background':True}
 
     def firewall_action(self,action: str) -> dict:
@@ -452,15 +455,45 @@ class QuietRuntime:
 
     def verify(self,pid: int) -> dict | None:
         marker=Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-sockets.ini'
-        guard=read_ini(marker) if marker.is_file() else None
+        try:
+            guard=read_ini(marker) if marker.is_file() else None
+        except GameTestError as error:
+            cause=error.__cause__
+            # Native atomic replacement can briefly put the old file into
+            # Windows delete-pending state. Retry only this I/O condition;
+            # malformed content and policy failures remain hard failures.
+            if not isinstance(cause,PermissionError) and getattr(cause,'winerror',None) not in (32,33):raise
+            guard=None
+            self.receipt['guard_read_retries']=self.receipt.get('guard_read_retries',0)+1
         matching=guard is not None and guard.get('run','id',fallback='')==self.metadata['run_id'] and guard.getint('policy','pid',fallback=0)==pid
-        proxy=guard.getint('graphics','proxy_hwnd',fallback=0) if matching else 0
+        if matching:self.guard_proxy=guard.getint('graphics','proxy_hwnd',fallback=0)
+        proxy=self.guard_proxy if guard is None else guard.getint('graphics','proxy_hwnd',fallback=0) if matching else 0
         proof=self.process.verify_background(pid,allowed_input_windows=(proxy,) if proxy else ())
         if self.receipt.get('desktop_probe')!=proof:
             self.receipt['desktop_probe']=proof
             self.save()
         if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
-        if not proof.get('verified',False):return None
+        if self.proof_file_written and (proof.get('input_desktop_unchanged') is False or
+            proof.get('unexpected_input_window_count',0)>0 or
+            (proof.get('input_desktop_safe') is False and proof.get('input_target_window_count',0)>0)):
+            raise GameTestError('owned game window escaped the verified private-desktop policy')
+        if guard is None and self.proof_file_written:
+            now=time.monotonic()
+            if self.guard_unavailable_since is None:self.guard_unavailable_since=now
+            if now-self.guard_unavailable_since>2:
+                raise GameTestError('native quiet runtime receipt stayed unreadable for more than two seconds')
+        elif guard is not None:
+            self.guard_unavailable_since=None
+            if self.proof_file_written and not matching:
+                raise GameTestError('native quiet runtime receipt changed its run or process identity')
+        if not proof.get('verified',False):
+            if self.proof_file_written:
+                now=time.monotonic()
+                if self.background_unavailable_since is None:self.background_unavailable_since=now
+                if now-self.background_unavailable_since>2:
+                    raise GameTestError('native background window context stayed unavailable for more than two seconds')
+            return None
+        self.background_unavailable_since=None
         if not matching:return None
         if (not proxy or guard.getint('graphics','active',fallback=0)!=1 or guard.getint('graphics','worker_ready',fallback=0)!=1 or
             guard.getint('graphics','created_devices',fallback=0)<1):return None
@@ -928,7 +961,7 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
         if path.is_file() and path.suffix.lower() in {".dll", ".lua", ".ini", ".tsv", ".json",
                                                       ".bin", ".gdt", ".zsd", ".spr", ".txr", ".uir", ".zpk", ".zdx"}:
             bind(path, immutable)
-    for name in ("config.xml", "配置文件.ini"):
+    for name in ("config.xml", "閰嶇疆鏂囦欢.ini"):
         path = root / name
         if path.is_file():
             bind(path, initial)
@@ -1565,6 +1598,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                     status = "completed"
                     break
                 if quiet_runtime:
+                    if process_image_path(game_process['pid']) is None:
+                        status='game_exited';break
                     proof=quiet_runtime.verify(game_process['pid'])
                     if proof and not metadata['execution'].get('quiet_verified'):
                         metadata['execution']['quiet_verified']=proof
@@ -1611,6 +1646,8 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 pass
         for handle in handles:
             handle.close()
+        if entry_process and metadata.get('execution') is not None:
+            metadata['execution']['entry_exit_code']=entry_process.poll()
         if quiet_runtime:
             metadata.setdefault('execution',{})['quiet_cleanup']=quiet_runtime.close()
             atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))

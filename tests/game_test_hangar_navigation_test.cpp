@@ -40,7 +40,7 @@ uint8_t g_profileStorage[0x1000] = {};
 uint8_t* g_profile = g_profileStorage;
 uint8_t g_network[0x60] = {};
 uint8_t g_stream = 0;
-uint8_t g_serviceManagerObject = 0;
+uint8_t g_serviceManagerObject[0x48] = {};
 void* g_serviceManager = &g_serviceManagerObject;
 
 uint8_t g_downmenu[0x200] = {};
@@ -53,6 +53,10 @@ uint8_t g_unitManagerRoot = 0;
 uint8_t g_myRoomControl[0x180] = {};
 uint8_t g_otherControl[0x180] = {};
 uint8_t g_unitRadioControl[0x180] = {};
+uint8_t g_gameRoomControl[0x180] = {};
+uint8_t g_makeRoomControl[0x180] = {};
+uint8_t g_roomList[0x100] = {},g_serviceHead[12] = {},g_serviceNode[12] = {};
+void* g_roomListVtable[32] = {};
 
 void* g_downmenuVtable[32] = {};
 void* g_mainframeVtable[32] = {};
@@ -345,6 +349,7 @@ void* __fastcall FakeUiFindControl(
 {
     ++g_controlLookups;
     g_lastControlKind = type;
+    if (type==4 && root==&g_mainframeRoot && wcscmp(ReadNativeString(nativeName),L"MakeRoomBtn")==0)return g_makeRoomControl;
     if (type != 0x0C)
         return nullptr;
     const wchar_t* name =
@@ -354,6 +359,7 @@ void* __fastcall FakeUiFindControl(
     if (root == &g_downmenuRoot &&
         std::wcscmp(name, L"MyRoomRadio") == 0)
         return g_myRoomControl;
+    if (root == &g_downmenuRoot && std::wcscmp(name,L"GameRoomRadio")==0)return g_gameRoomControl;
     if (root == &g_mainframeRoot &&
         std::wcscmp(name, L"UnitRadio") == 0)
         return g_unitRadioControl;
@@ -369,6 +375,13 @@ uint32_t __stdcall FakeDownmenuCallback(
     ++g_downmenuCalls;
     const wchar_t* name =
         ReadNativeString(nativeName);
+    if (service==g_downmenu && event==0x301 && control==g_gameRoomControl && name &&
+        std::wcscmp(name,L"GameRoomRadio")==0 && g_sendHangarRequest && g_networkSendDetour) {
+        uint8_t packet[10]{};*reinterpret_cast<uint16_t*>(packet)=0x0621;
+        *reinterpret_cast<uint32_t*>(packet+6)=2;
+        g_networkSendDetour(g_network,nullptr,&g_stream,packet,sizeof(packet),0);
+        return 0;
+    }
     const bool valid =
         service == g_downmenu &&
         event == 0x301 &&
@@ -614,6 +627,12 @@ void InitializeVtables()
 
 void ResetFixture(uint32_t appState)
 {
+    DestroyNativeString(g_gameRoomControl+0x118);DestroyNativeString(g_makeRoomControl+0x118);
+    memset(g_serviceManagerObject,0,sizeof(g_serviceManagerObject));
+    memset(g_serviceHead,0,sizeof(g_serviceHead));memset(g_serviceNode,0,sizeof(g_serviceNode));memset(g_roomList,0,sizeof(g_roomList));
+    *reinterpret_cast<void**>(g_serviceManagerObject+0x44)=g_serviceHead;
+    *reinterpret_cast<void**>(g_serviceHead)=g_serviceHead;
+    memset(g_gameRoomControl,0,sizeof(g_gameRoomControl));memset(g_makeRoomControl,0,sizeof(g_makeRoomControl));
     DestroyNativeString(
         g_myRoomControl + 0x118);
     DestroyNativeString(
@@ -664,6 +683,10 @@ void ResetFixture(uint32_t appState)
         g_downmenu + 0x44) = &g_downmenuRoot;
     *reinterpret_cast<void**>(
         g_downmenu + 0x54) = g_myRoomControl;
+    *reinterpret_cast<void**>(g_downmenu+0x48)=g_gameRoomControl;
+    *reinterpret_cast<void**>(g_gameRoomControl+0x15C)=&g_downmenuRoot;
+    WriteNativeString(g_gameRoomControl+0x118,L"GameRoomRadio");
+    g_gameRoomControl[0x162]=g_gameRoomControl[0x167]=1;
     *reinterpret_cast<void**>(
         g_mainframe + 0x64) = &g_mainframeRoot;
     *reinterpret_cast<void**>(
@@ -1065,6 +1088,48 @@ void TestServiceAndTransportFailures(
         "a failed original wire send cannot claim navigation");
 }
 
+void TestGameRoomRestoration(const SdgoApi& api,NativeActions& native)
+{
+    ResetFixture(6);HangarNavigation navigation;
+    Check(navigation.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"game-room restoration binds native callbacks");
+    Check(navigation.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kOpeningGameRoom && g_downmenuCalls==1,
+        "a missing native room-list consumer enters the actual GameRoomRadio business once");
+    Check(navigation.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kWaitingForGameRoom && g_downmenuCalls==1,
+        "a transported request alone cannot prove that the native page has been reconstructed");
+    *reinterpret_cast<void**>(g_serviceHead)=g_serviceNode;
+    *reinterpret_cast<void**>(g_serviceNode)=g_serviceHead;
+    *reinterpret_cast<void**>(g_serviceNode+8)=g_roomList;
+    *reinterpret_cast<void***>(g_roomList)=g_roomListVtable;
+    *reinterpret_cast<void**>(g_roomList+0x64)=&g_mainframeRoot;
+    *reinterpret_cast<void**>(g_roomList+0x84)=g_makeRoomControl;
+    *reinterpret_cast<void**>(g_makeRoomControl+0x15C)=&g_mainframeRoot;
+    WriteNativeString(g_makeRoomControl+0x118,L"MakeRoomBtn");
+    Check(navigation.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kWaitingForGameRoom,
+        "a registered service with an unavailable MakeRoom button is not ready");
+    g_makeRoomControl[0x162]=g_makeRoomControl[0x167]=1;
+    Check(navigation.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kReady && g_downmenuCalls==1,
+        "only the real registered consumer and visible enabled native control complete the precondition");
+    navigation.RequireGameRoomReentry(10);
+    Check(navigation.EnsureGameRoom(g_roomListVtable,g_wrongVtable,10)==HangarNavigation::kWaitingForGameRoom,
+        "the old native UI initialization generation cannot satisfy a new scene");
+    Check(navigation.EnsureGameRoom(g_roomListVtable,g_wrongVtable,11)==HangarNavigation::kReady && g_downmenuCalls==1,
+        "a genuine newer native initialization event handles teardown/recreation between two polling frames");
+    navigation.RequireGameRoomReentry();
+    Check(navigation.EnsureGameRoom(g_roomListVtable,g_wrongVtable)==HangarNavigation::kWaitingForGameRoom && g_downmenuCalls==1,
+        "the old still-registered room list cannot satisfy a cross-group scene transition");
+    *reinterpret_cast<void**>(g_serviceNode+8)=g_wrongService;
+    Check(navigation.EnsureGameRoom(g_roomListVtable,g_wrongVtable)==HangarNavigation::kWaitingForGameRoom && g_downmenuCalls==1,
+        "native modal loading blocks new page actions even after old consumer teardown");
+    *reinterpret_cast<void**>(g_serviceHead)=g_serviceHead;
+    Check(navigation.EnsureGameRoom(g_roomListVtable,g_wrongVtable)==HangarNavigation::kOpeningGameRoom && g_downmenuCalls==2,
+        "only observed teardown and finished native loading permit original GameRoomRadio entry");
+    ResetFixture(6);HangarNavigation mismatch;
+    Check(mismatch.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"negative page restoration binds");
+    *reinterpret_cast<void**>(g_gameRoomControl+0x15C)=&g_mainframeRoot;
+    Check(mismatch.EnsureGameRoom(g_roomListVtable)==HangarNavigation::kDownmenuControlMismatch && g_downmenuCalls==0,
+        "a wrong-parent radio cannot invoke the native callback");
+}
+
 void TestResultNames()
 {
     Check(
@@ -1129,6 +1194,7 @@ int main()
             api,
             native);
         TestResultNames();
+        TestGameRoomRestoration(api,native);
     }
 
     DestroyNativeString(
@@ -1137,6 +1203,7 @@ int main()
         g_otherControl + 0x118);
     DestroyNativeString(
         g_unitRadioControl + 0x118);
+    DestroyNativeString(g_gameRoomControl+0x118);DestroyNativeString(g_makeRoomControl+0x118);
     if (g_failures) {
         std::fprintf(
             stderr,

@@ -602,6 +602,42 @@ rva=state
             self.assertIn({'local_ipv4':'127.0.0.1','local_port':probe.getsockname()[1]},game_test.owned_udp_endpoints(os.getpid()))
             self.assertEqual(game_test.owned_udp_endpoints(0xFFFFFFFF),[])
 
+    def test_live_quiet_receipt_sharing_race_retries_but_keeps_foreground_checks_and_a_deadline(self):
+        run_dir=self.prepare('quiet-sharing-race');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt)
+        runtime.process=mock.Mock()
+        runtime.process.verify_background.return_value={'verified':True,'foreground_safe':True}
+        runtime.proof_file_written=True;runtime.guard_proxy=456
+        (run_dir/'client/sdgo/gametest/quiet-sockets.ini').write_text('[run]\nid=fixture\n')
+        locked=game_test.GameTestError('sharing race');locked.__cause__=PermissionError(13,'delete pending')
+        with mock.patch.object(game_test,'read_ini',side_effect=locked),mock.patch.object(game_test.time,'monotonic',side_effect=[10,12.1]):
+            self.assertIsNone(runtime.verify(1234))
+            runtime.process.verify_background.assert_called_with(1234,allowed_input_windows=(456,))
+            with self.assertRaisesRegex(game_test.GameTestError,'two seconds'):runtime.verify(1234)
+        runtime.process.verify_background.return_value={'verified':False,'foreground_safe':False}
+        with mock.patch.object(game_test,'read_ini',side_effect=locked):
+            with self.assertRaisesRegex(game_test.GameTestError,'foreground'):runtime.verify(1234)
+        malformed=game_test.GameTestError('malformed');malformed.__cause__=ValueError('bad schema')
+        with mock.patch.object(game_test,'read_ini',side_effect=malformed):
+            with self.assertRaisesRegex(game_test.GameTestError,'malformed'):runtime.verify(1234)
+
+    def test_live_quiet_desktop_violation_cannot_keep_a_stale_bootstrap_pass(self):
+        run_dir=self.prepare('quiet-window-escape');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt);runtime.process=mock.Mock()
+        runtime.proof_file_written=True
+        runtime.process.verify_background.return_value={'verified':False,'foreground_safe':True,
+            'input_desktop_safe':False,'input_desktop_unchanged':True,'unexpected_input_window_count':1}
+        with self.assertRaisesRegex(game_test.GameTestError,'private-desktop'):runtime.verify(1234)
+
+    def test_disappearing_windows_are_not_misreported_as_public_desktop_escape(self):
+        run_dir=self.prepare('quiet-window-disappearance');receipt=run_dir/'receipts';receipt.mkdir(exist_ok=True)
+        runtime=REAL_QUIET_RUNTIME(self.metadata(run_dir),receipt);runtime.process=mock.Mock();runtime.proof_file_written=True
+        runtime.process.verify_background.return_value={'verified':False,'foreground_safe':True,'input_desktop_safe':False,
+            'input_desktop_unchanged':True,'input_target_window_count':0,'unexpected_input_window_count':0}
+        with mock.patch.object(game_test.time,'monotonic',side_effect=[10,10,12.1,12.1]):
+            self.assertIsNone(runtime.verify(1234))
+            with self.assertRaises(game_test.GameTestError):runtime.verify(1234)
+
     def test_deck_setup_keeps_private_units_and_cannot_downgrade_its_scope(self):
         with self.account_profile.open('a',encoding='utf-8') as stream:
             stream.write('\n[deck]\nunit_uid0=101\nunit_uid1=102\nunit_uid2=103\nunit_uid3=104\n')

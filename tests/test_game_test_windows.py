@@ -99,6 +99,17 @@ class BackgroundProcessPolicyTests(unittest.TestCase):
             api.window={**original,key:value}
             with self.subTest(field=key):self.assertFalse(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
 
+    def test_termination_exit_race_is_idempotent_but_live_access_failure_still_raises(self):
+        api=game_test_windows._Win32Api.__new__(game_test_windows._Win32Api)
+        api.kernel=mock.Mock();api.poll=mock.Mock(return_value=None)
+        api.kernel.TerminateProcess.return_value=False
+        api.kernel.WaitForSingleObject.return_value=game_test_windows.WAIT_OBJECT_0
+        api._error=mock.Mock(return_value=OSError(5,'termination raced exit'))
+        api.terminate(123)
+        api.kernel.WaitForSingleObject.assert_called_once()
+        api.kernel.WaitForSingleObject.return_value=game_test_windows.WAIT_TIMEOUT
+        with self.assertRaises(OSError):api.terminate(123)
+
     def test_rejects_command_strings_and_invalid_environment(self):
         with self.assertRaises(TypeError):
             game_test_windows._argument_list("python -c pass")

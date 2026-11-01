@@ -38,6 +38,8 @@ using ReplyDetour =
         int,
         int,
         void*);
+using LobbyChoiceDetour=void(__fastcall*)(void*,void*,uint16_t);
+LobbyChoiceDetour g_lobbyChoiceDetour=nullptr;
 
 int g_failures = 0;
 uint8_t g_app[0x500] = {};
@@ -188,6 +190,7 @@ void ResetFixture(
     g_serviceManager = &g_serviceManagerObject;
     *reinterpret_cast<void***>(g_service) = g_vtable;
     *reinterpret_cast<void***>(g_lobbyService) = g_lobbyVtable;
+    *reinterpret_cast<uint32_t*>(g_lobbyService+0x70)=1;
     *reinterpret_cast<void**>(g_service + 0x60) = g_root;
     *reinterpret_cast<uint32_t*>(g_service + 0x1A4) = 0;
     *reinterpret_cast<uint32_t*>(g_service + 0x1A8) =
@@ -455,6 +458,11 @@ void __fastcall FakeLobbyJoinChannel(
             g_lobbyService + 0x68) = 4;
 }
 
+void __fastcall FakeLobbyBattleEntry(void* service,void*)
+{
+    if(service==g_lobbyService){*reinterpret_cast<uint32_t*>(g_lobbyService+0x70)=1;*reinterpret_cast<uint32_t*>(g_lobbyService+0x68)=2;}
+}
+
 uint32_t FindGroupForChannel(uint16_t channel)
 {
     for (uint32_t group = 0; group < 4; ++group) {
@@ -589,6 +597,7 @@ void* LookupSymbol(const char* name)
         return g_lobbyVtable;
     if (std::strcmp(name, "flow.lobby_join_channel_business") == 0)
         return reinterpret_cast<void*>(&FakeLobbyJoinChannel);
+    if (std::strcmp(name,"flow.lobby_battle_channel_entry")==0)return reinterpret_cast<void*>(&FakeLobbyBattleEntry);
     if (std::strcmp(
             name,
             "flow.lobby_join_channel_reply_dispatch") == 0)
@@ -623,6 +632,8 @@ int ApiHookCode(
             "flow.lobby_join_channel_reply_dispatch") == 0) {
         g_lobbyReplyDetour =
             reinterpret_cast<ReplyDetour>(detour);
+    } else if(std::strcmp(name,"flow.lobby_join_channel_business")==0) {
+        g_lobbyChoiceDetour=reinterpret_cast<LobbyChoiceDetour>(detour);
     }
     return 1;
 }
@@ -939,6 +950,31 @@ void TestSemanticChannelType(ChannelActions& channels)
     ResetFixture(channels);
     Check(channels.EnsureVsType(1)==ChannelActions::kAlreadySelected && g_networkOriginalCalls==0,
         "an already selected normal VS channel needs no native request");
+    Check(channels.ExcludeSelectedChannel() && channels.EnsureVsType(1)==ChannelActions::kRequestSent && g_lobbyRequestedChannel==kTargetChannel,
+        "an explicit native unsupported-setting rejection can advance to another advertised normal VS channel");
+    ResetFixture(channels);
+    Check(channels.EnsureVsType(1)==ChannelActions::kAlreadySelected,
+        "a new scenario resets capability-discovery exclusions");
+}
+
+void TestNativeBattleEntryInitialization(ChannelActions& channels)
+{
+    ResetFixture(channels);
+    *reinterpret_cast<uint32_t*>(g_lobbyService+0x70)=UINT32_MAX;
+    Check(channels.EnsureVsType(2)==ChannelActions::kNativeRequestPending && g_lobbyJoinCalls==0 &&
+        *reinterpret_cast<uint32_t*>(g_lobbyService+0x70)==1,
+        "lower JoinChannel cannot run on an uninitialized native upper-menu mode");
+    Check(channels.EnsureVsType(2)==ChannelActions::kNativeRequestPending && g_lobbyJoinCalls==0,
+        "the real VS channel-list operation must complete before requested channel business");
+    Check(g_lobbyChoiceDetour!=nullptr,"original VS selection boundary is observed");
+    if(g_lobbyChoiceDetour)g_lobbyChoiceDetour(g_lobbyService,nullptr,200);
+    Check(g_lobbyJoinCalls==1 && g_lobbyRequestedChannel==400 && channels.State().request_transport_sequence!=0,
+        "the original initialized selection callback supplies the scenario choice before native request construction");
+    Check(channels.TakeSceneReloadRequirement() && !channels.TakeSceneReloadRequirement(),
+        "an actual cross-group native selection carries a one-shot scene-reload precondition");
+    ResetFixture(channels);
+    if(g_lobbyChoiceDetour)g_lobbyChoiceDetour(g_lobbyService,nullptr,200);
+    Check(g_lobbyRequestedChannel==200,"unarmed native selection arguments remain unchanged");
 }
 
 void TestLobbyReplyStateGuard(ChannelActions& channels)
@@ -1214,6 +1250,7 @@ int main()
         TestLobbyFallback(channels);
         TestReturnToNormalVsGroup(channels);
         TestSemanticChannelType(channels);
+        TestNativeBattleEntryInitialization(channels);
         TestLobbyFailureBoundaries(channels);
         TestLobbyReplyStateGuard(channels);
         TestOpenPageRequestAndReplyLifetime(channels);

@@ -6,7 +6,9 @@
 #include "oledb_policy.h"
 
 namespace {
-using Execute=void(__thiscall*)(void*,void*);
+// Both verified native entry points return a 32-bit result in EAX (ret 4).
+// The hook must preserve that result, including on unrelated startup queries.
+using Execute=int(__thiscall*)(void*,void*);
 Execute originals[2]={};
 const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
 std::wstring database;
@@ -27,32 +29,33 @@ int Match(const wchar_t* command) {
         for(int i=0;i<2;++i){const auto length=wcslen(commands[i]);if(wcsncmp(command,commands[i],length+1)==0)return i;}
     }__except(EXCEPTION_EXECUTE_HANDLER){return -1;}return -1;
 }
-bool Redirected(Execute original,void* connection,void* info,const wchar_t* from,const wchar_t* to) {
+int Redirected(Execute original,void* connection,void* info,const wchar_t* from,const wchar_t* to) {
+    int result=0;
     __try {
         memcpy(static_cast<BYTE*>(info)+0xc,&to,sizeof(to));
-        __try {original(connection,info);}
+        __try {result=original(connection,info);}
         __finally {memcpy(static_cast<BYTE*>(info)+0xc,&from,sizeof(from));}
-        return true;
-    }__except(EXCEPTION_CONTINUE_SEARCH){return false;}
+        return result;
+    }__except(EXCEPTION_CONTINUE_SEARCH){return 0;}
 }
-void Run(int variant,void* connection,void* info) {
+int Run(int variant,void* connection,void* info) {
     const wchar_t* command=nullptr;int selected=-1;
     if(ReadCommand(info,&command))selected=Match(command);
-    if(selected<0){originals[variant](connection,info);return;}
+    if(selected<0)return originals[variant](connection,info);
     std::wstring replacement;
     try {
         if(!preparePolicy(connection))throw std::runtime_error("rank policy session unavailable");
         replacement=sdgo::rank_fix::Redirect(command,sdgo::rank_fix::kNames[selected]);
     }catch(const std::exception& error){
         if(errors.fetch_add(1)<5)g_api->Log(g_mod,SDGO_LOG_ERROR,"rank policy unavailable; native command retained: %s",error.what());
-        originals[variant](connection,info);return;
+        return originals[variant](connection,info);
     }
     const unsigned bit=1u<<selected;
     if(!(active.fetch_or(bit)&bit))g_api->Log(g_mod,SDGO_LOG_INFO,"rank policy active for %s; native SQL definition unchanged",selected?"Grid/Tag":"normal battle");
-    Redirected(originals[variant],connection,info,command,replacement.c_str());
+    return Redirected(originals[variant],connection,info,command,replacement.c_str());
 }
-void __fastcall Execute0(void* connection,void*,void* info){Run(0,connection,info);}
-void __fastcall Execute1(void* connection,void*,void* info){Run(1,connection,info);}
+int __fastcall Execute0(void* connection,void*,void* info){return Run(0,connection,info);}
+int __fastcall Execute1(void* connection,void*,void* info){return Run(1,connection,info);}
 }
 
 SDGO_MOD_ENTRY {

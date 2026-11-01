@@ -39,6 +39,8 @@ HangarNavigation hangarNavigation;
 PageTestActions pages;
 OperatorCatalogActions operatorCatalog;
 AiCatalogActions aiCatalog;
+const void* roomListVtable=nullptr;
+const void* modalLoadingVtable=nullptr;
 GiftActions gifts;
 RoomActions rooms;
 TutorialActions tutorial;
@@ -252,6 +254,9 @@ bool Snapshot(SdgoPvpAiClientSnapshotV1& snapshot) {
     return getSnapshot && getSnapshot(&snapshot) != 0;
 }
 int __cdecl Room(const SdgoGameTestContextV1* context) {
+    static size_t roomPageBaselineMode=SIZE_MAX;
+    static uint32_t roomPageBaselineGeneration=0;
+    if(roomPageBaselineMode!=modeIndex){roomPageBaselineMode=modeIndex;roomPageBaselineGeneration=rooms.NativeRoomPageGeneration();}
     if (!roomRequested) {
         const auto state = actions.OnboardingState();
         if (!state.profile_pilot_id || actions.AppState() == 4 || actions.AppState() == 25) return SDGO_GAME_TEST_WAIT;
@@ -261,6 +266,11 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
             const uint32_t requiredType = 1;
             const ChannelActions::Result result = channels.EnsureVsType(requiredType);
             const auto channel = channels.State();
+            if(result==ChannelActions::kAccepted && channels.TakeSceneReloadRequirement()) {
+                hangarNavigation.RequireGameRoomReentry(roomPageBaselineGeneration);
+                context->Observe("native channel reply accepted; waiting for old room-list teardown and the new scene's page entry");
+                return SDGO_GAME_TEST_WAIT;
+            }
             static uint32_t lastResult = UINT32_MAX;
             static uint32_t lastReplySequence = UINT32_MAX;
             static uint32_t lastTransportSequence = UINT32_MAX;
@@ -305,13 +315,22 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
                 context->Assert(0, failure);
                 return SDGO_GAME_TEST_FAIL;
             }
-            context->Assert(
-                channel.selected_group == channel.target_group &&
-                    channel.selected_channel != 0 &&
-                    channel.selected_channel == channel.target_channel,
-                "the original selector reply placed the real profile in a server-provided VS channel with the type required by this mode");
         }
         if (!rooms.SetRoomMode(RequestedMode())) { context->Assert(0, "invalid PvP mode in test plan"); return SDGO_GAME_TEST_FAIL; }
+        const auto page=hangarNavigation.EnsureGameRoom(roomListVtable,modalLoadingVtable,rooms.NativeRoomPageGeneration());
+        static uint32_t lastPageResult=UINT32_MAX;
+        if (lastPageResult!=page) {
+            char message[96];sprintf_s(message,"native Game Room page precondition=%s",HangarNavigation::ResultName(page));
+            context->Observe(message);lastPageResult=page;
+        }
+        if (page>=HangarNavigation::kDownmenuServiceMismatch || page==HangarNavigation::kUnbound) {
+            context->Assert(0,"native Game Room page entry rejected its actual service or control");return SDGO_GAME_TEST_FAIL;
+        }
+        if (page!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+        const auto selectedChannel=channels.State();
+        context->Assert(selectedChannel.selected_group==selectedChannel.target_group && selectedChannel.selected_channel &&
+            selectedChannel.selected_channel==selectedChannel.target_channel,
+            "the original selector reply placed the real profile in a server-provided VS channel with the type required by this mode");
         SdgoPvpAiClientSnapshotV1 before{};
         if (!Snapshot(before)) return SDGO_GAME_TEST_WAIT;
         roomReplySequence = before.create_reply_sequence;
@@ -334,6 +353,12 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
             context->Observe(message); lastReply = replies.create_reply_sequence;
         }
         if (replies.create_reply_opcode == 0x0A0A || (replies.create_reply_opcode == 0x0918 && !replies.create_reply_room_id)) {
+            if ((RequestedMode()==6 || RequestedMode()==7) && replies.create_reply_error==0x0BC2 &&
+                !replies.create_reply_room_id && channels.ExcludeSelectedChannel()) {
+                context->Observe("native server rejected this ship-room setting; testing the next server-provided regular VS channel without changing its restrictions");
+                roomRequested=false;
+                return SDGO_GAME_TEST_WAIT;
+            }
             context->Assert(0, "the real backend rejected the native create-room request");
             return SDGO_GAME_TEST_FAIL;
         }
@@ -666,10 +691,10 @@ int __cdecl AcquireBattleship(const SdgoGameTestContextV1* context) {
     static uint8_t lastPage = UINT8_MAX;
     if (state.result != lastResult || state.reply_sequence != lastReply || state.page != lastPage) {
         char text[224];
-        sprintf_s(text, "native battleship acquisition result=%s tutorial=%u page=%u/%u request=%u reply=%04X/%04X consumed=%u ship=%u uid=%u:%u popup=%u",
+        sprintf_s(text, "native battleship acquisition result=%s tutorial=%u page=%u/%u request=%u reply=%04X/%04X consumed=%u ship=%u uid=%u:%u leader=%u:%u popup=%u",
             BattleShipActions::ResultName(result), state.tutorial_level, state.page, state.page_count,
             state.request_transport_sequence,state.reply_opcode,state.reply_error,state.reply_consumed,
-            state.ship_id,state.ship_uid_high,state.ship_uid_low,state.result_popup_ready);
+            state.ship_id,state.ship_uid_high,state.ship_uid_low,state.leader_uid_high,state.leader_uid_low,state.result_popup_ready);
         context->Observe(text); lastResult=state.result;lastReply=state.reply_sequence;lastPage=state.page;
     }
     if (result == BattleShipActions::kAlreadyCompleted || result == BattleShipActions::kConfirmed) {
@@ -961,8 +986,15 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     const DWORD code = fault->ExceptionRecord->ExceptionCode;
     if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
         code == EXCEPTION_INT_OVERFLOW || code == EXCEPTION_FLT_DIVIDE_BY_ZERO || code == EXCEPTION_ILLEGAL_INSTRUCTION) {
-        static LONG reported = 0;
-        if (InterlockedIncrement(&reported) <= 8) {
+        static PVOID volatile sites[32]{};
+        static LONG reported[32]{};
+        bool report=false;
+        for(unsigned index=0;index<32;++index) {
+            const auto address=fault->ExceptionRecord->ExceptionAddress;
+            const auto existing=InterlockedCompareExchangePointer(&sites[index],address,nullptr);
+            if(!existing || existing==address){report=InterlockedIncrement(&reported[index])<=8;break;}
+        }
+        if (report) {
             PublishQuietSocketReceipt(true);
             const auto* c = fault->ContextRecord;
             sdgo_test::api->Log(sdgo_test::mod, SDGO_LOG_ERROR,
@@ -1056,13 +1088,17 @@ SDGO_MOD_ENTRY {
         !channels.Bind(api, mod, &actions) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
-        ((deckOnly || pagesOnly) && !hangarNavigation.Bind(api,mod,&actions)) ||
+        (!hangarNavigation.Bind(api,mod,&actions)) ||
         (pagesOnly && !pages.Bind()) ||
         (pagesOnly && !operatorCatalog.Bind(api,mod)) ||
         (pagesOnly && !aiCatalog.Bind(api,mod)) ||
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
+    roomListVtable=api->Symbol(mod,"flow.native_room_list_vtable");
+    modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
+    if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
+    if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));

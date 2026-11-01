@@ -599,7 +599,12 @@ class _Win32Api:
         if not self.kernel.TerminateProcess(
             wintypes.HANDLE(process_handle), 1,
         ):
-            raise self._error("TerminateProcess failed")
+            error=self._error("TerminateProcess failed")
+            # Exit can race GetExitCodeProcess: a terminating process may
+            # still report STILL_ACTIVE but reject a second termination.
+            if self.kernel.WaitForSingleObject(wintypes.HANDLE(process_handle),1000)==WAIT_OBJECT_0:
+                return
+            raise error
 
     def _desktop_windows(
         self, desktop: int, target_pid: int,

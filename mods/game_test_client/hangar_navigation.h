@@ -34,6 +34,8 @@ public:
         kOpeningUnitManager = 7,
         kWaitingForUnitManager = 8,
         kReady = 9,
+        kOpeningGameRoom = 10,
+        kWaitingForGameRoom = 11,
 
         kDownmenuServiceMismatch = 0x100,
         kDownmenuControlMismatch = 0x101,
@@ -169,6 +171,71 @@ public:
         }
     }
 
+    // A successful channel-switch reply can precede reconstruction of the
+    // native Game Room page. Enter its real radio business and wait for its
+    // actual packet consumer/control, rather than send a room request early.
+    void RequireGameRoomReentry(uint32_t generation=0){awaitRoomListRemoval_=true;requiredRoomGeneration_=generation;gameRoomInvoked_=false;}
+
+    Result EnsureGameRoom(const void* roomListVtable,const void* modalLoadingVtable=nullptr,uint32_t nativeGeneration=0)
+    {
+        if (!bound_ || !native_ || !roomListVtable)return Publish(kUnbound);
+        __try {
+            const auto selected=native_->OnboardingState();
+            if (selected.channel_id!=gameRoomChannel_) {
+                gameRoomChannel_=selected.channel_id;gameRoomInvoked_=false;
+            }
+            if (native_->AppState()!=kGameRoomAppState)return Publish(kWaitingForLobby);
+            auto* manager=serviceManagedPointer_ ? static_cast<uint8_t*>(*serviceManagedPointer_):nullptr;
+            if (!manager)return Publish(kWaitingForMainframe);
+            auto* head=*reinterpret_cast<uint8_t**>(manager+0x44);
+            auto* node=head ? *reinterpret_cast<uint8_t**>(head):nullptr;
+            bool roomPresent=false,roomReady=false,modalPresent=false;
+            for (unsigned count=0;node && node!=head && count<512;++count) {
+                auto* service=*reinterpret_cast<uint8_t**>(node+8);
+                if(service && modalLoadingVtable && *reinterpret_cast<void**>(service)==modalLoadingVtable)modalPresent=true;
+                if (service && *reinterpret_cast<void**>(service)==roomListVtable) {
+                    roomPresent=true;
+                    auto* button=*reinterpret_cast<uint8_t**>(service+0x84);
+                    void* root=button ? *reinterpret_cast<void**>(button+kControlParent):nullptr;
+                    if (root && button && FindControl(root,L"MakeRoomBtn",4)==button &&
+                        ControlHasName(button,L"MakeRoomBtn") && button[0x162] && button[0x167]) {
+                        roomReady=true;
+                    }
+                }
+                node=*reinterpret_cast<uint8_t**>(node);
+            }
+            if (awaitRoomListRemoval_) {
+                if(roomPresent && nativeGeneration<=requiredRoomGeneration_)return Publish(kWaitingForGameRoom);
+                awaitRoomListRemoval_=false;
+            }
+            if(modalPresent)return Publish(kWaitingForGameRoom);
+            if(roomReady){gameRoomInvoked_=false;return Publish(kReady);}
+            if (gameRoomInvoked_)return Publish(kWaitingForGameRoom);
+            void* downmenu=nullptr;
+            const auto found=ResolveService(L"downmenu",downmenuVtable_,&downmenu);
+            if (found==kServiceMismatched)return Publish(kDownmenuServiceMismatch);
+            if (found==kServiceAbsent)return Publish(kWaitingForLobbyUi);
+            auto* service=static_cast<uint8_t*>(downmenu);
+            void* root=*reinterpret_cast<void**>(service+kDownmenuRoot);
+            if (!root)return Publish(kWaitingForLobbyUi);
+            if (*reinterpret_cast<const uint32_t*>(service+kDownmenuMode)==8 && selected.starter_draw_busy)
+                return Publish(kLobbyBusy);
+            auto* control=static_cast<uint8_t*>(FindControl(root,L"GameRoomRadio"));
+            if (!control)return Publish(kWaitingForLobbyUi);
+            if (*reinterpret_cast<void**>(service+0x48)!=control ||
+                *reinterpret_cast<void**>(control+kControlParent)!=root || !ControlHasName(control,L"GameRoomRadio"))
+                return Publish(kDownmenuControlMismatch);
+            if (!control[0x162] || !control[0x167])return Publish(kWaitingForLobbyUi);
+            const auto before=native_->TransportState();
+            downmenuCallback_(downmenu,kRadioMessage,control+kControlName,control);
+            const auto after=native_->TransportState();
+            if (after.send_sequence==before.send_sequence || after.opcode!=kHangarRequestOpcode ||
+                after.packet_size!=kHangarRequestSize || !after.result)return Publish(kHangarRequestRejected);
+            gameRoomInvoked_=true;
+            return Publish(kOpeningGameRoom);
+        }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
+    }
+
     Observation State() const
     {
         Observation observed = {};
@@ -265,6 +332,10 @@ public:
             return "waiting-for-unit-manager";
         case kReady:
             return "ready";
+        case kOpeningGameRoom:
+            return "opening-game-room";
+        case kWaitingForGameRoom:
+            return "waiting-for-game-room";
         case kDownmenuServiceMismatch:
             return "downmenu-service-mismatch";
         case kDownmenuControlMismatch:
@@ -575,7 +646,8 @@ private:
 
     void* FindControl(
         void* root,
-        const wchar_t* name) const
+        const wchar_t* name,
+        uint32_t kind=kRadioControlKind) const
     {
         if (!root || !name ||
             !nativeUiFindControl_ ||
@@ -596,7 +668,7 @@ private:
                 control = nativeUiFindControl_(
                     root,
                     nativeName,
-                    kRadioControlKind);
+                    kind);
             }
         } __finally {
             if (constructed)
@@ -647,6 +719,10 @@ private:
     UiCallbackFn downmenuCallback_ = nullptr;
     UiCallbackFn mainframeCallback_ = nullptr;
     UiCallbackFn unitManagerCallback_ = nullptr;
+    uint16_t gameRoomChannel_=0;
+    bool gameRoomInvoked_=false;
+    bool awaitRoomListRemoval_=false;
+    uint32_t requiredRoomGeneration_=0;
     void** serviceManagedPointer_ = nullptr;
     void* downmenuVtable_ = nullptr;
     void* mainframeVtable_ = nullptr;

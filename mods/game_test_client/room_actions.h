@@ -171,6 +171,8 @@ public:
         gridFind_ = Symbol<GridFindFn>("grid.find");
         battleEndHandler_ =
             Symbol<BattleEndHandlerFn>("flow.battle_end_handler");
+        roomListReplyDispatch_ = Symbol<CreateRoomDialogDispatchFn>("flow.room_list_reply_dispatch");
+        roomListInit_=Symbol<RoomListInitFn>("flow.native_room_list_init");
         normalThreeDLeave_ = Symbol<StartOrReadyFn>("flow.normal_3d_leave_business");
         normalThreeDLeaveReply_ = Symbol<CreateRoomDialogDispatchFn>("flow.normal_3d_leave_reply_dispatch");
         normalThreeDMainVtable_ = Symbol<void*>("flow.normal_3d_main_state_vtable");
@@ -240,6 +242,10 @@ public:
             active_ = nullptr;
             return false;
         }
+        if (roomListReplyDispatch_ && !api_->HookCode(mod_,"flow.room_list_reply_dispatch",
+                reinterpret_cast<void*>(&ObserveRoomListReply),reinterpret_cast<void**>(&roomListReplyDispatch_)))return false;
+        if(roomListInit_ && !api_->HookCode(mod_,"flow.native_room_list_init",reinterpret_cast<void*>(&ObserveRoomListInit),
+            reinterpret_cast<void**>(&roomListInit_)))return false;
         return true;
     }
 
@@ -613,6 +619,8 @@ public:
         return observed;
     }
 
+    uint32_t NativeRoomPageGeneration()const{return static_cast<uint32_t>(InterlockedCompareExchange(&roomListGeneration_,0,0));}
+
     BattleEndObservation BattleEndState() const
     {
         BattleEndObservation observed = {};
@@ -912,6 +920,12 @@ private:
     using GridFindFn =
         int(__thiscall*)(void*, void**, int, int, char);
     using BattleEndHandlerFn = int(__thiscall*)(void*, void*);
+    using RoomListInitFn=void(__thiscall*)(void*);
+
+    static void __fastcall ObserveRoomListInit(void* self,void*) {
+        auto* actions=active_;if(!actions || !actions->roomListInit_)return;
+        actions->roomListInit_(self);InterlockedIncrement(&actions->roomListGeneration_);
+    }
 
     static int __fastcall ObserveCreateRoomDialogDispatch(
         void* self,
@@ -968,6 +982,21 @@ private:
                                  : UINT32_MAX));
         InterlockedIncrement(&actions->replySequence_);
         InterlockedIncrement(&actions->writeVersion_);
+        return result;
+    }
+
+    static int __fastcall ObserveRoomListReply(void* self,void*,int a,int b,int c,int opcode,void* packet)
+    {
+        auto* actions=active_;
+        if (!actions || !actions->roomListReplyDispatch_)return 0;
+        const auto before=actions->native_->TransportState();
+        const int result=actions->roomListReplyDispatch_(self,a,b,c,opcode,packet);
+        if ((opcode&0xFFFF)==0x0918 && actions->api_->Log) {
+            const auto after=actions->native_->TransportState();
+            actions->api_->Log(actions->mod_,SDGO_LOG_INFO,
+                "native room-list0918 consumer self=%p result=%d app=%u transport=%u->%u last=%04X/%u",
+                self,result,actions->native_->AppState(),before.send_sequence,after.send_sequence,after.opcode,after.packet_size);
+        }
         return result;
     }
 
@@ -1340,6 +1369,9 @@ private:
     GridDataFn gridData_ = nullptr;
     GridFindFn gridFind_ = nullptr;
     BattleEndHandlerFn battleEndHandler_ = nullptr;
+    CreateRoomDialogDispatchFn roomListReplyDispatch_ = nullptr;
+    RoomListInitFn roomListInit_=nullptr;
+    mutable volatile LONG roomListGeneration_=0;
     StartOrReadyFn normalThreeDLeave_ = nullptr;
     CreateRoomDialogDispatchFn normalThreeDLeaveReply_ = nullptr;
     void* normalThreeDMainVtable_ = nullptr;

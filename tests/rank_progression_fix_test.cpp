@@ -6,10 +6,11 @@
 namespace {
 const wchar_t* battle=L"{? = call sp_SetBattleExp_V4(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}";
 const wchar_t* grid=L"{? = call sp_SetGridBattleExp_V2(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}";
-int calls=0,prepares=0;bool ready=true;std::wstring captured;
-void __fastcall Capture(void*,void*,void* info) {
+int calls=0,prepares=0,nativeResult=0x13572468;bool ready=true;std::wstring captured;
+int __fastcall Capture(void*,void*,void* info) {
     const wchar_t* command=nullptr;memcpy(&command,static_cast<BYTE*>(info)+0xc,sizeof(command));captured=command;++calls;
     const uint16_t marker=17;memcpy(static_cast<BYTE*>(info)+0x3a2,&marker,sizeof(marker));
+    return nativeResult;
 }
 bool PrepareFake(void*){++prepares;return ready;}
 void Log(SdgoMod*,int,const char*,...){}
@@ -56,15 +57,16 @@ int main() {
     for(int variant=0;variant<2;++variant) {
         for(auto* command:{battle,grid}) {
             std::array<BYTE,0x730> info={};memcpy(info.data()+0xc,&command,sizeof(command));
-            Run(variant,nullptr,info.data());
+            CHECK(Run(variant,nullptr,info.data())==nativeResult);
             CHECK(captured==Redirect(command,command==battle?kNames[0]:kNames[1]));
             const wchar_t* restored=nullptr;memcpy(&restored,info.data()+0xc,sizeof(restored));CHECK(restored==command);
             uint16_t marker=0;memcpy(&marker,info.data()+0x3a2,sizeof(marker));CHECK(marker==17);
         }
     }
     auto* other=L"{? = call unrelated(?)}";std::array<BYTE,0x730> info={};memcpy(info.data()+0xc,&other,sizeof(other));
-    int prior=prepares;Run(0,nullptr,info.data());CHECK(prepares==prior);CHECK(captured==other);
-    ready=false;memcpy(info.data()+0xc,&battle,sizeof(battle));Run(0,nullptr,info.data());CHECK(captured==battle);
+    nativeResult=-7;
+    int prior=prepares;CHECK(Execute0(nullptr,nullptr,info.data())==nativeResult);CHECK(prepares==prior);CHECK(captured==other);
+    ready=false;memcpy(info.data()+0xc,&battle,sizeof(battle));CHECK(Execute1(nullptr,nullptr,info.data())==nativeResult);CHECK(captured==battle);
     CHECK(calls==6);CHECK(prepares==5);
     CHECK(DeleteFileW(ini.c_str())!=0);
     return ai_test::Finish();
