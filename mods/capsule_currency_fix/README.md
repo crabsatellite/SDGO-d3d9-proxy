@@ -35,7 +35,7 @@ Mod 通过 core 的 named symbol 和 `HookCode` 挂接
 - `verify_source_fixture.py`：只读解密并核对当前底包 `0099.gdt` 的 SHA-256、
   93 条记录、12 页/96 槽形状，以及唯一 9301 的 `Type0/Price99` 前提。
 - `symbol-proposal.ini`：独立的、可离线验证的 symbol 提案。
-- `evidence/`：WorldServer 静态反编译证据；不是运行时抽奖证明。
+- 本机逆向调查中保留 WorldServer 静态反编译证据；原始本地证据不随代码仓库分发，也不是运行时抽奖证明。
 
 ## 离线验证
 
@@ -43,11 +43,11 @@ Mod 通过 core 的 named symbol 和 `HookCode` 挂接
 
 ```powershell
 python tools/verify_symbols.py `
-  E:\Dev\sd-re\SDGO-client\GOnline.exe `
+  "D:\Game\GOnline.exe" `
   mods\capsule_currency_fix\symbol-proposal.ini
 
 python mods\capsule_currency_fix\verify_source_fixture.py `
-  E:\Dev\sd-re\extracted_data\gdrs\0099.gdt
+  "D:\Extracted\gdrs\0099.gdt"
 ```
 
 单元 fixture 可由父级 CMake 目标把 `capsule_currency_logic.cpp` 与

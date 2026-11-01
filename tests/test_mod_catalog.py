@@ -78,6 +78,20 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue(all(m["category"] == "fixes" or m["feature"] == "pvp-ai" for m in c["mods"]))
         self.assertEqual(c["profile"], "custom")
 
+    def test_capsule_runtime_requires_owner_data_and_diagnostics_stay_off(self):
+        source = catalog.read_catalog(self.root)
+        runtime = next(m for m in source["mods"] if m["id"] == "capsule_catalog")
+        self.assertEqual(runtime["category"], "gameplay")
+        self.assertEqual(runtime["feature"], "capsule-catalog")
+        self.assertFalse(runtime["enabled_by_default"])
+        self.assertEqual(runtime["config_files"], ["runtime.ini"])
+        base = catalog.select_catalog(source, "base")
+        self.assertIn("capsule_currency_fix", {m["id"] for m in base["mods"]})
+        self.assertNotIn("capsule_catalog", {m["id"] for m in base["mods"]})
+        probe = next(m for m in source["mods"] if m["id"] == "capsule_price_probe")
+        self.assertEqual(probe["category"], "development")
+        self.assertFalse(probe["enabled_by_default"])
+
     def test_unknown_feature_is_rejected(self):
         with self.assertRaises(ValueError):
             catalog.select_catalog(catalog.read_catalog(self.root), features=["random-unit-not-bundled"])

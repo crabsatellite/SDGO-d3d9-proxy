@@ -275,6 +275,17 @@ sdgo_strict(agent_udp_pool_test)
 # Offline AI contracts. The fixtures call production code with synthetic rooms,
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
+if(BUILD_TESTING)
+    foreach(test capsule_currency_fix capsule_price_probe)
+        add_test(NAME ${test}_offline COMMAND ${test}_test)
+        set_tests_properties(${test}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+    add_test(NAME capsule_configuration COMMAND "${CMAKE_COMMAND}" -E env
+        "CAPSULE_RUNTIME_HARNESS=$<TARGET_FILE:capsule_client_runtime_harness>"
+        "${Python3_EXECUTABLE}" -B -X utf8 -m unittest discover -s tests -p "test_capsule*.py" -q)
+    set_tests_properties(capsule_configuration PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 180)
+endif()
 find_program(SDGO_SHOP_POWERSHELL NAMES powershell pwsh)
 if(SDGO_SHOP_POWERSHELL)
     add_custom_target(shop_owner_ui ALL

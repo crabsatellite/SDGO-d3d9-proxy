@@ -15,6 +15,7 @@
 | 功能 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 输入法提交修复 | 修正输入法提交内容的长度计算 | `ime_fix` | 客户端 | [使用说明](docs/ime-fix.zh-CN.md) |
+| 活动扭蛋币种显示 | 修正 9301 号机的代币标签，与原生扣费币种一致 | `capsule_currency_fix` | 客户端 | [使用说明](docs/capsule-currency-fix.md) |
 | 输入法卡死修复 | 恢复输入法需要的窗口查找，兼容已有插件 | `findwindow_fix` | 客户端 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
@@ -48,7 +49,12 @@
 | 战斗 AI 难度（Beta） | 默认 Medium（Lv12），房名选择三档；Hard EX、协同战术、盾面防御及玩家同规则 SP/部件/道具。需配套 PvP 组件。 | `battle_ai`、`battle_ai_server` | 对战服务器 + 所有玩家 | [使用说明](docs/battle-ai.md) |
 | 机库管理（Beta） | 一键整理可移动机体，预览并确认重复机体兑换原生 GB 或道具奖励 | `hangar_manager` | 客户端 | [使用说明](docs/hangar-manager.zh-CN.md) |
 | 副官补给与管理（Beta） | 配置头像与掉落，默认 5 位全员永久补给官，旧记录原位迁移 | `operator_catalog` | 客户端 + 服主助手/SQL 适配器 | [使用说明](docs/operator-assistant.zh-CN.md) |
+| 扭蛋机编辑器（Beta） | 固定/自定义机台增删改查、原生模板、价格与权重，生成配套客户端和服务端配置 | `capsule_catalog` | 客户端 + 服主 SQL 适配器 | [使用说明](docs/capsule-catalog.zh-CN.md) |
 <!-- /mod-category:gameplay -->
+
+[扭蛋机编辑器](docs/capsule-catalog.zh-CN.md)已纳入 master。服主在本地填写自己的路径与数据库配置，
+生成玩家安装包分发；玩家安装一次后照常启动游戏。其他 Mod 可复用
+[目录、编译和安装接口](docs/capsule-integration.md)，共同生成同一份目录，避免各自覆盖客户端表或重复挂接文件读取。
 
 进入机库后点击「**整理机库**」「**重复兑换…**」，也可按 **F8** 打开管理窗口。
 相同状态的未培养机体默认保留两台，已培养机体不参与兑换；锁定、出击、舰队、租赁和未知状态机体均受保护。
@@ -145,6 +151,7 @@ Medium／Hard 每个原生决策帧持续行动，移除人为反应／爆发等
 | 工具 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
 | 发包日志 | 记录发包，辅助协议排错 | `net_probe` | 客户端 | [使用说明](docs/net-probe.md) |
+| 扭蛋价格探针（Experimental） | 只读记录列表价格刷新，默认关闭 | `capsule_price_probe` | 客户端 | [说明](docs/capsule-price-probe.md) |
 <!-- /mod-category:development -->
 
 ## 安装与使用
