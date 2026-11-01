@@ -79,6 +79,8 @@ SDGO-ModFramework-<版本>/
 
 商城两项功能通过 `python tools/package_shop.py` 分别打包，使用各包内的 `Install.ps1`。
 商品配置模块安装到 WorldServer，显示补丁安装到客户端。配置方法和验证范围见上方独立说明。
+安装后的[商城手动测试步骤](docs/shop-testing.zh-CN.md)包括租期/中文标签、GB/MB 商品、改价和下架。
+首次安装服务端模块可选择延后启动加载，使用原生工具先应用配置，当前服务进程无需立即重启。
 
 ## 支持的游戏版本
 

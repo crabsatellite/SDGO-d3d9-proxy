@@ -17,6 +17,8 @@
   打包工具应用与卸载下架、原版父商品逐行保留。
 - SQL 只复制商城配置表、类别/机体元数据和选定原生过程到新建测试库，余额为新建合成账号。
   原有玩家表、真人余额、仓库与购买记录不参与测试。
+- 后续安装改进另验证运行中 WorldServer 的显式首次延后安装、拒绝运行中更新，以及手动测试辅助脚本的
+  Status / TestOffers / ChangePrice / ClearOffers 四个动作；动作验证仍在独立 SQL 测试库进行。
 
 旧 staging 测试在本机 Windows PowerShell 的模块自动导入环境中曾找不到 Get-FileHash；
 显式导入 Utility 后通过，完整 CTest 使用 PowerShell 7.6.5 通过。新分发安装器使用 .NET SHA256，

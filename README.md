@@ -86,6 +86,9 @@ changes.
 The shop features have separate packages built with `python tools/package_shop.py`.
 Use their own `Install.ps1`: the catalog belongs in WorldServer, and the label patch
 belongs in each client. See the guides above for configuration and test limits.
+The [manual shop checks (中文)](docs/shop-testing.zh-CN.md) cover rental text,
+currency, price updates and retirement. A first host install may defer startup
+activation while the native helper applies configuration without a server restart.
 
 ## Supported game builds
 

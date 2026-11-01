@@ -48,7 +48,7 @@ JSON API 的 `create/update/retire/validate/compile_catalog` 函数可直接供�
 
 ## 安装、应用与卸载
 
-先关闭目标 WorldServer；脚本不会停止任何进程。其他目录/分支的服务不动。
+通常先关闭目标 WorldServer；脚本不会停止任何进程。其他目录/分支的服务不动。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Server\WorldServer" -ConfigFile .\catalog.ini
@@ -57,6 +57,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 安装后正常启动 WorldServer 即会应用配置。更新配置沿用同一安装命令，已有共享框架和其他 Mods 保留。
 没有框架时自动补齐随包的 World loader/core；本模块不改 core ABI。
 未导入配置时模块默认关闭，避免仅复制文件就改变商城。
+
+首次安装且希望当前 WorldServer 继续运行时，可额外传 `-DeferActivation`。
+它只允许添加尚不存在的 catalog 目录，不更新运行中已有模块，也不改名正在使用的第三方 wrapper。
+启动 DLL 在下次正常重启时加载；在此之前可使用下方原生工具应用商品配置，现有商城列表会继续走原生查询。
+安装记录会明确写出 `startup_activation=deferred`，不能把文件落盘当作 DLL 已加载。
 
 原生宿主管理工具也使用与 DLL 完全相同的应用代码，可在维护时显式应用：
 
@@ -67,6 +72,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Se
 应用成功会生成 `runtime-display.ini`。将它交给玩家，通过独立的 ShopLabels 补丁导入，
 可显示原生 CP874 销售选项无法携带的中文文字；数值租期/永久状态由显示补丁直接从原生字段生成。
 玩家需要与宿主一致的原生游戏资源，新增商品使用已有类别图像和机体定义。
+
+手动验收和增删改查示例见[测试步骤](shop-testing.zh-CN.md)。本机测试辅助脚本默认只列配置，
+只有显式执行 `TestOffers` / `ChangePrice` / `ClearOffers` 才应用相应商品改动。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Server\WorldServer" -Uninstall

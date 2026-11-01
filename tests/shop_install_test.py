@@ -82,10 +82,10 @@ def main():
         env = os.environ.copy()
         if busy:
             wrapper = work / "busy-fixture.ps1"
-            wrapper.write_text("function Get-CimInstance { [pscustomobject]@{ ExecutablePath=$env:SHOP_TEST_BUSY_EXE } }\n& $env:SHOP_TEST_INSTALL -Target $env:SHOP_TEST_TARGET\n", encoding="utf-8")
-            env.update(SHOP_TEST_BUSY_EXE=str(target / "GOnline.exe"), SHOP_TEST_TARGET=str(target),
+            wrapper.write_text("function Get-CimInstance { [pscustomobject]@{ ExecutablePath=$env:SHOP_TEST_BUSY_EXE } }\n& $env:SHOP_TEST_INSTALL -Target $env:SHOP_TEST_TARGET @args\n", encoding="utf-8")
+            env.update(SHOP_TEST_BUSY_EXE=str(target / ("GOnline.exe" if role == "Labels" else "WorldServer.exe")), SHOP_TEST_TARGET=str(target),
                        SHOP_TEST_INSTALL=str(package / "Install.ps1"))
-            command += ["-File", str(wrapper)]
+            command += ["-File", str(wrapper), *extra]
         else:
             command += ["-File", str(package / "Install.ps1"), "-Target", str(target), *extra]
         result = subprocess.run(command, env=env, capture_output=True, timeout=40)
@@ -164,6 +164,17 @@ def main():
     (target / "d3d9.dll").write_bytes(wrapper)
     run("Labels", target)
     check((target / "d3d9_chain.dll").read_bytes() == wrapper and ini(target / "sdgo/sdgo.ini")["loader"]["chain_d3d9"] == "d3d9_chain.dll", "third_party_wrapper_is_chained")
+    target = work / "deferred-host"
+    fixture(target / "WorldServer.exe", "Catalog")
+    before = digest_tree(target)
+    run("Catalog", target, busy=True, expected=False)
+    check(digest_tree(target) == before, "running_host_requires_explicit_deferred_first_install")
+    run("Catalog", target, "-DeferActivation", busy=True)
+    mod = target / "sdgo/mods/shop_catalog"
+    check(json.loads((mod / "shop-install.json").read_text(encoding="utf-8-sig"))["startup_activation"] == "deferred", "first_host_install_can_defer_startup_without_stopping_process")
+    before = digest_tree(target)
+    run("Catalog", target, "-DeferActivation", busy=True, expected=False)
+    check(digest_tree(target) == before, "running_host_catalog_update_is_still_refused")
     (work / "result.json").write_text(json.dumps({"result": "PASS", "checks": checks, "scope": "real packages and installers; inert PE files only"}, indent=2), encoding="utf-8")
     print("SHOP INSTALLER CHECKS PASSED", work, flush=True)
 

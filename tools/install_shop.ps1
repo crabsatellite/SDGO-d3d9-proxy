@@ -5,6 +5,7 @@ param(
     [string]$PackageRoot,
     [Alias('Profile')][string]$ConfigFile,
     [string]$Executable,
+    [switch]$DeferActivation,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -123,9 +124,11 @@ $shopExpectedStamp = $(if ($Role -eq 'Labels') { [uint32]0x54BE1568 } else { [ui
 $shopExpectedSize = $(if ($Role -eq 'Labels') { [uint32]0x00C97000 } else { [uint32]0x0010C000 })
 if ($shopPE.Stamp -ne $shopExpectedStamp -or $shopPE.ImageSize -ne $shopExpectedSize) { throw 'This native build is not supported by the shop package' }
 $shopBusy = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -eq $shopExe }
-if ($shopBusy) { throw "Close only this target executable before installing: $shopExe" }
+if ($DeferActivation -and $Role -ne 'Catalog') { throw 'DeferActivation is only supported for first-time host catalog installation' }
+if ($shopBusy -and (-not $DeferActivation -or $Uninstall -or $Role -ne 'Catalog')) { throw "Close only this target executable before installing: $shopExe" }
 
 $shopMod = Shop-SafeChild $shopRoot "sdgo\mods\$shopId"
+if ($shopBusy -and (Test-Path -LiteralPath $shopMod)) { throw 'Running host already has a catalog directory; close it before updating existing files' }
 $shopSymbols = Shop-SafeChild $shopRoot ('sdgo\symbols\{0}-{1:X8}-{2:X8}.ini' -f [IO.Path]::GetFileNameWithoutExtension($Executable),$shopPE.Stamp,$shopPE.ImageSize)
 $shopReceiptPath = Join-Path $shopMod 'shop-install.json'
 
@@ -214,6 +217,7 @@ if (Test-Path -LiteralPath $shopCore) {
 }
 $shopChainName=[IO.Path]::GetFileNameWithoutExtension($shopLoader)+'_chain.dll'
 $shopNeedsChain=(Test-Path -LiteralPath $shopLoaderPath) -and -not (Shop-OurLoader $shopLoaderPath)
+if ($shopBusy -and $shopNeedsChain) { throw 'A running host wrapper cannot be renamed; close this host before installing' }
 if ($shopNeedsChain -and (Test-Path -LiteralPath (Join-Path $shopRoot $shopChainName))) { throw 'Loader chain already occupied; installation preserved' }
 $shopGlobalData=$(if ($shopNeedsChain) { Shop-Ini $shopGlobal } else { $null })
 $oldSettings=Shop-Ini (Join-Path $shopMod 'mod.ini')
@@ -257,7 +261,8 @@ Shop-WriteIni $modIni $data
 if ($shopPrevious) {
     foreach ($property in $shopPrevious.addedSymbols.PSObject.Properties) { if (-not $shopAdded.ContainsKey($property.Name)) { $shopAdded[$property.Name]=$property.Value } }
 }
-@{schema_version=1;role=$Role;version=$shopManifest.version;mod=$shopId;addedSymbols=$shopAdded;installed_at=[DateTime]::UtcNow.ToString('o')} |
+@{schema_version=1;role=$Role;version=$shopManifest.version;mod=$shopId;addedSymbols=$shopAdded;startup_activation=$(if ($shopBusy) {'deferred'} else {'next_start'});installed_at=[DateTime]::UtcNow.ToString('o')} |
     ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $shopReceiptPath -Encoding UTF8
 Write-Output "$shopId installed. Other mods and existing shared framework files preserved."
+if ($shopBusy) { Write-Output 'Host left running. Startup DLL activation is deferred until its next normal restart; the catalog helper can apply configuration now.' }
 if ($Role -eq 'Catalog' -and -not (Test-Path -LiteralPath (Join-Path $shopMod 'catalog.ini'))) { Write-Output 'Catalog remains disabled until a host-owned profile is imported.' }
