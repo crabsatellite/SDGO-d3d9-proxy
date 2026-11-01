@@ -44,6 +44,7 @@ Beta and Experimental labels indicate release channels.
 | Operator supplies and manager (Beta) <!-- catalog: `operator_catalog` --> | Operator content management | [Use](docs/operator-assistant.md) |
 | Capsule catalog editor (Beta) <!-- catalog: `capsule_catalog` --> | Capsule content management | [Use](docs/capsule-catalog.md) |
 | Daily double rewards (Beta) <!-- catalog: `daily_rewards` --> | Scheduled reward events | [Use](docs/daily-rewards.md) |
+| Storage claim all (Beta) <!-- catalog: `storage_claim` --> | Batch storage reward collection | [Use](docs/storage-claim.md) |
 
 <!-- /mod-category:gameplay -->
 

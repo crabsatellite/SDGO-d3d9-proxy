@@ -241,5 +241,25 @@ class ManagerTests(unittest.TestCase):
         status,_=self.call('POST','/api/import',{'host':self.workspace.settings['hosts'][0]['id'],'package':base64.b64encode(buffer.getvalue()).decode()})
         self.assertNotEqual(status,200);self.assertFalse((self.client/'sdgo/mods/hangar_manager').exists())
 
+    def test_storage_overlay_installs_all_native_dependencies_and_manager_contract(self):
+        manifest=storage.ini_values((ROOT/'mods/storage_claim/mod.ini').read_bytes())
+        symbols=storage.ini_values((ROOT/'symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        fragment=configparser.ConfigParser(interpolation=None)
+        required=manifest['mod']['requires'].split(',')
+        for name in ['host']+required:fragment[name]=dict(symbols[name])
+        text=io.StringIO();fragment.write(text,space_around_delimiters=False);buffer=io.BytesIO()
+        with zipfile.ZipFile(buffer,'w') as archive:
+            for name in ('mod.ini','manager.json'):
+                archive.writestr('client/sdgo/mods/storage_claim/'+name,(ROOT/'mods/storage_claim'/name).read_bytes())
+            archive.writestr('client/sdgo/mods/storage_claim/storage_claim.dll',b'synthetic DLL')
+            archive.writestr('symbols.fragment.ini',text.getvalue())
+        before=(self.mod/'mod.ini').read_bytes()
+        status,result=self.call('POST','/api/import',{'host':self.workspace.settings['hosts'][0]['id'],'package':base64.b64encode(buffer.getvalue()).decode()})
+        self.assertEqual(status,200);self.assertEqual(result['activation'],'restart_required')
+        self.assertEqual((self.mod/'mod.ini').read_bytes(),before)
+        self.assertEqual(storage.ini_values((self.client/'sdgo/mods/storage_claim/mod.ini').read_bytes())['mod']['version'],manifest['mod']['version'])
+        installed=storage.ini_values((self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_bytes())
+        for name in required:self.assertEqual(dict(installed[name]),dict(symbols[name]))
+
 
 if __name__=='__main__':unittest.main()

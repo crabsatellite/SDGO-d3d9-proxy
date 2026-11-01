@@ -133,6 +133,8 @@ sdgo_add_mod(battle_ai_server SERVER DESCRIPTION "player resource rules for PvP 
 sdgo_add_mod(battle_ai DESCRIPTION "battle AI decisions and stuck recovery" SOURCES mods/battle_ai/battle_ai.cpp FILES battle_ai.lua universal_ai.lua config.example.ini)
 sdgo_add_mod(hangar_manager DESCRIPTION "native hangar sorting and duplicate exchange"
              SOURCES mods/hangar_manager/hangar_manager.cpp mods/hangar_manager/native_ui.cpp FILES units.tsv LIBS user32)
+sdgo_add_mod(storage_claim DESCRIPTION "native storage claim-all button"
+             SOURCES mods/storage_claim/storage_claim.cpp mods/storage_claim/native_ui.cpp LIBS user32)
 sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
              SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
@@ -408,6 +410,16 @@ if(BUILD_TESTING)
     sdgo_strict(hangar_page_ui_test)
     target_compile_options(hangar_page_ui_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_page_ui_offline COMMAND hangar_page_ui_test)
+    add_executable(storage_claim_model_test tests/storage_claim_model_test.cpp)
+    target_link_libraries(storage_claim_model_test PRIVATE sdgo_api)
+    sdgo_strict(storage_claim_model_test)
+    target_compile_options(storage_claim_model_test PRIVATE /UNDEBUG)
+    add_test(NAME storage_claim_model_offline COMMAND storage_claim_model_test)
+    add_executable(storage_claim_native_test tests/storage_claim_native_test.cpp mods/storage_claim/native_ui.cpp)
+    target_link_libraries(storage_claim_native_test PRIVATE sdgo_api user32)
+    sdgo_strict(storage_claim_native_test)
+    target_compile_options(storage_claim_native_test PRIVATE /UNDEBUG)
+    add_test(NAME storage_claim_native_offline COMMAND storage_claim_native_test)
     # Optional execution of two hash-pinned native UI snippets. The game image
     # is read only; no entry point, imports, rendering or networking is started.
     set(SDGO_HANGAR_NATIVE_HOST "" CACHE FILEPATH "Local supported GOnline.exe for hangar mouse replay")
@@ -418,6 +430,12 @@ if(BUILD_TESTING)
         target_compile_options(hangar_native_input_test PRIVATE /UNDEBUG)
         add_test(NAME hangar_native_input_replay COMMAND hangar_native_input_test "${SDGO_HANGAR_NATIVE_HOST}")
         set_tests_properties(hangar_native_input_replay PROPERTIES TIMEOUT 60)
+        add_executable(storage_claim_replay_test tests/storage_claim_replay_test.cpp mods/storage_claim/native_ui.cpp)
+        target_link_libraries(storage_claim_replay_test PRIVATE sdgo_api user32 bcrypt)
+        sdgo_strict(storage_claim_replay_test)
+        target_compile_options(storage_claim_replay_test PRIVATE /UNDEBUG)
+        add_test(NAME storage_claim_native_replay COMMAND storage_claim_replay_test "${SDGO_HANGAR_NATIVE_HOST}")
+        set_tests_properties(storage_claim_native_replay PROPERTIES TIMEOUT 60)
     endif()
     add_executable(shop_labels_test tests/shop_labels_test.cpp)
     target_link_libraries(shop_labels_test PRIVATE sdgo_api)
