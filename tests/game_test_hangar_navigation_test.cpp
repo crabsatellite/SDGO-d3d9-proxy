@@ -62,6 +62,17 @@ void* g_downmenuVtable[32] = {};
 void* g_mainframeVtable[32] = {};
 void* g_unitManagerVtable[32] = {};
 void* g_wrongVtable[32] = {};
+uint8_t g_operatorMenu[0x100]={},g_inventoryGrid[0x100]={};
+uint8_t g_operatorRoot[0x180]={},g_inventoryRoot[0x180]={};
+void* g_operatorVtable[32]={},*g_inventoryVtable[32]={};
+bool g_gridPresent=false;
+unsigned g_operatorCalls=0;
+const wchar_t* ReadNativeString(const void* storage);
+uint32_t __stdcall FakeOperatorCallback(void* service,uint32_t event,const void* name,void* control) {
+    if(service==g_operatorMenu && event==0x101 && control==g_makeRoomControl &&
+       wcscmp(ReadNativeString(name),L"UnitBtn")==0)++g_operatorCalls;
+    return 0;
+}
 
 NetworkSendDetour g_networkSendDetour = nullptr;
 LoginDispatchDetour g_loginDispatchDetour = nullptr;
@@ -337,6 +348,8 @@ void* __fastcall FakeServiceFindByName(
         return g_unitManagerVisible
             ? g_unitManager
             : nullptr;
+    if (wcscmp(name,L"operatormenu")==0) return g_operatorMenu;
+    if (wcscmp(name,L"UnitIndexingCubbyhole")==0) return g_gridPresent?g_inventoryGrid:nullptr;
     g_descriptorValid = false;
     return nullptr;
 }
@@ -349,6 +362,7 @@ void* __fastcall FakeUiFindControl(
 {
     ++g_controlLookups;
     g_lastControlKind = type;
+    if (type==4 && root==g_operatorRoot && wcscmp(ReadNativeString(nativeName),L"UnitBtn")==0)return g_makeRoomControl;
     if (type==4 && root==&g_mainframeRoot && wcscmp(ReadNativeString(nativeName),L"MakeRoomBtn")==0)return g_makeRoomControl;
     if (type != 0x0C)
         return nullptr;
@@ -456,6 +470,9 @@ uint32_t __stdcall FakeUnitManagerCallback(
 
 void* LookupSymbol(const char* name)
 {
+    if(strcmp(name,"flow.operator_menu_vtable")==0)return g_operatorVtable;
+    if(strcmp(name,"flow.operator_menu_callback")==0)return reinterpret_cast<void*>(&FakeOperatorCallback);
+    if(strcmp(name,"flow.unit_management_vtable")==0)return g_inventoryVtable;
     if (std::strcmp(name, "game.app") == 0)
         return reinterpret_cast<void*>(
             &FakeGameApp);
@@ -1130,6 +1147,35 @@ void TestGameRoomRestoration(const SdgoApi& api,NativeActions& native)
         "a wrong-parent radio cannot invoke the native callback");
 }
 
+void TestUnitManagementNavigation(SdgoApi& api,NativeActions& native)
+{
+    ResetFixture(5);g_unitManagerVisible=true;g_gridPresent=false;g_operatorCalls=0;
+    *reinterpret_cast<void***>(g_operatorMenu)=g_operatorVtable;
+    *reinterpret_cast<void***>(g_inventoryGrid)=g_inventoryVtable;
+    g_operatorVtable[0x38/4]=reinterpret_cast<void*>(&FakeOperatorCallback);
+    *reinterpret_cast<void**>(g_operatorMenu+0x80)=g_makeRoomControl;
+    *reinterpret_cast<void**>(g_makeRoomControl+0x15C)=g_operatorRoot;
+    *reinterpret_cast<void**>(g_inventoryGrid+0x44)=g_inventoryRoot;
+    DestroyNativeString(g_makeRoomControl+0x118);WriteNativeString(g_makeRoomControl+0x118,L"UnitBtn");
+    g_operatorRoot[0x162]=g_makeRoomControl[0x162]=g_makeRoomControl[0x167]=1;
+    HangarNavigation page;Check(BindNavigation(page,api,native),"unit-management native adapter binds");
+    Check(page.EnsureUnitManagementPage()==HangarNavigation::kOpeningUnitManagement && g_operatorCalls==1,
+        "3D unit viewer is insufficient: invoke the original bottom-menu UnitBtn");
+    Check(page.EnsureUnitManagementPage()==HangarNavigation::kWaitingForUnitManagement && g_operatorCalls==1,
+        "accepted native callback cannot fabricate page completion or repeat a click");
+    g_gridPresent=true;g_inventoryRoot[0x162]=0;
+    Check(page.EnsureUnitManagementPage()==HangarNavigation::kWaitingForUnitManagement,"hidden native grid remains pending");
+    g_inventoryRoot[0x162]=1;
+    Check(page.EnsureUnitManagementPage()==HangarNavigation::kReady,"real visible grid completes native navigation");
+    *reinterpret_cast<void***>(g_inventoryGrid)=g_wrongVtable;
+    Check(page.EnsureUnitManagementPage()==HangarNavigation::kUnitManagementMismatch,"foreign inventory page cannot satisfy navigation");
+    g_gridPresent=false;g_operatorCalls=0;
+    *reinterpret_cast<void**>(g_makeRoomControl+0x15C)=&g_mainframeRoot;
+    HangarNavigation wrong;Check(BindNavigation(wrong,api,native),"wrong-menu fixture binds");
+    Check(wrong.EnsureUnitManagementPage()==HangarNavigation::kOperatorMenuControlMismatch && !g_operatorCalls,
+        "wrong-parent menu button never invokes native business");
+}
+
 void TestResultNames()
 {
     Check(
@@ -1195,6 +1241,7 @@ int main()
             native);
         TestResultNames();
         TestGameRoomRestoration(api,native);
+        TestUnitManagementNavigation(api,native);
     }
 
     DestroyNativeString(

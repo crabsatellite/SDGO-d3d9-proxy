@@ -36,6 +36,8 @@ public:
         kReady = 9,
         kOpeningGameRoom = 10,
         kWaitingForGameRoom = 11,
+        kOpeningUnitManagement = 12,
+        kWaitingForUnitManagement = 13,
 
         kDownmenuServiceMismatch = 0x100,
         kDownmenuControlMismatch = 0x101,
@@ -44,6 +46,9 @@ public:
         kUnitRadioControlMismatch = 0x104,
         kUnitManagerServiceMismatch = 0x105,
         kNativeFault = 0x106,
+        kOperatorMenuMismatch = 0x107,
+        kOperatorMenuControlMismatch = 0x108,
+        kUnitManagementMismatch = 0x109,
     };
 
     struct Observation
@@ -132,6 +137,7 @@ public:
 
         lobbyRequestInvoked_ = false;
         unitRadioInvoked_ = false;
+        unitManagementInvoked_ = false;
         InterlockedExchange(
             &lastResult_,
             static_cast<LONG>(kWaitingForLobby));
@@ -236,6 +242,59 @@ public:
         }__except(EXCEPTION_EXECUTE_HANDLER){return Publish(kNativeFault);}
     }
 
+    // UnitRadio selects the 3D unit viewer. The actual unit-management grid
+    // is a separate native page, opened by operatormenu's UnitBtn.
+    Result EnsureUnitManagementPage()
+    {
+        if (!bound_ || !native_) return Publish(kUnbound);
+        __try {
+            void* expected=Symbol<void*>("flow.unit_management_vtable");
+            if (!expected) return Publish(kUnbound);
+            void* grid=nullptr;
+            const auto result=ResolveService(L"UnitIndexingCubbyhole",expected,&grid);
+            if (result==kServiceMismatched) return Publish(kUnitManagementMismatch);
+            if (grid) {
+                auto* root=*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(grid)+0x44);
+                if (root && root[0x162]) return Publish(kReady);
+            }
+            if (unitManagementInvoked_) return Publish(kWaitingForUnitManagement);
+            const auto hangar=EnsureHangar();
+            if (hangar!=kReady) return hangar;
+            const auto clicked=ClickOperatorMenuButton(L"UnitBtn",0x80);
+            if (clicked!=kReady) return clicked;
+            unitManagementInvoked_=true;
+            return Publish(kOpeningUnitManagement);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return Publish(kNativeFault); }
+    }
+
+    // Validate the original service, native button lookup, cached identity,
+    // parent, name and input state before invoking its original callback.
+    Result ClickOperatorMenuButton(const wchar_t* name,size_t cachedOffset)
+    {
+        if (!bound_ || !native_) return Publish(kUnbound);
+        __try {
+            const auto app=native_->AppState();
+            if (app!=kHangarAppState && app!=kGameRoomAppState) return Publish(kWaitingForLobby);
+            void* expected=Symbol<void*>("flow.operator_menu_vtable");
+            auto callback=Symbol<UiCallbackFn>("flow.operator_menu_callback");
+            if (!expected || !callback) return Publish(kUnbound);
+            if (!CallbackSlotMatches(expected,callback)) return Publish(kOperatorMenuMismatch);
+            void* menu=nullptr;
+            const auto result=ResolveService(L"operatormenu",expected,&menu);
+            if (result==kServiceMismatched) return Publish(kOperatorMenuMismatch);
+            if (!menu) return Publish(kWaitingForLobbyUi);
+            auto* control=*reinterpret_cast<uint8_t**>(static_cast<uint8_t*>(menu)+cachedOffset);
+            if (!control) return Publish(kWaitingForLobbyUi);
+            auto* root=*reinterpret_cast<uint8_t**>(control+kControlParent);
+            if (!root) return Publish(kWaitingForLobbyUi);
+            if (FindControl(root,name,4)!=control || !ControlHasName(control,name))
+                return Publish(kOperatorMenuControlMismatch);
+            if (!root[0x162] || !control[0x162] || !control[0x167]) return Publish(kWaitingForLobbyUi);
+            callback(menu,0x101,control+kControlName,control);
+            return Publish(kReady);
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return Publish(kNativeFault); }
+    }
+
     Observation State() const
     {
         Observation observed = {};
@@ -336,6 +395,10 @@ public:
             return "opening-game-room";
         case kWaitingForGameRoom:
             return "waiting-for-game-room";
+        case kOpeningUnitManagement:
+            return "opening-unit-management";
+        case kWaitingForUnitManagement:
+            return "waiting-for-unit-management";
         case kDownmenuServiceMismatch:
             return "downmenu-service-mismatch";
         case kDownmenuControlMismatch:
@@ -350,6 +413,12 @@ public:
             return "unit-manager-service-mismatch";
         case kNativeFault:
             return "native-fault";
+        case kOperatorMenuMismatch:
+            return "operator-menu-mismatch";
+        case kOperatorMenuControlMismatch:
+            return "operator-menu-control-mismatch";
+        case kUnitManagementMismatch:
+            return "unit-management-mismatch";
         default:
             return "unknown";
         }
@@ -730,6 +799,7 @@ private:
     bool bound_ = false;
     bool lobbyRequestInvoked_ = false;
     bool unitRadioInvoked_ = false;
+    bool unitManagementInvoked_ = false;
     mutable volatile LONG lastResult_ = kUnbound;
     mutable volatile LONG requestTransportSequence_ = 0;
     mutable volatile LONG unitRadioInvocations_ = 0;

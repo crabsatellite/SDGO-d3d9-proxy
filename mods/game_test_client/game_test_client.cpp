@@ -832,7 +832,7 @@ int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result resu
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ReadHangarPage(const SdgoGameTestContextV1* context) {
-    const auto navigation=hangarNavigation.EnsureHangar();
+    const auto navigation=hangarNavigation.EnsureUnitManagementPage();
     if (navigation>=HangarNavigation::kDownmenuServiceMismatch || navigation==HangarNavigation::kUnbound) {
         context->Assert(0,"native page navigation rejected a service or control identity");
         return SDGO_GAME_TEST_FAIL;

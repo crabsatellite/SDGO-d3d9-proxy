@@ -145,9 +145,15 @@ BEGIN TRY
         RAISERROR(N'hangar capacity requires dbo.tbl_UserUnitSlotNumberList.UserUnitSlotNumber int', 16, 1);
 
     IF EXISTS (
-        SELECT 1 FROM sys.triggers
-        WHERE parent_id IN (OBJECT_ID(N'dbo.tbl_Users'), OBJECT_ID(N'dbo.tbl_UserUnitSlotNumberList'))
-          AND is_disabled = 0)
+        SELECT 1
+        FROM sys.triggers AS capacity_trigger
+        JOIN sys.trigger_events AS trigger_event
+          ON trigger_event.object_id = capacity_trigger.object_id
+        WHERE capacity_trigger.is_disabled = 0
+          AND ((capacity_trigger.parent_id = OBJECT_ID(N'dbo.tbl_Users')
+                AND trigger_event.type_desc = N'UPDATE')
+            OR (capacity_trigger.parent_id = OBJECT_ID(N'dbo.tbl_UserUnitSlotNumberList')
+                AND trigger_event.type_desc = N'INSERT')))
         RAISERROR(N'hangar capacity does not support enabled triggers on capacity tables', 16, 1);
 
     DECLARE @hc_getter_id int;

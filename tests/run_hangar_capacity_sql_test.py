@@ -959,6 +959,55 @@ IF (SELECT COUNT(*) FROM dbo.tbl_UserUnitSlotNumberList WHERE UserUnitSlotNumber
             constraints_and_foreign_trigger,
         )
 
+        def unrelated_trigger_coexistence() -> None:
+            harness.reset_fixture()
+            harness.sql(
+                f"""USE [{harness.database}];
+GO
+CREATE TRIGGER dbo.fixture_collection_insert ON dbo.tbl_Users AFTER INSERT
+AS THROW 51000,'unrelated account insert trigger must not execute',1;
+GO
+CREATE TRIGGER dbo.fixture_slot_update ON dbo.tbl_UserUnitSlotNumberList AFTER UPDATE, DELETE
+AS THROW 51000,'unrelated slot update/delete trigger must not execute',1;
+GO
+"""
+            )
+            harness.install_policy_procedure(1)
+            harness.assert_database(
+                """
+EXEC dbo.fixture_execute_policy;
+IF @@TRANCOUNT<>0 THROW 51000,'coexistence leaked transaction',1;
+IF (SELECT ExpandSlotCount FROM dbo.tbl_Users WHERE AccountNumber=1)<>1176 THROW 51000,'coexistence capacity mismatch',1;
+IF (SELECT COUNT(*) FROM dbo.tbl_UserUnitSlotNumberList WHERE UserUnitSlotNumber BETWEEN 1 AND 1200)<>1200 THROW 51000,'coexistence slots mismatch',1;
+IF (SELECT is_disabled FROM sys.triggers WHERE name=N'fixture_collection_insert')<>0 THROW 51000,'collection trigger disabled',1;
+IF (SELECT is_disabled FROM sys.triggers WHERE name=N'fixture_slot_update')<>0 THROW 51000,'slot trigger disabled',1;
+"""
+            )
+
+        _case(receipt, "unrelated_trigger_events_coexist", unrelated_trigger_coexistence)
+
+        def relevant_user_trigger_rejected() -> None:
+            for trigger_kind in ("AFTER UPDATE", "AFTER INSERT, UPDATE", "INSTEAD OF UPDATE"):
+                harness.reset_fixture()
+                harness.sql(
+                    f"""USE [{harness.database}];
+GO
+CREATE TRIGGER dbo.fixture_foreign_users ON dbo.tbl_Users {trigger_kind}
+AS RETURN;
+GO
+"""
+                )
+                harness.expect_policy_failure("relevant_user_trigger_rejected", 1)
+                harness.assert_database(
+                    """
+IF @@TRANCOUNT<>0 THROW 51000,'user trigger rejection leaked transaction',1;
+IF (SELECT ExpandSlotCount FROM dbo.tbl_Users WHERE AccountNumber=1)<>420 THROW 51000,'user trigger rejection changed account',1;
+IF (SELECT COUNT(*) FROM dbo.tbl_UserUnitSlotNumberList WHERE UserUnitSlotNumber BETWEEN 1 AND 1200)<>1099 THROW 51000,'user trigger rejection left slots',1;
+"""
+                )
+
+        _case(receipt, "relevant_user_trigger_events_rejected", relevant_user_trigger_rejected)
+
         def ambient_and_options() -> None:
             harness.reset_fixture()
             harness.install_policy_procedure(1)
