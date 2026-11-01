@@ -28,6 +28,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure -R "^new_account_policy$"
       - name: AI and staging regressions
         run: ctest --test-dir build -C Release --output-on-failure -R "(_ai_offline|mod_staging_offline)$"
+      - name: Room commands and owned random loadouts
+        run: ctest --test-dir build -C Release --output-on-failure -R "(room_(random|commands)|ai_catalog_provider)_offline"
       - name: FRP runtime and installer
         shell: powershell
         run: |

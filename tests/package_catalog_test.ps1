@@ -52,7 +52,7 @@ try {
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','net_probe','net_route','agent_udp_pool'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','net_probe','net_route','agent_udp_pool'))
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {

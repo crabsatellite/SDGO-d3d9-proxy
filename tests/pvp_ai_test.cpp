@@ -108,6 +108,20 @@ int main() {
     p = ParseTitle("!ai4294967296"); CHECK(p.enemies == kSlotsPerTeam && p.allies == 0);
     p = ParseTitle("!ai e99999999999999"); CHECK(p.enemies == kSlotsPerTeam);
     p = ParseTitle("!ai a99999999999999"); CHECK(p.allies == kSlotsPerTeam);
+    SCENARIO("PvP AI and random commands compose in either order with scoped arguments");
+    for(const char* title:{"!rand !ai3 a1 lv4","!ai3 a1 lv4 !rand","!rand !ai e3 a1 lv4","!AI e3 a1 LV4 !RaNd"}) {
+        p=ParseTitle(title);CHECK(p.enabled && p.enemies==3 && p.allies==1 && p.level==4);
+    }
+    for(const char* title:{"!rand !ai","!ai !rand lv5 e2 a2","!ai !future lv5 e2"}) {
+        p=ParseTitle(title);CHECK(p.enabled && p.enemies==kFill && p.allies==kFill && p.level==2);
+    }
+    p=ParseTitle("!ai e2 !rand a3 lv5");CHECK(p.enemies==2 && p.allies==0 && p.level==2);
+    p=ParseTitle("!rand !ai0");CHECK(p.enabled && p.enemies==0 && p.allies==0);
+    for(const char* title:{"!aim","prefix!ai3","!ai3x","!ai!rand"}) CHECK(!ParseTitle(title).enabled);
+    auto parserApi=ai_test::api;parserApi.FindRoomCommand=&sdgo::room_commands::Parse;
+    g_api=&parserApi;
+    p=ParseTitle("!rand !AI3 a1 LV4");CHECK(p.enabled && p.enemies==3 && p.allies==1 && p.level==4);
+    g_api=&ai_test::api;
     CHECK(ParseIds("1, 2 3,,4294967295") == (std::vector<uint32_t>{1, 2, 3, UINT32_MAX}));
     CHECK(ParseIds("4294967296, 100") == (std::vector<uint32_t>{100}));
     CHECK(ParseIds("18446744073709551616100,101") == (std::vector<uint32_t>{101}));

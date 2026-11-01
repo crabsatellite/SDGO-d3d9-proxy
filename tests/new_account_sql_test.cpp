@@ -58,7 +58,7 @@ void Symbols(const std::wstring& root){
  std::wstring wkey(key,key+strlen(key));Write(root+L"\\sdgo\\symbols\\"+wkey+L".ini",result);
 }
 int Account(Session& s,const char* name){OleDatabase d(billing);int value=-1;Check(d.Open(&s.native)&&d.Account(name,false,value),"read account through real native OLE DB session");return value;}
-int Run(bool enabled){
+int Run(bool enabled,bool configured){
  wchar_t bill[64];if(!GetEnvironmentVariableW(L"SDGO_STARTER_BILLING_NAME",bill,64))return 2;billing=bill;
  Session common,game;Check(common.Open(L"SDGO_STARTER_COMMON"),"open isolated common provider");Check(game.Open(L"SDGO_STARTER_GAME"),"open isolated game provider");if(failed)return 2;
  const auto root=Root();Symbols(root);Write(root+L"\\"+Stem()+L".ini","[DB StoreBilling]\nDBName="+NarrowDatabase(billing)+"\n");
@@ -66,9 +66,14 @@ int Run(bool enabled){
  Check(init!=nullptr,"actual core export exists");if(!init)return 2;SdgoBoot boot={sizeof(boot),"starter_sql_test",GetModuleHandleW(nullptr)};Check(init(&boot)!=0,"load actual new-account Mod through core");
  Native native;LoginInput login={};strcpy_s(login.id,"starter-new");strcpy_s(login.password,"fixture-only");
  int code=native.Login(&common.native,&login,nullptr);Check(code==1003&&login.result==1,"native registration retry protocol preserved");int id=Account(common,login.id);Check(id>0,"native account created");
+ const int gp=enabled?(configured?1200:5000):9999999;
+ const int cash=enabled?0:9999999;
+ const auto walletCheck=L"IF NOT EXISTS(SELECT 1 FROM "+Identifier(billing)+L".dbo.tbls_AccountPocket WHERE f_idx="+std::to_wstring(id)+L" AND f_GP="+std::to_wstring(gp)+L" AND f_GC="+std::to_wstring(cash)+L") RAISERROR('Unexpected starter balance',16,1)";
+ Check(Execute(&common.native,walletCheck),"registration wallet is correct before profile creation");
  UserInput input={};input.account=id;strcpy_s(input.pilot,"Fixture");UserOutput out={};out.experience=-77;
  code=native.Profile(&game.native,&input,&out);Check(code==0,"native first profile succeeds");
- Check(enabled?(out.experience==25700&&out.rank==5&&out.step==1):(out.experience==0&&out.rank==5&&out.step==0),"caller sees policy output only when Mod is enabled");
+ Check(enabled?(out.experience==(configured?32000:25700)&&out.rank==(configured?6:5)&&out.step==(configured?2:1)):(out.experience==0&&out.rank==5&&out.step==0),"caller sees configured rank and matching experience only when enabled");
+ Check(Execute(&game.native,walletCheck),"first-profile wallet is consistent with registration");
  OleDatabase live(billing);bool exists=false;Check(live.Open(&game.native)&&live.User(id,false,exists)&&exists,"profile persisted in real SQL");
  if(enabled){
   NativeConnection unavailable;
@@ -91,4 +96,4 @@ int Run(bool enabled){
  return failed?1:0;
 }
 }
-int wmain(int argc,wchar_t** argv){setvbuf(stdout,nullptr,_IONBF,0);const bool enabled=argc<2||wcscmp(argv[1],L"disabled");HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);if(FAILED(hr))return 3;int result=Run(enabled);CoUninitialize();puts(result?"STARTER SQL CHECKS FAILED":"ALL STARTER SQL CHECKS PASSED");return result;}
+int wmain(int argc,wchar_t** argv){setvbuf(stdout,nullptr,_IONBF,0);const bool enabled=argc<2||wcscmp(argv[1],L"disabled");const bool configured=argc>1&&!wcscmp(argv[1],L"configured");HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);if(FAILED(hr))return 3;int result=Run(enabled,configured);CoUninitialize();puts(result?"STARTER SQL CHECKS FAILED":"ALL STARTER SQL CHECKS PASSED");return result;}

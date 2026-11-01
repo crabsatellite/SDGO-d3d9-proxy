@@ -33,6 +33,9 @@ class CatalogTests(unittest.TestCase):
         self.assertTrue({"findwindow_fix", "ime_fix", "startup_crash_fix", "pvp_ai", "match_ai", "coop_ai", "mission_ai", "net_probe"}.issubset({m["id"] for m in c["mods"]}))
         self.assertEqual(set(c["features"]["pvp-ai"]["mods"]), {"pvp_ai", "match_ai"})
         self.assertEqual(c["features"]["pvp-ai"]["channel"], "beta")
+        self.assertEqual(c["features"]["room-random"]["mods"], ["room_random"])
+        self.assertEqual(c["features"]["room-random"]["category"], "gameplay")
+        self.assertEqual(c["features"]["room-random"]["activation"], "room-title")
         self.assertFalse(next(m for m in c["mods"] if m["id"] == "net_probe")["enabled_by_default"])
 
     def test_base_has_only_fixes(self):

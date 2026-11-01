@@ -74,7 +74,7 @@ GO
 USE [{game}];
 CREATE TABLE dbo.tbl_Users(AccountNumber int PRIMARY KEY,UserLevelNumber tinyint,UserLevelStep int,UserExp int);
 CREATE TABLE dbo.tbl_Levelname(levelID int,LevelStep int,levelExp int,PRIMARY KEY(levelID,LevelStep));
-INSERT dbo.tbl_Levelname VALUES(5,1,25700);
+INSERT dbo.tbl_Levelname VALUES(5,1,25700),(6,2,32000);
 CREATE TABLE dbo.starter_grants(AccountNumber int,Items int);
 GO
 CREATE PROCEDURE dbo.sp_TestCreateProfile @id int AS
@@ -93,7 +93,7 @@ GO
         bridge=Bridge(('127.0.0.1',0),Handler);bridge.container=container
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start();port=bridge.server_address[1]
         cases=[]
-        for mode in ('enabled','disabled'):
+        for mode in ('enabled','configured','disabled'):
             sql(f"USE [{common}];TRUNCATE TABLE dbo.tbl_Account;USE [{billing}];TRUNCATE TABLE dbo.tbls_AccountPocket;USE [{game}];TRUNCATE TABLE dbo.tbl_Users;TRUNCATE TABLE dbo.starter_grants;\nGO\n")
             target=work/mode;mod=target/'sdgo/mods/new_account_profile';mod.mkdir(parents=True)
             (target/'sdgo/symbols').mkdir()
@@ -104,7 +104,10 @@ GO
             import re
             manifest=re.sub(r'(?m)^hosts=.*$','hosts=*',manifest)
             (mod/'mod.ini').write_text(manifest,encoding='ascii')
-            (target/'sdgo/sdgo.ini').write_text('[core]\nlog_level=0\n[mods]\nnew_account_profile='+('1' if mode=='enabled' else '0')+'\n',encoding='ascii')
+            if mode=='configured':
+                (mod/'config.ini').write_text('[settings]\nInitialGP=1200\nInitialCash=0\nRankNumber=6\nRankStep=2\n',encoding='ascii')
+            enabled=mode!='disabled'
+            (target/'sdgo/sdgo.ini').write_text('[core]\nlog_level=0\n[mods]\nnew_account_profile='+('1' if enabled else '0')+'\n',encoding='ascii')
             env=dict(os.environ,SDGO_STARTER_BILLING_NAME=billing,CommonProgramFiles=r'C:\Program Files (x86)\Common Files')
             for key,db in (('SDGO_STARTER_COMMON',common),('SDGO_STARTER_GAME',game)):
                 env[key]=f'Provider=SQLOLEDB;Data Source=127.0.0.1,{port};Initial Catalog={db};User ID={login};Password={password};'
@@ -115,11 +118,12 @@ GO
             (target/'sql-readback.txt').write_text(rows,encoding='utf-8')
             lines=[line for line in rows.splitlines() if line.strip()]
             primary=next(line.split() for line in lines if line.startswith('starter-new'))
-            expected=('7000','321','6','1','30100') if mode=='enabled' else ('9999999','9999999','15','1','0')
+            expected=('7000','321','6','2' if mode=='configured' else '1','30100') if enabled else ('9999999','9999999','15','1','0')
             assert tuple(primary[1:])==expected,(primary,expected)
-            if mode=='enabled':
+            if enabled:
                 assert not any(line.startswith('fail-wallet') for line in lines)
-                assert any(line.startswith('fail-profile') and line.rstrip().endswith('NULL NULL NULL') for line in lines),rows
+                failed_profile=next(line.split() for line in lines if line.startswith('fail-profile'))
+                assert tuple(failed_profile[1:])==('1200' if mode=='configured' else '5000','0','NULL','NULL','NULL'),rows
                 assert sql(f'SET NOCOUNT ON;SELECT COUNT(*) FROM [{game}].dbo.starter_grants;\nGO\n').strip()=='1'
             cases.append(dict(mode=mode,passed=True,rows=len(lines)))
         receipt=dict(cases=cases,isolated_databases=list(databases),no_original_database_changes=True,no_game_execution=True)

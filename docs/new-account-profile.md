@@ -89,7 +89,7 @@ until their hooks/layouts are verified. No original game executable is patched o
   rollback, preservation of grants/earnings and bypass behavior.
 - `tests/run_new_account_sql_test.py`: actual core + actual Mod + OLE DB sessions
   with synthetic native callbacks in uniquely owned test databases in a supplied
-  SQL Docker container. It verifies commit/rollback, bound usernames and disabled
+  SQL Docker container. It verifies owner `config.ini` overrides, commit/rollback, bound usernames and disabled
   defaults, then removes only its owned databases/login. No game runs.
 - Native hook ABI and layouts are checked against the exact PE and retained Ghidra
   evidence; `tools/verify_symbols.py <WorldServer.exe>` verifies all five symbols.

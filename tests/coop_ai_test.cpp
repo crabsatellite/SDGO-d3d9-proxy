@@ -59,6 +59,17 @@ int main() {
     p = ParseTitle("!ai"); CHECK(p.enabled && p.count == 0 && p.level == 2);
     g_settings.requireRoomCommand = 0; CHECK(ParseTitle("mission").enabled);
     p = ParseTitle("!ai4294967296"); CHECK(p.count == kSlots);
+    g_settings.requireRoomCommand=1;
+    for(const char* title:{"!rand !ai3 lv4","!ai3 lv4 !rand","!random !AI3 LV4"}) {
+        p=ParseTitle(title);CHECK(p.enabled && p.count==3 && p.level==4);
+    }
+    p=ParseTitle("!ai !rand lv5");CHECK(p.enabled && p.count==0 && p.level==2);
+    p=ParseTitle("!ai2 !future lv5");CHECK(p.enabled && p.count==2 && p.level==2);
+    p=ParseTitle("!rand !ai0");CHECK(p.enabled && p.count==0);
+    for(const char* title:{"!aim","prefix!ai3","!ai3x","!ai!rand"}) CHECK(!ParseTitle(title).enabled);
+    auto parserApi=ai_test::api;parserApi.FindRoomCommand=&sdgo::room_commands::Parse;
+    g_api=&parserApi;p=ParseTitle("!rand !AI3 LV4");CHECK(p.enabled && p.count==3 && p.level==4);
+    g_api=&ai_test::api;
     CHECK(ParseIds("4294967296,100") == (std::vector<uint32_t>{100}));
     SCENARIO("invalid configuration cannot index outside level pools");
     settings["DefaultLevel"] = 99; settings["SquadSize"] = 999; settings["DefaultCount"] = -1;
@@ -74,6 +85,14 @@ int main() {
         CHECK(room[kSlotInfo + i * kSlotInfoStride + kSlotInfoTeamA] == 1);
     }
     AddWingmen(room.data()); CHECK(added == 3);
+    SCENARIO("combined titles still add wingmen and preserve the human slot");
+    for(const char* title:{"!rand !ai2","!ai2 !rand"}) {
+        Reset();
+        const size_t length=std::strlen(title);lobby[kLobbyTitleLength]=static_cast<uint8_t>(length);
+        std::memcpy(lobby.data()+kLobbyTitle,title,length);
+        StartNotify(nullptr,nullptr,room.data(),0,0,0,0);
+        CHECK(added==2 && started==1 && SlotPilotId(room.data(),0)==7);
+    }
     SCENARIO("explicit count and no-command mode isolation");
     Reset(); lobby[kLobbyTitleLength] = 4; std::memcpy(lobby.data() + kLobbyTitle, "!ai1", 4);
     AddWingmen(room.data()); CHECK(added == 1);
