@@ -961,6 +961,15 @@ void TestAutoCreateCapability()
               DecodeMessagePacket(replacement, &view, &hello) && hello.kind == metadata::MessageKind::SetTitle &&
               hello.room_id == 5,
           "direct mode-10 full rename uses the native mission subtype and confirmed identity");
+    AckSnapshot(101, Record(9876, 5, 1, 2, Utf8Bytes(title)), hello.request_id);
+    Check(BeforeSend(101, native.data(), native.size(), 0, &replacement) == transport::SendDecision::Replace &&
+              DecodeMessagePacket(replacement, &view, &hello) && hello.kind == metadata::MessageKind::Hello,
+          "automatic mission create rechecks capability when a native connection handle is reused");
+    auto bare = NativePacket(ReceiveSize(kCreateAck), kCreateAck);
+    Put32(bare.data() + 6, 6);
+    OnReceive(101, bare.data(), bare.size(), nullptr, 0);
+    Check(!g_state.IsReady(101) && !g_state.Query(101, 5),
+          "bare auto-create ACK clears prior session metadata rather than displaying stale full titles");
 }
 
 void TestNegotiatingDraft()

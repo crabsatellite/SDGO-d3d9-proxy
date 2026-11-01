@@ -346,7 +346,7 @@ transport::SendDecision BeforeSend(uint32_t connection, const uint8_t* packet, s
         return transport::SendDecision::Pass; // a native deferred queue already owns this extension
     const bool bootstrapCreate = opcode == 0x0640 && size == 0x53 &&
         packet[6] == 2 && packet[7] == 10 && // native single-mission automatic create
-        !g_state.IsReady(connection) && !g_state.IsNegotiating(connection) &&
+        !g_state.IsNegotiating(connection) &&
         !g_state.HasPending(connection) && !g_drafts.count(connection);
     if (((opcode == 0x07FB || opcode == 0x0A08) && size == 0x16) || bootstrapCreate) {
         if (g_drafts.count(connection))
@@ -468,7 +468,8 @@ void OnReceive(uint32_t connection, const uint8_t* packet, size_t size, const ui
                 g_drafts.erase(draft);
             }
         }
-    } else if ((opcode == 0x0617 || opcode == 0x0824 || opcode == 0x0709 || opcode == 0x0916) &&
+    } else if ((opcode == 0x0617 || opcode == 0x0824 || opcode == 0x0709 || opcode == 0x0916 ||
+                ((opcode == 0x0A33 || opcode == 0x054E) && g_state.IsNegotiating(connection))) &&
                !g_state.HasPending(connection) && !g_drafts.count(connection)) {
         // A bare list response proves this path did not negotiate the extension.
         g_state.DropConnection(connection);
