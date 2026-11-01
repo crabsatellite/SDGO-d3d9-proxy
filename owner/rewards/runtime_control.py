@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 import uuid
 
 from . import model
@@ -99,7 +100,18 @@ def _atomic_write(path, data):
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        # Native/third-party Windows readers may briefly omit FILE_SHARE_DELETE.
+        # Keep one durable temp file and retry only the transient replacement
+        # denial, with a fixed deadline; permanent errors still propagate.
+        deadline = time.monotonic() + 0.25
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
     finally:
         if temporary.exists():
             temporary.unlink()

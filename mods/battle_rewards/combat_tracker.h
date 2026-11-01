@@ -41,6 +41,7 @@ class CombatTracker {
 
     bool Fail(const char* error) { valid_ = false; error_ = error; return false; }
 public:
+    bool Invalidate(const char* reason) { return Fail(reason); }
     bool Valid() const { return valid_; }
     const std::string& Error() const { return error_; }
     uint32_t BossesDefeated() const { return bosses_; }
@@ -53,7 +54,7 @@ public:
         // not prove an allied relationship. Equal nonzero teams are allies.
         if (event.attacker_team && event.attacker_team == event.victim_team) return true;
         if (event.victim_boss && !event.victim_npc) return Fail("boss classification requires a native NPC");
-        if (participants_.size() >= 64 && participants_.find(event.attacker) == participants_.end())
+        if (participants_.size() >= 4096 && participants_.find(event.attacker) == participants_.end())
             return Fail("native attacker count exceeded the supported match bound");
         auto& attacker = participants_[event.attacker];
         attacker.damage += event.effective_damage;

@@ -13,7 +13,7 @@
     "kill": {"gb": "60", "mb": "0.2"},
     "assist": {"gb": "20", "mb": "0.1"},
     "damage_per_1000": {"gb": "15", "mb": "0.1"},
-    "objective": {"gb": "30", "mb": "0.1"},
+    "objective": {"gb": "0", "mb": "0"},
     "contribution_cap": {"gb": "400", "mb": "2"},
     "mvp": {"gb": "200", "mb": "6"}
   },
@@ -25,7 +25,7 @@
     "minion": {"gb": "2", "mb": "0"},
     "boss_credit": {"gb": "45", "mb": "0.5"},
     "damage_per_1000": {"gb": "1", "mb": "0"},
-    "objective": {"gb": "10", "mb": "0"},
+    "objective": {"gb": "0", "mb": "0"},
     "contribution_cap": {"gb": "150", "mb": "1.5"},
     "difficulty": {"normal": "1", "hard": "1.25", "expert": "1.5"},
     "total_cap_1x": {"gb": "300", "mb": "2"}

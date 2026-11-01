@@ -389,7 +389,7 @@ inline Policy DefaultPolicy() {
     policy.pvp.kill = {60 * kMicro, 200000};
     policy.pvp.assist = {20 * kMicro, 100000};
     policy.pvp.damage_per_1000 = {15 * kMicro, 100000};
-    policy.pvp.objective = {30 * kMicro, 100000};
+    policy.pvp.objective = {0, 0};
     policy.pvp.contribution_cap = {400 * kMicro, 2 * kMicro};
     policy.pvp.mvp = {200 * kMicro, 6 * kMicro};
     policy.pve.base_clear = {100 * kMicro, 0};
@@ -397,7 +397,7 @@ inline Policy DefaultPolicy() {
     policy.pve.minion = {2 * kMicro, 0};
     policy.pve.boss_credit = {45 * kMicro, 500000};
     policy.pve.damage_per_1000 = {1 * kMicro, 0};
-    policy.pve.objective = {10 * kMicro, 0};
+    policy.pve.objective = {0, 0};
     policy.pve.contribution_cap = {150 * kMicro, 1500000};
     policy.pve.total_cap_1x = {300 * kMicro, 2 * kMicro};
     policy.pve.difficulty_normal_micro = 1000000;

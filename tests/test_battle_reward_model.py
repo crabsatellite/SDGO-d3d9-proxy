@@ -40,6 +40,10 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(doubled["amount"], dict(gb=16000, mb=68))
         self.assertEqual(doubled["multipliers"]["effective"], "20")
 
+    def test_native_default_does_not_advertise_uncollected_objective_rewards(self):
+        self.assertEqual(self.policy["pvp"]["objective"], {"gb": "0", "mb": "0"})
+        self.assertEqual(self.policy["pve"]["objective"], {"gb": "0", "mb": "0"})
+
     def test_compounded_humans_and_ai_same_tier(self):
         context, stats = pvp()
         solo = self.calculate(context, stats)

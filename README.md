@@ -42,6 +42,7 @@ and random-unit gameplay belong in this category.
 |---|---|---|---|---|
 | Mission AI wingmen | Add AI teammates with `!ai` in a mission title | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
 | PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
 | Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`. | `room_random` | Battle server | [Use](docs/room-random.md) |
 <!-- /mod-category:gameplay -->
 
@@ -70,13 +71,12 @@ gameplay. The package's feature directory lists the tools actually included.
 | FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
 <!-- /mod-category:network -->
 
-## Rule design and previews
+## Reward rules and verification
 
-The [battle reward policy and calculator](docs/battle-reward-design.md) provide the approved
-AI parity, base/event multiplication, compounding 1.1 bonus per extra human, and outcome,
-kill, damage, Boss and PvP MVP awards. An assistant preview is available from source.
-Native settlement and wallet delivery remain unconnected; this is not a runtime catalog
-mod and does not change current game rewards.
+[Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
+settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
+contains the approved values and offline calculator. Real account combat, HUD and
+reconnect acceptance remain manual; installation keeps existing unrelated state.
 
 ## Developer tools
 

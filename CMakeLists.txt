@@ -119,6 +119,8 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
+             SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
              LIBS odbc32 bcrypt FILES config.example.ini)
@@ -185,6 +187,69 @@ sdgo_strict(agent_udp_pool_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    # Explicit optional acceptance probe requiring a locally supplied Agent EXE.
+    # It is never staged or run by CI against game files.
+    add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
+    target_link_libraries(native_agent_cash_probe_mod PRIVATE sdgo_api)
+    sdgo_strict(native_agent_cash_probe_mod)
+    # The daily component can be supplied by a later integrated target. Until
+    # then compile its exact committed implementation as a non-staged fixture.
+    if(TARGET daily_rewards)
+        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards)
+    else()
+        add_library(daily_rewards_coexist_fixture SHARED tests/fixtures/daily_rewards_coexist/daily_rewards.cpp)
+        target_link_libraries(daily_rewards_coexist_fixture PRIVATE sdgo_api)
+        set_target_properties(daily_rewards_coexist_fixture PROPERTIES OUTPUT_NAME daily_rewards
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/reward_daily_fixture/$<CONFIG>")
+        sdgo_strict(daily_rewards_coexist_fixture)
+        set(SDGO_REWARD_DAILY_TEST_TARGET daily_rewards_coexist_fixture)
+    endif()
+    add_executable(battle_rewards_runtime_test tests/battle_rewards_runtime_test.cpp)
+    target_link_libraries(battle_rewards_runtime_test PRIVATE sdgo_api)
+    target_include_directories(battle_rewards_runtime_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_rewards_runtime_test)
+    add_dependencies(battle_rewards_runtime_test battle_rewards sdgo_core ${SDGO_REWARD_DAILY_TEST_TARGET})
+    add_test(NAME battle_reward_runtime_integration COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_rewards_runtime_test.ps1" -Config "$<CONFIG>"
+        -BuildDir "${CMAKE_BINARY_DIR}" -DailyRewardsDll "$<TARGET_FILE:${SDGO_REWARD_DAILY_TEST_TARGET}>")
+    set_tests_properties(battle_reward_runtime_integration PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120 RUN_SERIAL TRUE)
+    add_executable(battle_reward_mission_test tests/battle_reward_mission_test.cpp)
+    target_link_libraries(battle_reward_mission_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_mission_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_mission_test)
+    add_test(NAME battle_reward_mission_offline COMMAND battle_reward_mission_test)
+    set_tests_properties(battle_reward_mission_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_stats_test tests/battle_reward_stats_test.cpp)
+    target_link_libraries(battle_reward_stats_test PRIVATE sdgo_api)
+    sdgo_strict(battle_reward_stats_test)
+    add_test(NAME battle_reward_stats_offline COMMAND battle_reward_stats_test)
+    set_tests_properties(battle_reward_stats_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_native_damage_test tests/battle_reward_native_damage_test.cpp)
+    target_link_libraries(battle_reward_native_damage_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_native_damage_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_native_damage_test)
+    add_test(NAME battle_reward_native_damage_offline COMMAND battle_reward_native_damage_test)
+    set_tests_properties(battle_reward_native_damage_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_jobs_test tests/battle_reward_jobs_test.cpp)
+    target_link_libraries(battle_reward_jobs_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_jobs_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_jobs_test)
+    add_test(NAME battle_reward_jobs_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reward_job_interop.py" "$<TARGET_FILE:battle_reward_jobs_test>")
+    set_tests_properties(battle_reward_jobs_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(battle_reward_cash_notify_test tests/battle_reward_cash_notify_test.cpp)
+    target_link_libraries(battle_reward_cash_notify_test PRIVATE sdgo_api)
+    target_include_directories(battle_reward_cash_notify_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_cash_notify_test)
+    add_test(NAME battle_reward_cash_notify_offline COMMAND battle_reward_cash_notify_test)
+    set_tests_properties(battle_reward_cash_notify_offline PROPERTIES TIMEOUT 30)
+    add_executable(battle_reward_boss_test tests/battle_reward_boss_test.cpp)
+    target_link_libraries(battle_reward_boss_test PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_boss_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_boss_test)
+    add_test(NAME battle_reward_boss_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/reward_boss_native_probe.py" "$<TARGET_FILE:battle_reward_boss_test>")
+    set_tests_properties(battle_reward_boss_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_executable(battle_reward_combat_test tests/battle_reward_combat_test.cpp)
     target_link_libraries(battle_reward_combat_test PRIVATE sdgo_api)
     target_include_directories(battle_reward_combat_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -222,6 +287,9 @@ if(BUILD_TESTING)
     add_test(NAME battle_reward_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_battle_reward*.py" -v)
     set_tests_properties(battle_reward_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_test(NAME battle_reward_delivery_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_reward*.py" -v)
+    set_tests_properties(battle_reward_delivery_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 120)
 
     add_library(ai_catalog_provider_fixture SHARED tests/ai_catalog_provider_fixture.cpp)
     set_target_properties(ai_catalog_provider_fixture PROPERTIES OUTPUT_NAME ai_catalog

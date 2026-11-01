@@ -15,7 +15,7 @@
 #include <sstream>
 #include <string>
 
-#include "mods/battle_rewards/policy_config.h"
+#include "policy_config.h"
 
 namespace sdgo {
 namespace battle_rewards {
@@ -232,6 +232,22 @@ inline bool ComputeRuntimeLimits(const Policy& policy, RuntimeLimits* limits,
     return true;
 }
 
+inline bool LoadSharedPolicy(const std::filesystem::path& path, Policy* policy, PolicyConfigError* error) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return config_detail::ConfigFail(error, 0, "unable to open policy file");
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < 0 || size.QuadPart > 131072) {
+        CloseHandle(file); return config_detail::ConfigFail(error, 0, "policy file is invalid or too large");
+    }
+    std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+    DWORD read = 0;
+    bool complete = ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) && read == bytes.size();
+    CloseHandle(file);
+    if (!complete) return config_detail::ConfigFail(error, 0, "unable to read complete policy file");
+    return ParsePolicyIni(bytes, policy, error);
+}
+
 inline bool AtomicWrite(const std::filesystem::path& path,
                         const std::string& bytes, std::string* error) {
     std::error_code directory_error;
@@ -303,6 +319,11 @@ inline bool AtomicWrite(const std::filesystem::path& path,
 
 inline bool ComputeRuntimeLimits(const Policy& policy, RuntimeLimits* limits,
                                  std::string* error = nullptr) {
+    if (policy.pvp.objective.gb_micro || policy.pvp.objective.mb_micro ||
+        policy.pve.objective.gb_micro || policy.pve.objective.mb_micro) {
+        if (error) *error = "native adapter does not collect independent objective events; ObjectiveGb/Mb must be zero";
+        return false;
+    }
     return runtime_detail::ComputeRuntimeLimits(policy, limits, error);
 }
 
@@ -344,7 +365,7 @@ public:
 
         Policy parsed;
         PolicyConfigError parse_error;
-        if (!LoadPolicyIniFile(policy_path_.c_str(), &parsed, &parse_error)) {
+        if (!runtime_detail::LoadSharedPolicy(policy_path_, &parsed, &parse_error)) {
             std::string message = parse_error.message.empty()
                                       ? "unable to load reward policy"
                                       : parse_error.message;

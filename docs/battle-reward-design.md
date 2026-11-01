@@ -1,11 +1,10 @@
-# Battle rewards: approved rules and calculation preview
+# Battle rewards: approved rules and native settlement
 
 [中文完整规则](battle-reward-design.zh-CN.md)
 
-This source-only design preview contains the approved initial policy, an exact
-calculator and an assistant module. Native match settlement, wallet delivery and
-mounting into the live assistant remain unconnected. Saving preview settings does
-not change current game rewards. This is not an installable runtime mod.
+The Beta runtime Mod, durable wallet worker and owner controls are integrated.
+See [deployment and recovery](battle-rewards.md). The calculator remains a source
+utility; authenticated gameplay and HUD acceptance remain manual.
 
 ## Policy
 
@@ -22,7 +21,7 @@ The human multiplier compounds: 1, 1.1, 1.21, 1.331 for one through four humans.
 A base multiplier of 10, double time and four humans therefore produce 26.62.
 
 The one-times amount combines outcome/clear participation rewards with kills,
-effective damage, assists, objectives and, for PvP, an additional MVP award.
+effective damage, assists and, for PvP, an additional MVP award.
 Missions reward minions and proportional Boss contribution, rather than only the
 last hit. Currency is rounded once after all factors using exact rational math.
 
@@ -53,18 +52,19 @@ python tools/reward_preview.py --workspace build/reward-preview --port 0
 
 The last command prints an available loopback URL ending in `/rewards`. The page
 can preview payouts and persist a multiplier/rule revision in its own workspace.
-Its status explicitly says game delivery is not connected. Changing that preview
-does not write to native reward tables or wallets.
+The panel reports waiting until the actual native/worker heartbeat is healthy and
+uses the matching policy. Saving in a connected owner workspace updates real
+settlement policy; the offline scenario calculator itself never writes wallets.
 
 An assistant maintaining the existing `json_response` module-list convention can
 mount `assistant_modules.rewards.attach(server, workspace)` on its current port.
 It preserves other routes and requires its own session token, same-origin requests
-and expected policy revision for configuration changes. Live entry-point mounting
-is not part of this design-preview merge.
+and expected policy revision for configuration changes. The owner startup entry can compose the installed assistant factory on the same
+port; it does not patch an already running process.
 
 ## Settlement integration contract
 
-One trusted server collector must supply native outcomes, combat stats, MVP and
+The trusted native server collector supplies outcomes, combat stats, MVP and
 unique participating accounts. All recipients use one policy/event snapshot;
 `preview_match` derives qualifying human count, rejects duplicate accounts and
 checks aggregate Boss credit. The preview accepts owner-authored scenarios only;
@@ -72,7 +72,9 @@ HTTP input must never become an authoritative payout source.
 
 The double-time component supplies a factor of one or two, consumed once. New
 one-times policy values must replace, not additionally multiply, existing boosted
-currency rewards. A future adapter must coordinate GB/MB transaction receipts,
+currency rewards. The native adapter and owner worker coordinate GB/MB delivery receipts,
 duplicate settlement prevention, client display and verified packet field widths.
 Experience, login gifts, compensation and purchases remain outside this currency
-policy. Native integration and real match acceptance remain outstanding.
+policy. Native integration is implemented; authenticated real match acceptance remains manual.
+The reserved objective-event coefficients are zero because the current native adapter
+does not supply that statistic; unverified Stars are never treated as objective counts.

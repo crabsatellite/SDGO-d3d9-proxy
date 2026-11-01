@@ -1,4 +1,4 @@
-name: Battle reward design and preview
+name: Battle reward policy, owner control and delivery
 
 on:
   push:
@@ -6,7 +6,14 @@ on:
       - 'owner/rewards/**'
       - 'tools/assistant_modules/rewards/**'
       - 'tools/reward_preview.py'
-      - 'tests/test_battle_reward_model.py'
+      - 'tools/reward_assistant.py'
+      - 'tools/reward_worker.py'
+      - 'tools/install_battle_rewards.py'
+      - 'tools/package_rewards.py'
+      - 'mods/battle_rewards/**'
+      - 'include/sdgo/battle_reward*'
+      - 'tests/test_reward*.py'
+      - 'tests/test_battle_reward*.py'
       - 'docs/battle-reward-design*'
       - '.github/workflows/battle-reward-tests.yml'
   pull_request:
@@ -14,7 +21,14 @@ on:
       - 'owner/rewards/**'
       - 'tools/assistant_modules/rewards/**'
       - 'tools/reward_preview.py'
-      - 'tests/test_battle_reward_model.py'
+      - 'tools/reward_assistant.py'
+      - 'tools/reward_worker.py'
+      - 'tools/install_battle_rewards.py'
+      - 'tools/package_rewards.py'
+      - 'mods/battle_rewards/**'
+      - 'include/sdgo/battle_reward*'
+      - 'tests/test_reward*.py'
+      - 'tests/test_battle_reward*.py'
       - 'docs/battle-reward-design*'
       - '.github/workflows/battle-reward-tests.yml'
 
@@ -33,6 +47,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Exact calculations, policy storage and same-port HTTP module
-        run: python -B -m unittest discover -s tests -p "test_battle_reward_model.py" -v
+        run: python -B -m unittest discover -s tests -p "test_battle_reward*.py" -v
+      - name: Owner launcher, registry, durable jobs and wallet contracts
+        run: python -B -m unittest discover -s tests -p "test_reward*.py" -v
       - name: Offline MVP example
         run: python -B tools/reward_preview.py --scenario owner/rewards/examples/pvp-mvp.json

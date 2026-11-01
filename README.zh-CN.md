@@ -39,6 +39,7 @@
 |---|---|---|---|---|
 | 任务 AI 僚机 | 用 `!ai` 给任务队伍加入 AI 队友 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [使用说明](docs/coop-wingmen.zh-CN.md) |
 | 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
 | 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合 | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
 <!-- /mod-category:gameplay -->
 
@@ -66,11 +67,11 @@
 | FRP 联机（Beta） | 服主配置公网地址、端口映射与可复用 UDP 端口池 | `net_route`、`agent_udp_pool` | 客户端 + Agent 服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
 <!-- /mod-category:network -->
 
-## 规则设计与预览
+## 奖励规则与验证
 
-[战斗奖励规则与计算器](docs/battle-reward-design.zh-CN.md)：已确认 AI 对战同档、基础倍率与双倍时段相乘、
-每多一名真人再乘 1.1，以及胜负、击杀、伤害、Boss 和对战 MVP 奖励。可从源码运行辅助预览面板。
-目前尚未接入原生结算或真实发币，不列入运行时 Mod 功能目录，也不会改变当前游戏奖励。
+[战斗贡献奖励（Beta）](docs/battle-rewards.zh-CN.md)已接入原生结算和服主钱包工作器。
+[规则文档](docs/battle-reward-design.zh-CN.md)包含已确认数值与离线计算器。
+真实账号对局、HUD 和重连仍由服主手动验收；安装保留其他功能与原有状态。
 
 ## 开发诊断
 

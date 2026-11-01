@@ -32,6 +32,11 @@ void LimitTests() {
     std::string error;
     CHECK(ComputeRuntimeLimits(policy, &limits, &error));
     CHECK(error.empty());
+    Policy unsupported = policy;
+    unsupported.pvp.objective.gb_micro = kMicro;
+    CHECK(!ComputeRuntimeLimits(unsupported, &limits, &error));
+    CHECK(error.find("ObjectiveGb/Mb must be zero") != std::string::npos);
+    CHECK(ComputeRuntimeLimits(policy, &limits, &error));
     CHECK(limits.max_gb == 65535);
     CHECK(limits.max_mb == 2147483647);
     CHECK(limits.max_base_multiplier_micro >= policy.base_multiplier_micro);
