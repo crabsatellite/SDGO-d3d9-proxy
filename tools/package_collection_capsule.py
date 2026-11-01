@@ -41,6 +41,8 @@ STAGE_FILES = {
         "server/sdgo/mods/collection_capsule/collection_capsule.dll",
     "framework/server/sdgo/mods/collection_capsule/mod.ini":
         "server/sdgo/mods/collection_capsule/mod.ini",
+    "framework/server/sdgo/mods/collection_capsule/manager.json":
+        "server/sdgo/mods/collection_capsule/manager.json",
     "framework/server/sdgo/mods/collection_capsule/config.example.ini":
         "server/sdgo/mods/collection_capsule/config.example.ini",
     "framework/support/capsule-registry/capsule_catalog.dll":
@@ -53,6 +55,7 @@ TOOL_FILES = (
     "install_common.ps1",
 )
 SUPPORT_FILES = (
+    "manager.json",
     "Install-Client.ps1",
     "Uninstall-Client.ps1",
     "runtime-mod.ini",

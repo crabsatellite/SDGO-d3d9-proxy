@@ -29,6 +29,7 @@ HOST_SHA256 = "82d3c4cf09679a431b9bfa639795b148f932642d8774ff66021785115dc53d46"
 HOST_SYMBOLS = "WorldServer-548A86E3-0010C000.ini"
 SERVER_FILES = {"winmm.dll", "sdgo/core.dll", "sdgo/sdgo.ini", f"sdgo/symbols/{HOST_SYMBOLS}",
                 "sdgo/mods/collection_capsule/collection_capsule.dll", "sdgo/mods/collection_capsule/mod.ini",
+                "sdgo/mods/collection_capsule/manager.json",
                 "sdgo/mods/collection_capsule/config.example.ini", "sdgo/mods/collection_capsule/config.ini"}
 
 
@@ -75,6 +76,7 @@ def build(snapshot, output, machine_id, families, framework_stage=None, *, clien
         server = output / "server"
         required = ["winmm.dll", "sdgo/core.dll", "sdgo/sdgo.ini", f"sdgo/symbols/{HOST_SYMBOLS}",
                     "sdgo/mods/collection_capsule/collection_capsule.dll",
+                    "sdgo/mods/collection_capsule/manager.json",
                     "sdgo/mods/collection_capsule/mod.ini", "sdgo/mods/collection_capsule/config.example.ini"]
         for relative in required:
             source = framework_stage / relative

@@ -149,6 +149,7 @@ class CollectionDeploymentTests(unittest.TestCase):
         for name, data in {
             "collection_capsule.dll": b"new mod",
             "mod.ini": b"[mod]\n",
+            "manager.json": b'{}\n',
             "config.example.ini": b"[settings]\n",
             "config.ini": b"[settings]\nMachineID=990001\n",
         }.items():

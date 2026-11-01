@@ -338,6 +338,8 @@ def package_client_registry(
     mod_prefix = "sdgo/mods/capsule_catalog"
     payloads[f"{mod_prefix}/capsule_catalog.dll"] = support_dll.read_bytes()
     payloads[f"{mod_prefix}/mod.ini"] = mod_ini
+    payloads[f"{mod_prefix}/manager.json"] = _file(
+        ROOT / "support/capsule_registry/manager.json", "capsule Manager contract").read_bytes()
     for relative, raw in registry_files.items():
         payloads[f"{mod_prefix}/{relative}"] = raw
 

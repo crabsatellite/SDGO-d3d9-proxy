@@ -31,7 +31,31 @@ This feature requires the current framework/core. Retaining an old core instead
 of installing the matched current build is an update failure, not a supported
 compatibility mode.
 
-## Owner tutorial
+## Mod Manager owner tutorial
+
+Use **SDGO Mod Manager → Collection capsule (Beta)** for everyday configuration.
+Select the target WorldServer INI, matching client, and full framework or owner
+toolkit directory. An optional cover must be a 182×108 PNG.
+
+1. Generate matched resources. Only public configuration is exported; existing
+   shared client machines are preserved.
+2. Close the selected client and check installation conditions. Stop the selected
+   WorldServer, then install its server package and the matching local client.
+   Manager does not control game processes.
+3. Restart that WorldServer, export the player package and distribute it to friends.
+4. Import trusted complete acquisition history for legacy accounts. Current hangar
+   contents alone are insufficient. Register reciprocal imported-family metadata
+   before building when needed.
+
+After separately updating the ordinary capsule catalog, regenerate and install
+the composed client resources here before exporting a new player package.
+Enable or disable the gameplay Mod on its World feature card and restart that
+World; acquisition history is retained. Price is fixed at 100,000 GP. The internal
+machine ID is developer information and must match SQL and client resources.
+All paths remain in the owner's local workspace. There is no additional UI,
+server or game launcher.
+
+## Developer and automation commands
 
 Run these commands from the source tree or portable owner-kit root that contains
 `tools\collection_capsule.py`. All paths below are replaceable `D:\...` examples.
