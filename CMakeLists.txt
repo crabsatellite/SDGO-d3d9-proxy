@@ -330,7 +330,7 @@ if(BUILD_TESTING)
     add_executable(operator_catalog_test tests/operator_catalog_test.cpp)
     target_link_libraries(operator_catalog_test PRIVATE sdgo_api)
     sdgo_strict(operator_catalog_test)
-    foreach(case RANGE 0 2)
+    foreach(case RANGE 0 3)
         add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
                  "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
     endforeach()

@@ -93,6 +93,7 @@ class Workspace:
         files[prefix + "mod.ini"] = (server.MODULE_DIR / "mod.ini").read_bytes()
         files[prefix + "display.example.ini"] = (server.MODULE_DIR / "display.example.ini").read_bytes()
         ini = ["[catalog]", "Version=1", "Revision=" + model.revision(catalog)]
+        fixed_names=presets.fixed_name_ids(catalog,include_disabled=True)
         for op in catalog["operators"]:
             if not op["managed"]:
                 continue
@@ -118,6 +119,7 @@ class Workspace:
             ini += ["", f"[operator:{op['id']}]", f"Category={op['category_id']}",
                     f"Template={op['template_id']}", "Name=" + op["name"],
                     "NameHex=" + op["name"].encode("utf-16-le").hex(),
+                    "FixedName=" + str(int(op['id'] in fixed_names)),
                     f"AvatarProfile={profile}", "AvatarSprite=" + sprite]
         files[prefix + "display.ini"] = b"\xff\xfe" + ("\r\n".join(ini)+"\r\n").encode("utf-16-le")
         public_definitions={"schema_version":1,"revision":model.revision(catalog),

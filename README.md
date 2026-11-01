@@ -73,7 +73,8 @@ and requires relogging. Real-game acceptance remains manual. See the
 Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
 names, portraits and drop probabilities/amounts. Five permanent free support officers
 cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
-holdings migrate in place, preserving equipped references and personal nicknames.
+holdings migrate in place, preserving equipped references. These five use fixed
+Chinese names without a naming prompt; other operators retain personal naming.
 The owner applies server rules and distributes a matching client update; players
 keep their normal launcher. The module registers products for the storefront to
 price and list. In-game display, claiming and settlement still need manual acceptance.

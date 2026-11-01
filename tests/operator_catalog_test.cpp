@@ -20,7 +20,22 @@ std::array<uint8_t,kCategorySize> g_category, g_existing;
 std::wstring g_directory;
 void* g_hook=nullptr;
 int g_originalCalls=0;
+bool g_legacy=false;
 void Require(bool ok) { if (!ok) ExitProcess(90); }
+using ConvertFn=int(WINAPI*)(UINT,DWORD,LPCCH,int,LPWSTR,int);
+ConvertFn g_import=&MultiByteToWideChar;
+__declspec(noinline) int NativeDecode(UINT page,const char* text,wchar_t* output,int capacity)
+{
+    volatile int count=g_import(page,0,text,-1,output,capacity);
+    return count;
+}
+int Import(SdgoMod*,const char* dll,const char* function,void* replacement,void** original)
+{
+    Require(!_stricmp(dll,"kernel32.dll") && !strcmp(function,"MultiByteToWideChar"));
+    *original=reinterpret_cast<void*>(g_import);
+    g_import=reinterpret_cast<ConvertFn>(replacement);
+    return 1;
+}
 void* __cdecl Grid() { return reinterpret_cast<void*>(0x12345678); }
 uint8_t __fastcall Find(void* self,void*,void** out,int id,int type,char)
 {
@@ -53,6 +68,8 @@ uint8_t __fastcall Original(void* self,void*,const wchar_t*,int)
 { Require(self==Grid());++g_originalCalls;return 1; }
 void* Symbol(SdgoMod*,const char* name)
 {
+    if (!strcmp(name,"operator.native_name_decode")) return g_legacy?nullptr:reinterpret_cast<void*>(&NativeDecode);
+    if (!strcmp(name,"text.ansi_to_wide")) return reinterpret_cast<void*>(&NativeDecode);
     if (!strcmp(name,"operator.grid_data")) return reinterpret_cast<void*>(&Grid);
     if (!strcmp(name,"operator.grid_find")) return reinterpret_cast<void*>(&Find);
     if (!strcmp(name,"operator.grid_make_node")) return reinterpret_cast<void*>(&Make);
@@ -81,6 +98,7 @@ int wmain(int argc,wchar_t** argv)
 {
     Require(argc==4);
     const int mode=_wtoi(argv[3]);
+    g_legacy=mode==3;
     g_directory=argv[2];CreateDirectoryW(g_directory.c_str(),nullptr);
     const std::wstring file=g_directory+L"\\display.ini";
     Put(file,L"catalog",L"Version",L"1");
@@ -88,6 +106,7 @@ int wmain(int argc,wchar_t** argv)
     Put(file,L"operator:60003",L"Template",mode==2?L"69999":L"60003");
     Put(file,L"operator:60003",L"AvatarProfile",L"60013");
     Put(file,L"operator:60003",L"Name",L"display");
+    Put(file,L"operator:60003",L"FixedName",g_legacy?nullptr:L"1");
     // UTF16LE hex supports quotes and non-ASCII names without INI quote stripping.
     Put(file,L"operator:60003",L"NameHex",mode==1?L"GG00":L"0C54F3892200");
     Put(file,L"operator:60047",L"Category",L"1219047");
@@ -108,10 +127,18 @@ int wmain(int argc,wchar_t** argv)
     HMODULE module=LoadLibraryW(argv[1]);Require(module!=nullptr);
     auto entry=reinterpret_cast<SdgoModLoadFn>(GetProcAddress(module,"SdgoModLoad"));Require(entry!=nullptr);
     SdgoApi api={};api.size=sizeof(api);api.version=1;api.Log=&Log;api.Symbol=&Symbol;api.HookCode=&Hook;
-    api.SettingInt=&Setting;api.ModDirectory=&Directory;
+    api.SettingInt=&Setting;api.ModDirectory=&Directory;api.HookImport=&Import;
     const int loaded=entry(&api,reinterpret_cast<SdgoMod*>(1));
-    if(mode) { Require(loaded==0 && !g_hook && g_a==before);FreeLibrary(module);return 0; }
+    if(mode==1 || mode==2) { Require(loaded==0 && !g_hook && g_a==before);FreeLibrary(module);return 0; }
     Require(loaded && g_hook);
+    wchar_t rendered[64]={};
+    Require(NativeDecode(874,"@SDGO:60003",rendered,64)>0 && !wcscmp(rendered,L"\x540c\x89f3\""));
+    Require(NativeDecode(874,"@SDGO:60003",nullptr,0)==4);
+    Require(NativeDecode(874,"@SDGO:60003",rendered,2)==0 && GetLastError()==ERROR_INSUFFICIENT_BUFFER);
+    Require(NativeDecode(874,"personal-name",rendered,64)>0 && !wcscmp(rendered,L"personal-name"));
+    Require(NativeDecode(874,"@SDGO:60047",rendered,64)>0 && !wcscmp(rendered,L"@SDGO:60047"));
+    Require(NativeDecode(65001,"@SDGO:60003",rendered,64)>0 && !wcscmp(rendered,L"@SDGO:60003"));
+    Require(g_import(874,0,"@SDGO:60003",-1,rendered,64)>0 && !wcscmp(rendered,L"@SDGO:60003"));
     using HookFn=uint8_t(__fastcall*)(void*,void*,const wchar_t*,int);
     auto invoke=reinterpret_cast<HookFn>(g_hook);
     Require(invoke(Grid(),nullptr,L"other.gdt",2)==1 && g_a==before && g_originalCalls==1);

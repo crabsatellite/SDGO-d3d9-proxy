@@ -210,6 +210,16 @@ class DefaultPresetTests(unittest.TestCase):
         result['drop_pools']['blueprints']['category_ids'].append(1520002)
         with self.assertRaises(ValueError):model.validate(result)
 
+    def test_fixed_name_policy_is_limited_to_the_default_pack(self):
+        self.assertEqual(presets.fixed_name_ids(self.catalog),set())
+        result=presets.initialize(self.catalog,self.snapshot,self.assets)
+        self.assertEqual(presets.fixed_name_ids(result),set(presets.NAMES))
+        result,new_id=model.create_operator(result,60003)
+        self.assertNotIn(new_id,presets.fixed_name_ids(result))
+        result=model.update_operator(result,60003,{'enabled':False})
+        self.assertNotIn(60003,presets.fixed_name_ids(result))
+        self.assertIn(60003,presets.fixed_name_ids(result,include_disabled=True))
+
 
 class FakeAssets:
     index_hash='fixture'
@@ -258,6 +268,16 @@ class HTTPTests(unittest.TestCase):
             for name in manifest['mod'][field].split(','):
                 self.assertIn(prefix+name.strip(),package.namelist())
         self.assertIsNone(package.testzip())
+
+    def test_fixed_default_client_config_contains_name_policy(self):
+        catalog=model.update_operator(fixture(),60003,{'delivery':'all_players'})
+        catalog['default_pack_version']=1
+        self.ws.commit(catalog)
+        self.ws.module_binary=self.ws.root/'fixture.dll';self.ws.module_binary.write_bytes(b'fixture module')
+        package=zipfile.ZipFile(io.BytesIO(self.ws.package()))
+        config=configparser.ConfigParser()
+        config.read_string(package.read('client/sdgo/mods/operator_catalog/display.ini').decode('utf-16'))
+        self.assertEqual(config['operator:60003']['FixedName'],'1')
 
     def test_foreign_origin_token_and_host_cannot_write(self):
         for kw in [{'token':False},{'origin':'https://unrelated.invalid'},{'host':'unrelated.invalid'}]:
