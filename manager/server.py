@@ -68,6 +68,13 @@ def make_server(workspace, port=0):
                     from .ai_context import build
                     return self.send_json(200, build(workspace, 'http://127.0.0.1:'+str(self.server.server_port)+'/', host_id=body.get('host'),mod_id=body.get('mod'),provider_id=body.get('provider'),kind=body.get('kind','configure'),problem=body.get('problem','')))
                 if method == 'POST' and path == '/api/mode': return self.send_json(200, workspace.set_mode(body['mode']))
+                if path == '/api/services' and method == 'GET': return self.send_json(200, workspace.services.describe())
+                if path.startswith('/api/services/'):
+                    identity = path[len('/api/services/'):]
+                    if method == 'GET': return self.send_json(200, workspace.services.describe(identity))
+                    if method == 'POST' and body.get('action') == 'start': return self.send_json(200, workspace.services.start(identity))
+                    if method == 'POST' and body.get('action') == 'stop': return self.send_json(200, workspace.services.stop(identity))
+                    raise ValueError('后台任务操作无效')
                 if method == 'POST' and path == '/api/exit':
                     self.send_json(200,{'stopping':'manager_only'})
                     threading.Thread(target=self.server.shutdown,daemon=True).start()

@@ -5,22 +5,22 @@
     {
       "module": "manager/engines/capsules/capsule_catalog.py",
       "source_branch": "investigate/capsule-machines",
-      "original_sha256": "8cd4dae0c103e6f1d023c4860d099ae1b5fbdfb3191f8d0c8df11898f603eba5"
+      "original_sha256": "3b9b7a945842a1e449358948a8979f49c3c1e98616b858e75bbe747477df7e6e"
     },
     {
       "module": "manager/engines/capsules/capsule_assets.py",
       "source_branch": "investigate/capsule-machines",
-      "original_sha256": "634c007ddce38aadd3a0470925c876d045f077be0e6385c1c22919da8e71d5e2"
+      "original_sha256": "53956f970d761d16417da9738d312e6609cb327d87f8a1382fca42ec52b4e654"
     },
     {
       "module": "manager/engines/capsules/capsule_client_compile.py",
       "source_branch": "investigate/capsule-machines",
-      "original_sha256": "3c0ef6af96240757551784956adeb80dd6a5c55b805137494052c2079cc4272e"
+      "original_sha256": "29c2451334cc95081053c7e13b1b1b450c856c607697cb4c34454116f65a4a6c"
     },
     {
       "module": "manager/engines/capsules/capsule_deployment.py",
       "source_branch": "investigate/capsule-machines",
-      "original_sha256": "24c6a163cccb5915fdb4cf59daf4b1b5bbdc527acde889bc2c6d65c9ab700ae7"
+      "original_sha256": "d14ee817a61b911d3176008b6d3982666e710059ed533f2d3c8aa15760f2ab39"
     },
     {
       "module": "manager/engines/capsules/capsule_server_runtime.py",
@@ -30,7 +30,7 @@
     {
       "module": "manager/engines/capsules/init_capsules.py",
       "source_branch": "investigate/capsule-machines",
-      "original_sha256": "2c501628848090b06e76418bb78bc2038eaec3b3b816f42e3a9d3949f0e1de09"
+      "original_sha256": "149d4b666ee6d6d0565d73f15e8db67e1ec8dc1712e594ab85cdb66e307b8937"
     },
     {
       "module": "manager/engines/capsules/capsule_ui.py",
@@ -101,6 +101,11 @@
       "module": "manager/engines/shop/Service.cs",
       "source_branch": "feature/shop-catalog",
       "original_sha256": "60eaa760c8c277ec727502e5d4626e8fb512d5ee45a845dbc0762dd3f24ef162"
+    },
+    {
+      "module": "manager/engines/capsules/capsule_ui_layout.py",
+      "source_branch": "investigate/capsule-machines",
+      "original_sha256": "fbab735fbf9bc3401ef13fb945ee147407eaa889f39efc26584d173db8d5ce10"
     }
   ]
 }

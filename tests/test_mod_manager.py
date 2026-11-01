@@ -32,6 +32,7 @@ class ManagerTests(unittest.TestCase):
         self.token = self.call('GET','/api/state')[1]['session_token']
 
     def tearDown(self):
+        self.workspace.services.close()
         for provider in self.workspace.providers.values():
             if provider.engine is not None and hasattr(provider.engine,'close'):provider.engine.close()
         self.server.shutdown();self.server.server_close();self.thread.join();self.temp.cleanup()
@@ -117,6 +118,15 @@ class ManagerTests(unittest.TestCase):
         host=self.workspace.settings['hosts'][0]['id']
         status,result=self.call('POST','/api/ai-context',{'host':host,'mod':'findwindow_fix'})
         self.assertEqual(status,200);self.assertIn(str(self.mod.resolve()),result['text'])
+
+    def test_services_have_one_manager_api_and_legacy_worker_api_is_gone(self):
+        status,data=self.call('GET','/api/services')
+        self.assertEqual(status,200)
+        self.assertEqual([service['id'] for service in data['services']],['rewards.wallet'])
+        self.assertEqual(data['services'][0]['owner'],'manager')
+        self.assertEqual(self.call('POST','/api/services/rewards.wallet',{'action':'start'},{'Origin':'https://foreign.invalid'})[0],403)
+        status,_=self.call('POST','/api/providers/rewards/api/rewards/worker',{'action':'start'})
+        self.assertNotEqual(status,200)
 
     def test_csrf_and_dns_rebinding_are_rejected(self):
         for headers in ({'Origin':'http://evil.invalid'},{'X-ModManager-Token':'bad'},{'Host':'evil.invalid:'+str(self.port)}):

@@ -58,11 +58,13 @@ class Rewards(Provider):
     def __init__(self, workspace):
         super().__init__(workspace)
         from .services import WalletService
-        self.wallet = WalletService()
+        controller = WalletService()
+        workspace.services.register('rewards.wallet', '奖励钱包服务', controller,
+            lambda: controller.start(self.config.get('server_ini'), str(self.get_engine().runtime.root)))
         self.install_plan=None;self.install_review=None
 
     def configure(self,values):
-        if self.wallet.state()['running']:raise ValueError('更换配置目录或服务器前，请先停止本 Manager 的钱包服务；倍率仍可在面板中直接热更新')
+        if self.workspace.services.describe('rewards.wallet')['running'] or self.workspace.services.desired('rewards.wallet'):raise ValueError('更换配置目录或服务器前，请先停止钱包服务；倍率仍可在面板中直接热更新')
         result=super().configure(values);self.install_plan=None;self.install_review=None
         return result
 
@@ -89,11 +91,6 @@ class Rewards(Provider):
             try:return {'result':apply_plan(plan),'status':'completed'}
             except DeploymentApplyError as error:raise ValueError(str(error)+'；写入状态：'+str(error.writes_performed)+'；恢复记录：'+str(error.receipt)) from None
         engine = self.get_engine()
-        if path == '/api/rewards/worker':
-            if method == 'GET': return self.wallet.state()
-            if body.get('action') == 'start': return self.wallet.start(self.config.get('server_ini'), str(engine.runtime.root), self.config['workspace'])
-            if body.get('action') == 'stop': return self.wallet.stop()
-            raise ValueError('工作器操作未登记')
         if method == 'GET' and path == '/api/rewards':
             return engine.public()
         expected = headers.get('X-Reward-Revision', '')
@@ -184,7 +181,7 @@ class Capsules(Provider):
             store = CatalogStore(c['catalog'], patterns_path=c.get('patterns'), assets_path=c.get('assets'),
                 bundle_path=c.get('bundle_output'), snapshot_path=c.get('snapshot'), client_path=c.get('client'),
                 lookup_path=c.get('lookup'), apply_callback=callback)
-            self.engine = CapsuleApplication(store, Path(__file__).parent / 'static/panels')
+            self.engine = CapsuleApplication(store)
         return self.engine
 
     def request(self, method, uri, body, headers):

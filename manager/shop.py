@@ -30,10 +30,15 @@ class Bridge:
             return result['value']
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.stdin.close()
-            try: self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired: self.process.terminate()
+        try:
+            if self.process.poll() is None:
+                self.process.stdin.close()
+                try: self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.terminate();self.process.wait(timeout=5)
+        finally:
+            if self.process.stdin and not self.process.stdin.closed:self.process.stdin.close()
+            if self.process.stdout:self.process.stdout.close()
 
 
 class Shop(Provider):
@@ -41,8 +46,8 @@ class Shop(Provider):
     fields = {'workspace':'现有商城配置目录','world':'WorldServer 目录','client':'客户端目录（显示标签更新）','demo':'演示模式（仅测试时填 1）'}
     def request(self, method, path, body, headers):
         if not self.config.get('workspace'): raise ValueError('请先选择商城配置工作区')
-        if self.engine is None: self.engine=Bridge()
+        bridge = self.workspace.services.resource('shop.bridge', Bridge)
         action = 'read' if method=='GET' else path.rsplit('/',1)[-1]
-        value=self.engine.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
+        value=bridge.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
         if method=='GET' and path.endswith('/export'): return Binary(storage.json_bytes(value['catalog']),'application/json','shop.json')
         return value
