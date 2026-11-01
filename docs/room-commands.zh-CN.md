@@ -42,6 +42,8 @@ if (sdgo::room_commands::Find(api, title, titleLength, "ai",
 有新 core 时使用公共服务；旧 core 缺少该可选字段时，SDK 使用完全相同的公共解析实现。
 现有 Mod 需要重新构建才能采用新规则。Beta 安装包同时提供新 core、随机 Mod，以及已安装 AI Mod 的 DLL 更新，
 保留 AI 的 `mod.ini`、`config.ini` 与服主设置；不会自动启用或新增尚未安装的 AI Mod。
+若宿主已装有可选的 `ai_catalog`，更新后的 AI Mod 继续读取该进程内提供的机体池；不安装或修改其数据。
+未安装此提供者时，继续使用 AI Mod 原有等级池。
 
 离线检查覆盖顺序互换、参数隔离、数字边界、错误前缀、20 字节边界、旧 core 回退、
 真实 core 的 API 调用与合作任务组合指令的僚机插入。实际多人游戏表现仍需要手动验收。

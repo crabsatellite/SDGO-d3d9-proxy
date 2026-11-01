@@ -21,6 +21,10 @@ AI mods. Updated mods also share the same SDK parser when run under an older cor
 See [the Chinese guide](room-random.zh-CN.md) for host configuration, installation,
 the exact supported executable, source evidence, limits and manual acceptance.
 Automatic checks are not live multiplayer proof.
+The feature is catalogued as `gameplay` / `room-random` / `beta` / `room-title`.
+Category installers can select `-Features room-random`; the category, feature and
+per-mod switches retain their normal precedence. It needs only the server mod;
+AI composition retains the AI mods' existing client requirements.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\install_room_random.ps1 `

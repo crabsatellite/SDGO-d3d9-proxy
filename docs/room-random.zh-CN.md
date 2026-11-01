@@ -72,6 +72,9 @@ MaxRowsPerPlayer=4096
 `DatabaseIni` 可为绝对路径，或相对于本 Mod 目录的路径。安装器支持带空格和中文的路径。
 `config.ini` 存在时优先于 `mod.ini` 的旧设置。不要把原生数据库 INI 或私人 `config.ini` 放进客户端分发包。
 原生 `sdgo.ini` 若显式设置 `room_random=0`，仍保持禁用；安装器尊重这个设置。
+本功能属于 `gameplay` 分类，功能 ID 为 `room-random`。分类安装器可用 `-Features room-random`
+选择此功能；`[categories] gameplay=0`、`[features] room-random=0` 和 `[mods] room_random=0`
+均可关闭它。只装服务端部分即可随机真人；组合使用 AI 时按 AI 指南安装相应客户端 Mod。
 
 ## 实现与验证边界
 

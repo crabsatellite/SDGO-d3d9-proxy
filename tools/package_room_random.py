@@ -11,7 +11,7 @@ def main():
     repo=Path(__file__).resolve().parents[1]
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binaries',type=Path,default=repo/'build/Release')
-    parser.add_argument('--out',type=Path,default=repo/'dist/SDGO-RoomRandom-0.1.1-beta.zip')
+    parser.add_argument('--out',type=Path,default=repo/'dist/SDGO-RoomRandom-0.1.2-beta.zip')
     args=parser.parse_args()
     files={
         'server/sdgo/core.dll':args.binaries/'core.dll',
@@ -30,7 +30,7 @@ def main():
     }
     payload={name:path.read_bytes() for name,path in files.items()}
     payload['README.txt']=(
-        'SDGO Room Random 0.1.1 Beta\n\n'
+        'SDGO Room Random 0.1.2 Beta\n\n'
         'Incremental SERVER mod. Existing Mod Framework required.\n'
         'Add !rand or !random to a room title; every human gets owned loadouts each round.\n'
         'Single-unit modes keep the unit through respawns; native deck modes total exactly 10 points.\n'
@@ -42,7 +42,7 @@ def main():
         'Live gameplay/multiplayer acceptance is pending manual testing. No public release.\n'
     ).encode('utf-8')
     revision=subprocess.run(['git','rev-parse','HEAD'],cwd=repo,capture_output=True,text=True,check=True).stdout.strip()
-    manifest={'schema_version':1,'version':'0.1.1-beta','source_commit':revision,
+    manifest={'schema_version':1,'version':'0.1.2-beta','source_commit':revision,
         'status':'preview; manual gameplay acceptance pending',
         'supported_host':'BattleServer-548A891D-0046C000',
         'supported_host_sha256':'f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4',
