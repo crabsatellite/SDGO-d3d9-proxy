@@ -9,7 +9,7 @@
 
 ## 基础修复
 
-推荐安装并保持启用，用于修复启动、输入法等兼容性问题。
+包含客户端兼容性修复、服务端结算修复与新账号起步规则。各项均可单独停用。
 
 <!-- mod-category:fixes -->
 | 功能 | 作用 | Mod | 安装位置 | 说明 |
@@ -23,6 +23,16 @@
 <!-- /mod-category:fixes -->
 
 军衔修复通过 WorldServer 的框架加载，将对应结算调用交给 Mod 自己的修正版过程，保留原生过程，无需更新玩家客户端。
+
+**新账号规则默认启用，包含在当前 master 构建的 Base 和 Full 包中，只需服主安装到 WorldServer。**
+默认以 **5,000 GP、0 点券、下士 1 阶**起步；首次建档调用中的自动机体赠送最多保留一台，
+不直接发全机库。已有账号的机体与进度保留，正常选初始机体、后续购买、扭蛋和奖励继续按原规则获得。
+
+服主在 `sdgo/mods/new_account_profile/config.ini` 配置，`InitialUnitLimit=1` 是这部分自动赠送的上限；
+设为 `0` 可取消这部分赠送。停用可在 `sdgo/sdgo.ini` 的 `[mods]` 中写 `new_account_profile=0` 并重启 World，
+之后的新建档恢复原服规则，已有账号不变。详见[新账号安装、配置与验收教程](docs/new-account-profile.zh-CN.md)。
+这个新增 Mod 已合入 master；若你下载的发布包没有 `server/sdgo/mods/new_account_profile/`，
+请按[源码构建说明](docs/setup.zh-CN.md#从源码构建)生成包含它的包。
 
 <details>
 <summary>查看输入法修复效果</summary>
@@ -79,7 +89,7 @@
 
 ## 安装与使用
 
-1. 按[安装说明](docs/setup.zh-CN.md#安装)安装客户端部分；跨端功能还需要对应的服务器部分。
+1. 按[安装说明](docs/setup.zh-CN.md#安装)安装所选功能对应的宿主部分；新账号规则和军衔修复只安装到 World，玩家无需客户端组件。
 2. 使用平常的启动器进入游戏，按各功能说明启用扩展。
 3. 更新使用安装脚本，保留个人配置；分类、整项功能和单个 Mod 都有独立开关。
 

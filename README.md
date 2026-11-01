@@ -10,7 +10,8 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 
 ## Core fixes
 
-Recommended defaults for startup, input method and compatibility problems.
+Client compatibility fixes, server settlement repairs and new-account defaults.
+Each fix can be disabled separately.
 
 <!-- mod-category:fixes -->
 | Feature | Purpose | Mods | Install on | Guide |
@@ -25,6 +26,20 @@ Recommended defaults for startup, input method and compatibility problems.
 
 The rank repair loads through the framework in WorldServer. It routes matching battle calls to
 Mod-owned procedures while preserving the original procedures. Players need no client update.
+
+**New-account defaults are enabled in Base and Full packages built from current master; only the owner installs them on WorldServer.**
+New players start with **5,000 GP, zero cash and Corporal 1**. Automatic unit gifts from
+the first-profile call are capped at one instead of granting an entire catalog.
+Existing ownership and progress are preserved. Normal starter selection, later purchases,
+capsule draws and rewards continue under the native rules.
+
+Owner settings live in `sdgo/mods/new_account_profile/config.ini`. `InitialUnitLimit=1`
+caps those automatic gifts; use `0` to remove them. To disable the Mod, set
+`new_account_profile=0` under `[mods]` in `sdgo/sdgo.ini` and restart World. Future
+creations return to native rules; existing accounts keep their data.
+See the [new-account installation, configuration and acceptance guide](docs/new-account-profile.md).
+This new Mod is on master. If your downloaded release lacks
+`server/sdgo/mods/new_account_profile/`, [build a package from current source](docs/setup.md#building-from-source).
 
 <details>
 <summary>Input method example</summary>
@@ -83,7 +98,7 @@ For development and troubleshooting; disabled by default.
 
 ## Install and use
 
-1. Follow the [installation guide](docs/setup.md#install); multi-host features need their matching server parts.
+1. Follow the [installation guide](docs/setup.md#install) for the hosts required by your chosen feature. New-account defaults and rank repair install only on World; players need no client component.
 2. Start with your usual launcher and enable extensions using their guides.
 3. Use the installer to update while keeping your configuration. Categories,
    whole features and individual mods have separate switches.

@@ -210,6 +210,15 @@ replacing unrelated definitions; conflicts are rejected. Core 1.1.3 supports exa
 ordinal imports in HookImport for the Agent bind. See [distribution](frp-distribution.zh-CN.md).
 Build, regression and installer commands are in [FRP verification](frp-testing.md).
 
+The `new_account_profile` World Mod uses the same per-mod settings helper for
+owner-controlled currency, rank and automatic unit-gift limits. It wraps only
+registration and first-profile creation in a transaction on the native authenticated
+OLE DB session. A locked inventory snapshot protects pre-existing unit identities;
+only newly inserted profile gifts are limited, with counters and selected-unit
+references repaired before commit. Existing profiles bypass initialization, and
+normal starter selection and later gains remain native. The Mod does not replace
+original SQL procedures. See its [owner guide](new-account-profile.md).
+
 Before reading `HookSystemExport`, check
 `api->size >= offsetof(SdgoApi, HookSystemExport) + sizeof(api->HookSystemExport)`
 and then that the pointer is non-null. Older API 1 mods keep their existing ABI.
@@ -377,6 +386,11 @@ cmake --build build --config Release
 * `mods/mission_ai/test/sim_mission.lua`: drives `mission_ai.lua` against a mock of the game's
   script API under real Lua 5.0 (`tools/lua50_host.c`, built against Lua 5.0.3 sources).
 * `tools/verify_symbols.py <exe>`: offline check of a symbol file.
+* `new_account_policy_test`: new/existing-account policy, gift limits and rollback.
+  `tests/run_new_account_sql_test.py` is an opt-in actual-core/OLE DB fixture against
+  owned test databases in an isolated SQL container; it checks enabled/configured/
+  disabled behavior, preserved ownership and 64-bit unit identities. Native client
+  login remains manual acceptance; see the [test instructions](new-account-profile.md#verification).
 * `tools/package.ps1`: a full package by default; `-Edition Base` selects core fixes,
   and `-Features pvp-ai` selects the fixes plus that complete client/server feature.
   `-BuildDir` chooses the staged build and `-OutputDir` chooses a fresh destination.
