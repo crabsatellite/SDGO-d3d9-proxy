@@ -174,11 +174,40 @@ class AiCatalogTests(unittest.TestCase):
             exporter.export(package, data, output)
             with zipfile.ZipFile(output) as archive:
                 self.assertEqual(set(archive.namelist()), {"README.txt", "manifest.json",
+                    "Install-AiCatalog.ps1", "sdgo/mods/ai_catalog/client-symbols.ini",
                     "sdgo/mods/ai_catalog/ai_catalog.dll", "sdgo/mods/ai_catalog/mod.ini", "sdgo/mods/ai_catalog/catalog.bin"})
                 self.assertTrue(all(b"PRIVATE SERVER" not in archive.read(name) for name in archive.namelist()))
                 self.assertEqual(archive.read("sdgo/mods/ai_catalog/catalog.bin"), data.read_bytes())
                 self.assertEqual(installer.ini(archive.read("sdgo/mods/ai_catalog/mod.ini")).getint("mod", "enabled"), 1)
             with self.assertRaises(FileExistsError): exporter.export(package, data, output)
+
+    @unittest.skipUnless(sys.platform == "win32", "player setup uses Windows PowerShell")
+    def test_player_setup_merges_symbols_idempotently_and_rejects_conflicts(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as directory:
+            target, package, data = installer_fixture(Path(directory), "client")
+            output = Path(directory) / "players.zip"
+            exporter.export(package, data, output)
+            with zipfile.ZipFile(output) as archive: archive.extractall(target)
+            symbol = target / "sdgo/symbols/GOnline-54BE1568-00C97000.ini"
+            original = symbol.read_bytes()
+            unrelated = (target / "sdgo/sdgo.ini").read_bytes()
+            def setup():
+                return subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                    str(target / "Install-AiCatalog.ps1"), "-GameDir", str(target)], capture_output=True, timeout=30)
+            result = setup()
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            merged = symbol.read_bytes()
+            self.assertTrue(merged.startswith(original))
+            self.assertTrue(all(installer.ini(merged).has_section(section) for section in installer.SECTIONS["client"]))
+            self.assertEqual(Path(str(symbol) + ".ai-catalog-before").read_bytes(), original)
+            self.assertEqual(setup().returncode, 0)
+            self.assertEqual(symbol.read_bytes(), merged)
+            self.assertEqual((target / "sdgo/sdgo.ini").read_bytes(), unrelated)
+            symbol.write_bytes(merged.replace(b"rva=123", b"rva=999", 1))
+            conflicting = symbol.read_bytes()
+            self.assertNotEqual(setup().returncode, 0)
+            self.assertEqual(symbol.read_bytes(), conflicting)
 
     def test_update_retains_first_install_originals_for_uninstall(self):
         with tempfile.TemporaryDirectory() as directory:

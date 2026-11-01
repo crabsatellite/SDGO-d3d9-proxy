@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import zipfile
 from ai_catalog import HEADER, MAGIC, RECORD, fnv
-from install_ai_catalog import manifest_enabled
+from install_ai_catalog import manifest_enabled, SECTIONS, ini
 
 
 def export(source, catalog, output):
@@ -20,12 +20,23 @@ def export(source, catalog, output):
         len(binary) != HEADER.size + count * size or fnv(binary[HEADER.size:], 32) != checksum):
         raise ValueError("invalid catalog length or checksum")
     directory = source / "client/sdgo/mods/ai_catalog"
+    symbol_name = "GOnline-54BE1568-00C97000.ini"
+    symbols = ini((source / "client/sdgo/symbols" / symbol_name).read_bytes())
+    fragment = "".join("[" + name + "]\n" + "".join(key + "=" + value + "\n" for key, value in symbols[name].items()) + "\n"
+                       for name in ("host", *SECTIONS["client"]))
+    setup = source / "backend/install_ai_catalog_client.ps1"
+    if not setup.is_file(): setup = Path(__file__).with_name("install_ai_catalog_client.ps1")
     files = {
         "sdgo/mods/ai_catalog/ai_catalog.dll": (directory / "ai_catalog.dll").read_bytes(),
         "sdgo/mods/ai_catalog/mod.ini": manifest_enabled((directory / "mod.ini").read_bytes(), True),
         "sdgo/mods/ai_catalog/catalog.bin": binary,
+        "sdgo/mods/ai_catalog/client-symbols.ini": fragment.encode("ascii"),
+        "Install-AiCatalog.ps1": setup.read_bytes(),
         "README.txt": ("Install the matching SDGO mod framework and AI gameplay mods first.\n"
-                       "Close the game, extract this overlay into the GOnline.exe folder, then use your normal launcher.\n"
+                       "Close the game and extract this overlay into the GOnline.exe folder.\n"
+                       "Run once: powershell -NoProfile -ExecutionPolicy Bypass -File .\\Install-AiCatalog.ps1\n"
+                       "Setup merges required symbols, keeps unrelated definitions and backs up the original symbol file.\n"
+                       "Then use your normal launcher. No setup is needed on later launches.\n"
                        "Every participant and the battle server need the same catalog.bin.\n"
                        "To disable: close the game and set sdgo/mods/ai_catalog/mod.ini [mod] enabled=0 on both sides.\n"
                        "No Sakura account, SQL connection, Python or special launcher is needed by players.\n").encode(),

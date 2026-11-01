@@ -9,6 +9,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <set>
 #include "sdgo/ai_catalog_format.h"
 #include "sdgo/ai_catalog_provider.h"
 
@@ -25,17 +26,65 @@ std::map<uint32_t, std::array<uint8_t, kClientUnitBytes>> g_units;
 std::map<uint32_t, std::array<uint8_t, 0x7c>> g_nativeUnits;
 std::map<uint32_t, std::array<uint8_t, 0x30>> g_nativeNpcs;
 std::array<uint8_t, kClientNpcBytes> g_nativeClient{};
+// Only the documented layout consumed by the production addon is simulated.
+// Actual RB-tree, checksum and destructor instructions have a separate owner test.
+struct ClientValue { uint32_t type; uint8_t* record; };
+struct ClientNode { void* left; void* parent; void* right; uint32_t key; ClientValue* value; uint32_t flags; };
+struct ClientPair { uint32_t key; ClientValue* value; };
+struct ClientInsert { void* node; uint8_t inserted; uint8_t padding[3]; };
+uint8_t g_clientGrid[0x58]{};
+ClientNode g_head{};
+std::map<uint32_t, ClientNode*> g_clientNodes;
+std::set<void*> g_allocations;
+int g_loadCalls = 0, g_createCalls = 0, g_integrityRecords = 0;
+void Check(bool value, const char* text);
+__declspec(noinline) void* __cdecl ClientAllocate(size_t size) {
+    void* p = malloc(size); if (p) g_allocations.insert(p); return p;
+}
+__declspec(noinline) void __cdecl ClientRelease(void* p) {
+    if (p) { Check(g_allocations.erase(p) == 1, "native allocation released exactly once"); free(p); }
+}
 void Check(bool value, const char* text) {
     ++g_checks;
     if (!value) { fprintf(stderr, "FAIL: %s\n", text); ExitProcess(2); }
 }
-__declspec(noinline) int __fastcall NativeGrid(void*, void*, const uint8_t** out, uint32_t id, int type, char log) {
+__declspec(noinline) bool __fastcall NativeGrid(void*, void*, const uint8_t** out, uint32_t id, int type, char log) {
     ++g_nativeCalls; g_logFlag = log;
     if (!out) return 0;
     if (type == 2 && g_units.count(id) && !(g_missing && id == 10001)) { *out = g_units.at(id).data(); return 1; }
     if (type == 41 && U32(g_nativeClient.data()) == id) { *out = g_nativeClient.data(); return 1; }
+    if (g_clientNodes.count(id) && int(g_clientNodes.at(id)->value->type) == type) {
+        *out = g_clientNodes.at(id)->value->record; return true;
+    }
     return 0;
 }
+__declspec(noinline) void* __cdecl ClientData() { return g_clientGrid; }
+__declspec(noinline) void __fastcall ClientLoad(void*, void*, const wchar_t*, uint32_t) { ++g_loadCalls; }
+__declspec(noinline) void __fastcall ClientMapFind(void*, void*, void** out, const uint32_t* key) {
+    *out = g_clientNodes.count(*key) ? g_clientNodes.at(*key) : &g_head;
+    if (U32(g_nativeClient.data()) == *key) *out = g_nativeClient.data();
+}
+__declspec(noinline) void* __fastcall ClientMake(void*, void*, const ClientPair* pair) {
+    auto* node = static_cast<ClientNode*>(ClientAllocate(sizeof(ClientNode)));
+    if (node) { *node = {}; node->key = pair->key; node->value = pair->value; }
+    return node;
+}
+__declspec(noinline) void __fastcall ClientInsertNode(void*, void*, ClientInsert* result, void* raw, char) {
+    auto* node = static_cast<ClientNode*>(raw);
+    const bool added = g_clientNodes.emplace(node->key, node).second;
+    result->inserted = added ? 1 : 0;
+    result->node = g_clientNodes.at(node->key);
+    if (!added) ClientRelease(node);
+}
+__declspec(noinline) void __fastcall ClientRegister(void*, void*, const void* raw, uint32_t size, uint32_t type) {
+    Check(raw && size == kClientNpcBytes && type == 41, "native integrity registration uses full NPC record");
+    ++g_integrityRecords;
+}
+#define CREATE_ARGS void*, void*, uint32_t, float, float, float, int, float, float, float
+__declspec(noinline) uint8_t* __fastcall ClientBase(CREATE_ARGS) { g_createCalls += 1; return reinterpret_cast<uint8_t*>(1); }
+__declspec(noinline) uint8_t* __fastcall ClientMission(CREATE_ARGS) { g_createCalls += 2; return reinterpret_cast<uint8_t*>(1); }
+__declspec(noinline) uint8_t* __fastcall ClientRemote(CREATE_ARGS) { g_createCalls += 4; return reinterpret_cast<uint8_t*>(1); }
+#undef CREATE_ARGS
 __declspec(noinline) int __fastcall NativeNpc(void*, void*, uint32_t id, uint8_t** out) {
     ++g_nativeCalls;
     if (!out || !g_nativeNpcs.count(id)) return 0;
@@ -164,11 +213,12 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (changed) { g_units[10001][10] ^= 1; g_nativeUnits[10001][10] ^= 1; }
     if (deferred) g_missing = true;
+    *reinterpret_cast<void**>(g_clientGrid + 4) = &g_head;
     if (corrupt) bytes.back() ^= 1;
     if (!missing) PutFile(mod / L"catalog.bin", bytes);
     std::ofstream manifest(mod / L"mod.ini");
     manifest << "[mod]\nid=ai_catalog\nname=catalog integration\napi=1\norder=50\nhosts=*\ndll=ai_catalog.dll\nenabled=" << (!off) << "\nrequires="
-             << (server ? "catalog.npc_manager,catalog.unit_manager,catalog.find_ai_npc,catalog.find_unit,battle.build_ai_pilot" : "grid.find") << "\n";
+             << (server ? "catalog.npc_manager,catalog.unit_manager,catalog.find_ai_npc,catalog.find_unit,battle.build_ai_pilot" : "grid.find,grid.load_npc_table,mode.base_create_npc,mode.create_npc,mode.create_remote_npc") << "\n";
     manifest.close();
     std::ofstream global(root / L"sdgo/sdgo.ini"); global << "[mods]\nunrelated_feature=0\n"; global.close();
     const auto base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
@@ -178,6 +228,17 @@ int wmain(int argc, wchar_t** argv) {
     std::ofstream symbols(root / L"sdgo/symbols" / (std::string(key) + ".ini"));
     symbols << "[host]\ntimestamp=" << nt->FileHeader.TimeDateStamp << "\nsize_of_image=" << nt->OptionalHeader.SizeOfImage << "\n";
     Symbol(symbols, "grid.find", reinterpret_cast<void*>(&NativeGrid), true);
+    Symbol(symbols, "grid.data", reinterpret_cast<void*>(&ClientData), true);
+    Symbol(symbols, "grid.load_npc_table", reinterpret_cast<void*>(&ClientLoad), true);
+    Symbol(symbols, "grid.map_find", reinterpret_cast<void*>(&ClientMapFind), true);
+    Symbol(symbols, "grid.make_node", reinterpret_cast<void*>(&ClientMake), true);
+    Symbol(symbols, "grid.insert_node", reinterpret_cast<void*>(&ClientInsertNode), true);
+    Symbol(symbols, "grid.register_record", reinterpret_cast<void*>(&ClientRegister), true);
+    Symbol(symbols, "crt.operator_new", reinterpret_cast<void*>(&ClientAllocate), true);
+    Symbol(symbols, "crt.operator_delete", reinterpret_cast<void*>(&ClientRelease), true);
+    Symbol(symbols, "mode.base_create_npc", reinterpret_cast<void*>(&ClientBase), true);
+    Symbol(symbols, "mode.create_npc", reinterpret_cast<void*>(&ClientMission), true);
+    Symbol(symbols, "mode.create_remote_npc", reinterpret_cast<void*>(&ClientRemote), true);
     Symbol(symbols, "catalog.find_ai_npc", reinterpret_cast<void*>(&NativeNpc), true);
     Symbol(symbols, "catalog.find_unit", reinterpret_cast<void*>(&NativeUnit), true);
     Symbol(symbols, "battle.build_ai_pilot", reinterpret_cast<void*>(&NativeBuild), true);
@@ -188,6 +249,11 @@ int wmain(int argc, wchar_t** argv) {
     memcpy(originalNpc.data(), reinterpret_cast<void*>(&NativeNpc), 12);
     memcpy(originalUnit.data(), reinterpret_cast<void*>(&NativeUnit), 12);
     memcpy(originalBuild.data(), reinterpret_cast<void*>(&NativeBuild), 12);
+    std::array<uint8_t, 12> originalLoad{}, originalBase{}, originalMission{}, originalRemote{};
+    memcpy(originalLoad.data(), reinterpret_cast<void*>(&ClientLoad), 12);
+    memcpy(originalBase.data(), reinterpret_cast<void*>(&ClientBase), 12);
+    memcpy(originalMission.data(), reinterpret_cast<void*>(&ClientMission), 12);
+    memcpy(originalRemote.data(), reinterpret_cast<void*>(&ClientRemote), 12);
     const auto beforeUnits = g_units; const auto beforeNativeUnits = g_nativeUnits; const auto beforeNpcs = g_nativeNpcs;
     HMODULE core = LoadLibraryW((root / L"sdgo/core.dll").c_str()); Check(core != nullptr, "real core loaded");
     auto init = reinterpret_cast<SdgoCoreInitFn>(GetProcAddress(core, "SdgoCoreInit")); Check(init != nullptr, "core init found");
@@ -197,8 +263,15 @@ int wmain(int argc, wchar_t** argv) {
     const bool loaded = GetModuleHandleW((mod / L"ai_catalog.dll").c_str()) != nullptr;
     Check(loaded == active, "DLL activation matches manifest and data validity");
     if (!active) {
+        Check(!memcmp(originalGrid.data(), reinterpret_cast<void*>(&NativeGrid), 12), "disabled/rejected client has original lookup bytes");
+        Check(!memcmp(originalLoad.data(), reinterpret_cast<void*>(&ClientLoad), 12) &&
+              !memcmp(originalBase.data(), reinterpret_cast<void*>(&ClientBase), 12) &&
+              !memcmp(originalMission.data(), reinterpret_cast<void*>(&ClientMission), 12),
+              "disabled/rejected or partially rolled back client has original loader and early creator bytes");
         if (!rollback || server)
-            Check(!memcmp(originalGrid.data(), reinterpret_cast<void*>(&NativeGrid), 12), "disabled/rejected client has original code bytes");
+            Check(!memcmp(originalRemote.data(), reinterpret_cast<void*>(&ClientRemote), 12), "disabled client has original remote creator");
+        ClientLoad(g_clientGrid, nullptr, L"gdrs\\0222.gdt", 41);
+        Check(g_clientNodes.empty() && !g_integrityRecords && g_allocations.empty(), "disabled/rejected client adds no runtime records");
         Check(!memcmp(originalNpc.data(), reinterpret_cast<void*>(&NativeNpc), 12), "disabled/rejected NPC lookup original");
         Check(!memcmp(originalUnit.data(), reinterpret_cast<void*>(&NativeUnit), 12), "disabled/rejected unit lookup original");
         if (!rollback || !server)
@@ -208,6 +281,8 @@ int wmain(int argc, wchar_t** argv) {
                   "existing hook owner stays loaded while catalog rolls back");
             const uint8_t* value = nullptr;
             Check(NativeGrid(nullptr, nullptr, &value, 10001, 2, 7) && value == g_units.at(10001).data(), "existing feature still forwards native lookups");
+            Check(ClientRemote(nullptr, nullptr, 3604001, 0, 0, 0, 1, 0, 0, 1) != nullptr,
+                  "existing feature still forwards remote creation");
         }
     } else if (server) {
         SdgoApi api{}; api.ModDirectory = &ModDir; api.Log = &Log;
@@ -235,19 +310,45 @@ int wmain(int argc, wchar_t** argv) {
         Check(NativeNpc(&g_npcManager, nullptr, 9999999, &sentinel) == 0 && sentinel == reinterpret_cast<uint8_t*>(1), "unknown NPC preserves native failure semantics");
         if (conflict) Check(NativeNpc(&g_npcManager, nullptr, 3604031, &sentinel) && sentinel == g_nativeNpcs.at(3604031).data(), "catalog collision preserves original NPC");
     } else {
+        Check(!memcmp(originalGrid.data(), reinterpret_cast<void*>(&NativeGrid), 12), "active catalog leaves native Find unhooked");
+        Check(!ClientBase(nullptr, nullptr, 3604032, 0, 0, 0, 1, 0, 0, 1) && !g_createCalls,
+              "catalog creator refuses missing data before loading");
+        ClientLoad(g_clientGrid, nullptr, L"gdrs\\0198.gdt", 41);
+        Check(g_clientNodes.empty(), "nonfinal table does not publish records");
+        ClientLoad(g_clientGrid, nullptr, L"gdrs\\0222.gdt", 41);
+        const bool rejected = changed || conflict || deferred;
+        Check(g_clientNodes.size() == (rejected ? size_t(0) : parsed.records.size()), "whole-catalog preflight before native publication");
+        if (deferred) {
+            g_missing = false;
+            ClientLoad(g_clientGrid, nullptr, L"gdrs\\0222.gdt", 41);
+            Check(g_clientNodes.size() == parsed.records.size(), "deferred source recovers on table load retry");
+        }
+        const bool registered = !changed && !conflict;
         for (const auto& row : parsed.records) {
             const uint8_t* value = reinterpret_cast<const uint8_t*>(1);
-            const bool excluded = row.unitId == 10001 && (changed || deferred);
-            Check(NativeGrid(nullptr, nullptr, &value, row.npcId, 41, 1) == (excluded ? 0 : 1), "client NPC lookup result");
-            if (!excluded && !(conflict && row.unitId == 10001))
+            const bool foreign = conflict && row.unitId == 10001;
+            Check(NativeGrid(nullptr, nullptr, &value, row.npcId, 41, 1) == (registered || foreign), "unhooked native NPC lookup result");
+            if (registered)
                 Check(U32(value) == row.npcId && U32(value + 0x69) == row.unitId && U32(value + 0xe5) == 12000, "client/server identity and HP agree");
-            if (excluded) Check(value == reinterpret_cast<const uint8_t*>(1), "client failure leaves output unchanged");
+            if (!registered && !foreign) Check(value == reinterpret_cast<const uint8_t*>(1), "client failure leaves output unchanged");
+            for (auto creator : {&ClientBase, &ClientMission, &ClientRemote})
+                Check((creator(nullptr, nullptr, row.npcId, 0, 0, 0, 1, 0, 0, 1) != nullptr) == registered,
+                      "every creator requires matching registered catalog data");
             const uint8_t* source = nullptr;
-            if (!deferred || row.unitId != 10001)
-                Check(NativeGrid(nullptr, nullptr, &source, row.unitId, 2, 7) == 1 && source == g_units.at(row.unitId).data() && g_logFlag == 7, "normal client unit and flags unchanged");
+            Check(NativeGrid(nullptr, nullptr, &source, row.unitId, 2, 7) && source == g_units.at(row.unitId).data() && g_logFlag == 7, "normal client unit and flags unchanged");
         }
-        if (deferred) { g_missing = false; const uint8_t* row = nullptr; Check(NativeGrid(nullptr, nullptr, &row, 3604031, 41, 0) == 1, "client deferred unit lookup recovers"); }
         if (conflict) { const uint8_t* row = nullptr; Check(NativeGrid(nullptr, nullptr, &row, 3604031, 41, 9) && row == g_nativeClient.data() && g_logFlag == 9, "native client collision and flags preserved"); }
+        const auto integrityBefore = g_integrityRecords;
+        ClientLoad(g_clientGrid, nullptr, L"GDRS/0222.GDT", 41);
+        Check(g_integrityRecords == integrityBefore, "repeat final load does not duplicate integrity entries");
+        Check(g_integrityRecords == (registered ? int(parsed.records.size()) : 0), "one integrity entry per published NPC");
+        Check(ClientBase(nullptr, nullptr, 3604001, 0, 0, 0, 1, 0, 0, 1) != nullptr,
+              "noncatalog creators keep original behavior");
+        for (const auto& item : g_clientNodes) {
+            ClientRelease(item.second->value->record); ClientRelease(item.second->value); ClientRelease(item.second);
+        }
+        g_clientNodes.clear();
+        Check(g_allocations.empty(), "all native-owned catalog allocations released");
     }
     Check(g_units == beforeUnits && g_nativeUnits == beforeNativeUnits && g_nativeNpcs == beforeNpcs, "all original records byte-identical after catalog operations");
     Check(GetPrivateProfileIntW(L"mods", L"unrelated_feature", 1, (root / L"sdgo/sdgo.ini").c_str()) == 0, "unrelated global mod setting preserved");

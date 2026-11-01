@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 import zipfile
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 ROOT = Path(__file__).resolve().parents[1]
-SECTIONS = {"client": ("grid.find",), "server": ("catalog.find_ai_npc", "catalog.find_unit",
+SECTIONS = {"client": ("grid.data", "grid.find", "grid.load_npc_table", "grid.make_node", "grid.insert_node",
+    "grid.register_record", "grid.map_find", "crt.operator_new", "crt.operator_delete",
+    "mode.base_create_npc", "mode.create_npc", "mode.create_remote_npc"), "server": ("catalog.find_ai_npc", "catalog.find_unit",
     "catalog.npc_manager", "catalog.unit_manager", "battle.build_ai_pilot")}
 HOST = {"client": "GOnline-54BE1568-00C97000.ini", "server": "BattleServer-548A891D-0046C000.ini"}
 
@@ -38,7 +40,7 @@ def package(stage, output):
     for mod in ("coop_ai", "pvp_ai"):
         relative = f"server/sdgo/mods/{mod}/{mod}.dll"
         files[relative] = (stage / relative).read_bytes()
-    for name in ("ai_catalog.py", "install_ai_catalog.py", "export_ai_catalog.py", "ai_catalog.rules.example.json", "README.zh-CN.md"):
+    for name in ("ai_catalog.py", "install_ai_catalog.py", "install_ai_catalog_client.ps1", "export_ai_catalog.py", "ai_catalog.rules.example.json", "README.zh-CN.md"):
         files["backend/" + name] = (ROOT / "backend" / name).read_bytes()
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         files[name] = (ROOT / name).read_bytes()

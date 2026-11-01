@@ -24,7 +24,9 @@ PENDING = "sdgo/install-state/ai_catalog.pending.json"
 OWN = "sdgo/mods/ai_catalog/"
 HOSTS = {"client": ("GOnline.exe", 0x54BE1568, 0x00C97000),
          "server": ("BattleServer.exe", 0x548A891D, 0x0046C000)}
-SECTIONS = {"client": ("grid.find",), "server": ("catalog.find_ai_npc", "catalog.find_unit",
+SECTIONS = {"client": ("grid.data", "grid.find", "grid.load_npc_table", "grid.make_node", "grid.insert_node",
+             "grid.register_record", "grid.map_find", "crt.operator_new", "crt.operator_delete",
+             "mode.base_create_npc", "mode.create_npc", "mode.create_remote_npc"), "server": ("catalog.find_ai_npc", "catalog.find_unit",
              "catalog.npc_manager", "catalog.unit_manager", "battle.build_ai_pilot")}
 
 

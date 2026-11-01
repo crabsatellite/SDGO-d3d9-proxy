@@ -5,7 +5,8 @@
 
 * `ai_catalog.py`：默认只读检查/分级；加 `--generate` 生成服务器和客户端相同的 `catalog.bin`。
 * `install_ai_catalog.py`：安装到选中的已停止客户端/对战服务器，保存原文件；启用、关闭、卸载和中断恢复。
-* `export_ai_catalog.py`：导出只含客户端 Mod 与服主目录的玩家增量 ZIP。
+* `export_ai_catalog.py`：导出客户端 Mod、服主目录、必需符号和一次性 PowerShell 安装工具的玩家增量 ZIP。
+* `install_ai_catalog_client.ps1`：玩家包内的一次性符号合并，不覆盖其他 Mod 定义；以后仍用原启动器。
 * `ai_catalog.rules.example.json`：服主自己的排除、LV 和原生 AI 模板覆盖规则。
 
 这些工具需要 Python 3.10+，玩家不需要。JSON 模式不需第三方库；ODBC 读取另需 `pyodbc` 和驱动。

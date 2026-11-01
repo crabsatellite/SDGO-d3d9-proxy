@@ -27,9 +27,14 @@ replaced. Existing server AI DLLs receive the small optional provider bridge;
 their manifests, settings and enabled states are preserved. Missing AI mods are
 not installed by the addon.
 
-The player export contains only the enabled client addon, generated catalog,
-checksums and instructions. It contains no backend, database connection settings,
-accounts, original game files or special launcher. Players need no Python/ODBC.
+The player export contains the enabled client addon, generated catalog, required
+symbol fragment, one-time PowerShell setup, checksums and instructions. After
+extracting into the stopped game's folder, run
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-AiCatalog.ps1`
+once. Setup adds missing symbols without replacing other mods' definitions,
+refuses conflicts and preserves the original symbol file. Players then use their
+normal launcher; no Python/ODBC, owner backend, accounts or database settings
+are included.
 
 Keep `catalog.json` as the owner's allocation ledger. Pass it with
 `--previous-catalog my-roster/catalog.json` on updates and choose a new output
@@ -63,13 +68,22 @@ still match the recorded old/new values. It never modifies unrelated settings.
 
 ## Implementation and limits
 
-No database rows, encrypted game archives or native AI lists are changed.
+No database rows or encrypted game archives are changed.
 The server provides additional NPC records and private unit data only during an
 expanded AI build, restoring thread-local context even on native exceptions.
-The client handles only declared new NPC IDs; ordinary lookups retain their
-native outputs and flags. Colliding native IDs retain their original records.
-Mismatching source data is rejected. Generated owner data is not part of the
-generic addon distribution.
+After the last native NPC table loads, the client registers generated NPCs in
+the process's native map and integrity registry. This also serves native creators
+that bypass `grid.find` with an inline map lookup. Records, wrappers and nodes
+use the game's allocator and are released by its normal table destructor.
+Original unit bytes and ordinary lookups remain unchanged. All source hashes
+and collisions are checked before publication; conflicts abort registration
+without replacing native records. Creator guards refuse missing or different
+catalog data. Restarting with the addon off loads only original archive records.
+Generated owner data is not part of the generic addon distribution.
+
+The addon expands the existing random LV pools; it does not add a mech selection
+screen. For example, `!ai e2 a1 lv2` uses the expanded LV2 pool for two enemies
+and one ally.
 
 Supported builds: `GOnline-54BE1568-00C97000` and
 `BattleServer-548A891D-0046C000`. Native AI script templates are selected
@@ -80,6 +94,7 @@ AI rooms.
 
 Build/package: `cmake --build build/catalog --config Release`, then
 `python tools/package_ai_catalog.py`. Tests: Python `test_ai_catalog.py`, CTest's
-`ai_catalog_integration`, and the optional caller-supplied-image
-`ai_catalog_native_test`. The native test does not execute the game's entry
-point or connect to a game server. Automated checks are not gameplay evidence.
+`ai_catalog_integration`, and the optional caller-supplied-image tests
+`ai_catalog_native_test` (server) and `ai_catalog_client_map_test` (client).
+These tests do not execute the game's entry point or connect to a game server.
+Automated checks are not gameplay evidence.
