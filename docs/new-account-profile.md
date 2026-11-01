@@ -7,7 +7,8 @@ new accounts and first game-profile creation. Players need no client Mod.
 Defaults are **5,000 GP, 0 cash, Corporal (rank 5, step 1)**. Starting experience is
 read from the server's `tbl_Levelname` row rather than hard-coded; in the inspected
 pack rank 5/1 starts at 25,700 experience and meets the Expert channel minimum 5.
-Ordinary rank/channel restrictions and later earnings remain in charge.
+Automatic unit gifts during first profile creation are capped at **one** by default.
+Ordinary rank/channel restrictions, starter selection and later earnings remain in charge.
 
 ## Install and configure
 
@@ -30,18 +31,24 @@ InitialGP=5000
 InitialCash=0
 RankNumber=5
 RankStep=1
+InitialUnitLimit=1
 ```
 
 Without `config.ini`, the legacy `[settings]` in `mod.ini` is used. Restart the
 World server after edits. `RankNumber` is 0..20, `RankStep` is 1..5, and the selected
 rank/step must have exactly one non-negative experience row in `tbl_Levelname`.
-Currency settings must be non-negative 32-bit integers.
+Currency settings and `InitialUnitLimit` must be non-negative 32-bit integers.
+The unit limit applies only to rows newly inserted by the native first-profile call.
+It keeps the earliest hangar slots (then unit identity), preserves units already owned
+before that call, and updates unit counters and any dangling selected-unit reference
+in the same transaction. A value of 0 removes those automatic gifts entirely; normal
+starter selection and later purchases, capsule draws and rewards are not capped.
 
 The Mod reads only `[DB StoreBilling] DBName` from the host's own INI. It borrows
 the already authenticated OLE DB session and its local transactions; it does not
 read, copy or export database passwords. The normal pack's Common, Game and
 Billing catalogs must be accessible on that native SQL instance. Its database
-identity needs reads/writes on the affected account, profile, wallet and rank
+identity needs reads/writes on the affected account, profile, wallet, unit inventory and rank
 reference tables, as well as transaction support.
 
 ## Scope and recovery
@@ -51,14 +58,17 @@ The initial profile procedure inserts rank 15/1 while returning a different rank
 The Mod does not change those stored-procedure definitions. Instead it wraps the
 verified World registration/profile calls in a transaction, applies the configured
 values, and publishes a consistent profile result only after commit. Native starter
-items, skills, operators and unrelated fields are retained.
+items, skills, operators and unrelated fields are retained; automatic unit gifts are
+limited separately. The inspected local database already comments out the four
+`sp_InsertUserUnitAll*` calls. The Mod also enforces the cap on packs where these
+bulk grants remain enabled, without changing those procedures or editing old hangars.
 
 - A newly auto-registered account gets the configured wallet before its native
   registration transaction is committed. The original first-login retry result is retained.
 - A profile that does not yet exist gets the configured rank, matching starting
   experience and wallet before first play. This also covers accounts registered
   elsewhere or registered earlier but never given a game profile.
-- Existing game profiles are not initialized again. Their currency, XP, rank and
+- Existing game profiles are not initialized again. Their currency, XP, rank, units and
   later rewards are not reset. A concurrent initialization is rechecked under locks.
 - Failure rolls back incomplete account/profile creation and its grants. No partial
   high-rank/large-wallet profile is published as a success.
@@ -89,7 +99,8 @@ until their hooks/layouts are verified. No original game executable is patched o
   rollback, preservation of grants/earnings and bypass behavior.
 - `tests/run_new_account_sql_test.py`: actual core + actual Mod + OLE DB sessions
   with synthetic native callbacks in uniquely owned test databases in a supplied
-  SQL Docker container. It verifies owner `config.ini` overrides, commit/rollback, bound usernames and disabled
+  SQL Docker container. It verifies owner `config.ini` overrides, bulk unit caps,
+  pre-owned/earned units, 64-bit identities, commit/rollback, bound usernames and disabled
   defaults, then removes only its owned databases/login. No game runs.
 - Native hook ABI and layouts are checked against the exact PE and retained Ghidra
   evidence; `tools/verify_symbols.py <WorldServer.exe>` verifies all five symbols.
@@ -101,8 +112,9 @@ For manual acceptance on a test World instance:
 
 1. Install, start World and confirm `new-account defaults active` in its log.
 2. Register a fresh test account (the native auto-registration may require a login
-   retry), create a pilot, and check 5,000 GP, 0 cash and Corporal 1. Try the Expert channel.
-3. Earn some GP/experience, log out and back in, and confirm that progress persists.
+   retry), create a pilot, and check 5,000 GP, 0 cash and Corporal 1. Check that no full-catalog unit gift appeared,
+   then try the Expert channel. Existing hangars must remain intact.
+3. Earn some GP/experience and acquire another unit, log out and back in, and confirm that progress persists.
    An existing pilot must keep its previous progress too.
 4. To check restoration, disable this Mod on the test instance, restart and create
    another fresh account. It should use native defaults. Re-enable and restart to

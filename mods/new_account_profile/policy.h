@@ -8,6 +8,7 @@ struct Settings {
     int cash = 0;
     int rank = 5;
     int step = 1;
+    int unitLimit = 1;
 };
 struct RankStart { int experience = 0; };
 // The native input/output structures are packed, as established by the verified
@@ -53,6 +54,8 @@ struct Database {
     virtual bool Wallet(int account, const Settings&) = 0;
     virtual bool Rank(const Settings&, RankStart&) = 0;
     virtual bool Profile(int account, const Settings&, const RankStart&) = 0;
+    virtual bool UnitSnapshot(int account, int64_t& lastUnit) = 0;
+    virtual bool LimitUnits(int account, int64_t lastUnit, const Settings&) = 0;
 };
 class Transaction {
     Database& db_;
@@ -96,7 +99,8 @@ int User(Database& db, const Settings& settings, UserInput& input, UserOutput& o
         return native(input, output);
     }
     RankStart rank;
-    if (!db.Rank(settings, rank) || rank.experience < 0) { input.result = 1; return kDatabaseError; }
+    int64_t lastUnit = 0;
+    if (!db.UnitSnapshot(input.account, lastUnit) || !db.Rank(settings, rank) || rank.experience < 0) { input.result = 1; return kDatabaseError; }
     UserInput staged = input;
     staged.rank = static_cast<uint8_t>(settings.rank);
     staged.step = settings.step;
@@ -105,7 +109,7 @@ int User(Database& db, const Settings& settings, UserInput& input, UserOutput& o
     input.tutorial = staged.tutorial;
     input.result = staged.result;
     if (result || staged.result) return result ? result : kDatabaseError;
-    if (!db.Active() || !db.Profile(input.account, settings, rank) || !db.Wallet(input.account, settings)) {
+    if (!db.Active() || !db.LimitUnits(input.account, lastUnit, settings) || !db.Profile(input.account, settings, rank) || !db.Wallet(input.account, settings)) {
         input.result = 1; return kDatabaseError;
     }
     if (!transaction.Commit()) { input.result = 1; return kDatabaseError; }

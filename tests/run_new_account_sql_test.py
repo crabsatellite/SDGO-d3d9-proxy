@@ -72,7 +72,9 @@ USE [{billing}];
 CREATE TABLE dbo.tbls_AccountPocket(f_idx int PRIMARY KEY,f_GC int NOT NULL,f_GP int NOT NULL);
 GO
 USE [{game}];
-CREATE TABLE dbo.tbl_Users(AccountNumber int PRIMARY KEY,UserLevelNumber tinyint,UserLevelStep int,UserExp int);
+CREATE TABLE dbo.tbl_Users(AccountNumber int PRIMARY KEY,UserLevelNumber tinyint,UserLevelStep int,UserExp int,UserUnitKindCnt int DEFAULT 0,UserUnitTotalCnt int DEFAULT 0,GoUserUnitNum bigint DEFAULT 0);
+CREATE TABLE dbo.tbl_UserUnits(UserUnitNumber bigint IDENTITY(2147483648,1) PRIMARY KEY,AccountNumber int,UserUnitSlotNumber int,UnitNumber int);
+CREATE INDEX IX_UnitOwner ON dbo.tbl_UserUnits(AccountNumber);
 CREATE TABLE dbo.tbl_Levelname(levelID int,LevelStep int,levelExp int,PRIMARY KEY(levelID,LevelStep));
 INSERT dbo.tbl_Levelname VALUES(5,1,25700),(6,2,32000);
 CREATE TABLE dbo.starter_grants(AccountNumber int,Items int);
@@ -81,7 +83,10 @@ CREATE PROCEDURE dbo.sp_TestCreateProfile @id int AS
 SET NOCOUNT ON;
 IF NOT EXISTS(SELECT 1 FROM dbo.tbl_Users WHERE AccountNumber=@id)
 BEGIN
- INSERT dbo.tbl_Users VALUES(@id,15,1,0);
+ INSERT dbo.tbl_Users(AccountNumber,UserLevelNumber,UserLevelStep,UserExp) VALUES(@id,15,1,0);
+ DECLARE @slot int=1;
+ WHILE @slot<=100 BEGIN INSERT dbo.tbl_UserUnits(AccountNumber,UserUnitSlotNumber,UnitNumber) VALUES(@id,@slot,10000+@slot);SET @slot=@slot+1;END;
+ UPDATE dbo.tbl_Users SET UserUnitKindCnt=100,UserUnitTotalCnt=100,GoUserUnitNum=SCOPE_IDENTITY() WHERE AccountNumber=@id;
  INSERT dbo.starter_grants VALUES(@id,3);
 END
 ELSE UPDATE dbo.tbl_Users SET UserExp=UserExp+100 WHERE AccountNumber=@id;
@@ -94,7 +99,7 @@ GO
         thread=threading.Thread(target=bridge.serve_forever,daemon=True);thread.start();port=bridge.server_address[1]
         cases=[]
         for mode in ('enabled','configured','disabled'):
-            sql(f"USE [{common}];TRUNCATE TABLE dbo.tbl_Account;USE [{billing}];TRUNCATE TABLE dbo.tbls_AccountPocket;USE [{game}];TRUNCATE TABLE dbo.tbl_Users;TRUNCATE TABLE dbo.starter_grants;\nGO\n")
+            sql(f"USE [{common}];TRUNCATE TABLE dbo.tbl_Account;USE [{billing}];TRUNCATE TABLE dbo.tbls_AccountPocket;USE [{game}];TRUNCATE TABLE dbo.tbl_Users;TRUNCATE TABLE dbo.starter_grants;TRUNCATE TABLE dbo.tbl_UserUnits;\nGO\n")
             target=work/mode;mod=target/'sdgo/mods/new_account_profile';mod.mkdir(parents=True)
             (target/'sdgo/symbols').mkdir()
             for name,destination in (('new_account_sql_test.exe',target),('core.dll',target/'sdgo'),('new_account_profile.dll',mod)):
@@ -103,7 +108,7 @@ GO
             manifest=re.sub(r'(?m)^hosts=.*$','hosts=*',manifest)
             (mod/'mod.ini').write_text(manifest,encoding='ascii')
             if mode=='configured':
-                (mod/'config.ini').write_text('[settings]\nInitialGP=1200\nInitialCash=0\nRankNumber=6\nRankStep=2\n',encoding='ascii')
+                (mod/'config.ini').write_text('[settings]\nInitialGP=1200\nInitialCash=0\nRankNumber=6\nRankStep=2\nInitialUnitLimit=3\n',encoding='ascii')
             enabled=mode!='disabled'
             (target/'sdgo/sdgo.ini').write_text('[core]\nlog_level=0\n[mods]\nnew_account_profile='+('1' if enabled else '0')+'\n',encoding='ascii')
             env=dict(os.environ,SDGO_STARTER_BILLING_NAME=billing,CommonProgramFiles=r'C:\Program Files (x86)\Common Files')
@@ -122,7 +127,7 @@ GO
                 assert not any(line.startswith('fail-wallet') for line in lines)
                 failed_profile=next(line.split() for line in lines if line.startswith('fail-profile'))
                 assert tuple(failed_profile[1:])==('1200' if mode=='configured' else '5000','0','NULL','NULL','NULL'),rows
-                assert sql(f'SET NOCOUNT ON;SELECT COUNT(*) FROM [{game}].dbo.starter_grants;\nGO\n').strip()=='1'
+                assert sql(f'SET NOCOUNT ON;SELECT COUNT(*) FROM [{game}].dbo.starter_grants;\nGO\n').strip()=='2'
             cases.append(dict(mode=mode,passed=True,rows=len(lines)))
         receipt=dict(cases=cases,isolated_databases=list(databases),no_original_database_changes=True,no_game_execution=True)
     finally:

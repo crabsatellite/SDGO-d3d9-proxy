@@ -86,8 +86,9 @@ SDGO_MOD_ENTRY {
     if(!Number(config,"InitialGP","5000",0,INT_MAX,settings.gp)||
        !Number(config,"InitialCash","0",0,INT_MAX,settings.cash)||
        !Number(config,"RankNumber","5",0,20,settings.rank)||
-       !Number(config,"RankStep","1",1,5,settings.step)){
-        api->Log(mod,SDGO_LOG_ERROR,"invalid starter values: GP/Cash 0..INT_MAX, RankNumber 0..20, RankStep 1..5");return 0;
+       !Number(config,"RankStep","1",1,5,settings.step)||
+       !Number(config,"InitialUnitLimit","1",0,INT_MAX,settings.unitLimit)){
+        api->Log(mod,SDGO_LOG_ERROR,"invalid starter values: GP/Cash/InitialUnitLimit 0..INT_MAX, RankNumber 0..20, RankStep 1..5");return 0;
     }
     wchar_t path[32768]={},name[32]={};
     if(!GetModuleFileNameW(nullptr,path,32768))return 0;
@@ -98,6 +99,6 @@ SDGO_MOD_ENTRY {
     if(!api->Symbol(mod,"starter.connection_command"))return 0;
     if(!api->HookCode(mod,"starter.login",reinterpret_cast<void*>(&LoginHook),reinterpret_cast<void**>(&originalLogin)))return 0;
     if(!api->HookCode(mod,"starter.profile",reinterpret_cast<void*>(&UserHook),reinterpret_cast<void**>(&originalUser)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"new-account defaults active: GP=%d, cash=%d, rank=%d/%d; existing profiles and SQL definitions are preserved",settings.gp,settings.cash,settings.rank,settings.step);
+    api->Log(mod,SDGO_LOG_INFO,"new-account defaults active: GP=%d, cash=%d, rank=%d/%d, initial unit limit=%d; existing profiles and SQL definitions are preserved",settings.gp,settings.cash,settings.rank,settings.step,settings.unitLimit);
     return 1;
 }

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstring>
 #include <string>
+#include <type_traits>
 #include "policy.h"
 
 namespace sdgo::starter {
@@ -42,7 +43,8 @@ class OleDatabase final : public Database {
         if(!factory_ || FAILED(factory_->CreateCommand(nullptr,__uuidof(ICommandText),reinterpret_cast<IUnknown**>(command.put()))))return false;
         return SUCCEEDED(command->SetCommandText(DBGUID_DBSQL,sql.c_str()));
     }
-    bool Scalar(const std::wstring& sql,int& value,const char* id=nullptr) {
+    template<class Integer> bool Scalar(const std::wstring& sql,Integer& value,const char* id=nullptr) {
+        static_assert(std::is_integral_v<Integer> && (sizeof(Integer)==4 || sizeof(Integer)==8));
         Com<ICommandText> command;
         if(!Create(sql,command))return false;
         Com<IAccessor> parameters;
@@ -78,11 +80,11 @@ class OleDatabase final : public Database {
         if(FAILED(result)||!rows)return false;
         Com<IAccessor> accessor;
         if(FAILED(rows->QueryInterface(__uuidof(IAccessor),reinterpret_cast<void**>(accessor.put()))))return false;
-        struct Cell { DBSTATUS status; DBLENGTH length; int value; } cell={};
+        struct Cell { DBSTATUS status; DBLENGTH length; Integer value; } cell={};
         DBBINDING bind={};
         bind.iOrdinal=1;bind.obStatus=offsetof(Cell,status);bind.obLength=offsetof(Cell,length);bind.obValue=offsetof(Cell,value);
         bind.dwPart=DBPART_VALUE|DBPART_STATUS|DBPART_LENGTH;bind.dwMemOwner=DBMEMOWNER_CLIENTOWNED;
-        bind.eParamIO=DBPARAMIO_NOTPARAM;bind.cbMaxLen=sizeof(int);bind.wType=DBTYPE_I4;
+        bind.eParamIO=DBPARAMIO_NOTPARAM;bind.cbMaxLen=sizeof(Integer);bind.wType=sizeof(Integer)==8?DBTYPE_I8:DBTYPE_I4;
         HACCESSOR handle=DB_NULL_HACCESSOR;DBBINDSTATUS status=DBBINDSTATUS_BADBINDINFO;
         if(FAILED(accessor->CreateAccessor(DBACCESSOR_ROWDATA,1,&bind,sizeof(Cell),&handle,&status))||status!=DBBINDSTATUS_OK){
             if(handle!=DB_NULL_HACCESSOR)accessor->ReleaseAccessor(handle,nullptr);
@@ -133,6 +135,22 @@ public:
     }
     bool Profile(int id,const Settings& settings,const RankStart& rank) override {
         return Execute(L"SET NOCOUNT ON; UPDATE dbo.tbl_Users SET UserLevelNumber="+std::to_wstring(settings.rank)+L",UserLevelStep="+std::to_wstring(settings.step)+L",UserExp="+std::to_wstring(rank.experience)+L" WHERE AccountNumber="+std::to_wstring(id)+L"; IF @@ROWCOUNT<>1 RAISERROR('Starter profile row missing',16,1);");
+    }
+    bool UnitSnapshot(int id,int64_t& lastUnit) override {
+        // Keep pre-existing rows and block concurrent grants until initialization commits.
+        return Scalar(L"SELECT ISNULL(MAX(UserUnitNumber),0) FROM dbo.tbl_UserUnits WITH(UPDLOCK,HOLDLOCK) WHERE AccountNumber="+std::to_wstring(id),lastUnit);
+    }
+    bool LimitUnits(int id,int64_t lastUnit,const Settings& settings) override {
+        const auto account=std::to_wstring(id),boundary=std::to_wstring(lastUnit);
+        return Execute(L"SET NOCOUNT ON; DELETE FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+
+            L" AND UserUnitNumber>"+boundary+L" AND UserUnitNumber NOT IN (SELECT TOP ("+std::to_wstring(settings.unitLimit)+
+            L") UserUnitNumber FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+L" AND UserUnitNumber>"+boundary+
+            L" ORDER BY UserUnitSlotNumber,UserUnitNumber); "
+            L"UPDATE dbo.tbl_Users SET UserUnitKindCnt=(SELECT COUNT(DISTINCT UnitNumber) FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+
+            L"),UserUnitTotalCnt=(SELECT COUNT(*) FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+
+            L"),GoUserUnitNum=CASE WHEN GoUserUnitNum<>0 AND NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+
+            L" AND UserUnitNumber=GoUserUnitNum) THEN ISNULL((SELECT MIN(UserUnitNumber) FROM dbo.tbl_UserUnits WHERE AccountNumber="+account+
+            L"),0) ELSE GoUserUnitNum END WHERE AccountNumber="+account+L"; IF @@ROWCOUNT<>1 RAISERROR('Starter unit owner missing',16,1);");
     }
 };
 }

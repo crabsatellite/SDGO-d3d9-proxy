@@ -74,6 +74,8 @@ int Run(bool enabled,bool configured){
  code=native.Profile(&game.native,&input,&out);Check(code==0,"native first profile succeeds");
  Check(enabled?(out.experience==(configured?32000:25700)&&out.rank==(configured?6:5)&&out.step==(configured?2:1)):(out.experience==0&&out.rank==5&&out.step==0),"caller sees configured rank and matching experience only when enabled");
  Check(Execute(&game.native,walletCheck),"first-profile wallet is consistent with registration");
+ const int unitCount=enabled?(configured?3:1):100;
+ Check(Execute(&game.native,L"IF (SELECT COUNT(*) FROM dbo.tbl_UserUnits WHERE AccountNumber="+std::to_wstring(id)+L")<>"+std::to_wstring(unitCount)+L" OR NOT EXISTS(SELECT 1 FROM dbo.tbl_Users u WHERE AccountNumber="+std::to_wstring(id)+L" AND UserUnitTotalCnt="+std::to_wstring(unitCount)+L" AND UserUnitKindCnt="+std::to_wstring(unitCount)+L" AND EXISTS(SELECT 1 FROM dbo.tbl_UserUnits n WHERE n.AccountNumber=u.AccountNumber AND n.UserUnitNumber=u.GoUserUnitNum)) RAISERROR('Unexpected starter units or dangling selection',16,1)"),"bulk gifts are limited and unit counts/selection remain consistent");
  OleDatabase live(billing);bool exists=false;Check(live.Open(&game.native)&&live.User(id,false,exists)&&exists,"profile persisted in real SQL");
  if(enabled){
   NativeConnection unavailable;
@@ -88,10 +90,17 @@ int Run(bool enabled,bool configured){
   LoginInput other={};strcpy_s(other.id,"fail-profile");native.Login(&common.native,&other,nullptr);int otherId=Account(common,other.id);
   UserInput broken={};broken.account=otherId;UserOutput untouched={};untouched.experience=-88;failProfile=true;code=native.Profile(&game.native,&broken,&untouched);failProfile=false;
   exists=true;Check(live.User(otherId,false,exists)&&!exists&&code==1000&&untouched.experience==-88,"native profile error rolls back creation/grants before publishing output");
+  Check(Execute(&game.native,L"IF EXISTS(SELECT 1 FROM dbo.tbl_UserUnits WHERE AccountNumber="+std::to_wstring(otherId)+L") RAISERROR('Unit gifts escaped rollback',16,1)"),"failed native profile also rolls back its bulk unit gifts");
   LoginInput quoted={};strcpy_s(quoted.id,"quote'x");native.Login(&common.native,&quoted,nullptr);Check(Account(common,quoted.id)>0,"username lookup uses native-style bound parameters");
+  LoginInput owned={};strcpy_s(owned.id,"pre-owned");native.Login(&common.native,&owned,nullptr);int ownedId=Account(common,owned.id);
+  Check(Execute(&game.native,L"INSERT dbo.tbl_UserUnits(AccountNumber,UserUnitSlotNumber,UnitNumber) VALUES("+std::to_wstring(ownedId)+L",201,77777)"),"seed legitimately owned unit before first profile");
+  UserInput ownedInput={};ownedInput.account=ownedId;UserOutput ownedOutput={};
+  Check(native.Profile(&game.native,&ownedInput,&ownedOutput)==0&&Execute(&game.native,L"IF NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits WHERE AccountNumber="+std::to_wstring(ownedId)+L" AND UnitNumber=77777 AND UserUnitNumber>2147483647) OR (SELECT COUNT(*) FROM dbo.tbl_UserUnits WHERE AccountNumber="+std::to_wstring(ownedId)+L")<>"+std::to_wstring(unitCount+1)+L" RAISERROR('Pre-owned unit lost or 64-bit boundary truncated',16,1)"),"pre-profile units and 64-bit identities survive bulk-gift normalization");
+  Check(Execute(&game.native,L"INSERT dbo.tbl_UserUnits(AccountNumber,UserUnitSlotNumber,UnitNumber) VALUES("+std::to_wstring(id)+L",202,88888)"),"simulate a later legitimately acquired unit");
   Check(Execute(&game.native,L"UPDATE dbo.tbl_Users SET UserLevelNumber=6,UserExp=30000 WHERE AccountNumber="+std::to_wstring(id)+L";UPDATE "+Identifier(billing)+L".dbo.tbls_AccountPocket SET f_GP=7000,f_GC=321 WHERE f_idx="+std::to_wstring(id)),"simulate legitimate later progression");
   native.Login(&common.native,&login,nullptr);native.Profile(&game.native,&input,&out);
   Check(out.experience==0&&out.rank==5&&out.step==0,"existing profile preserves native response instead of reinitializing");
+  Check(Execute(&game.native,L"IF NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits WHERE AccountNumber="+std::to_wstring(id)+L" AND UnitNumber=88888) RAISERROR('Earned unit reset on login',16,1)"),"later earned units survive repeat login");
  }
  return failed?1:0;
 }
