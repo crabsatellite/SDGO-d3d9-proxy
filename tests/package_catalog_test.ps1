@@ -83,7 +83,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager','collection_capsule'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','daily_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog','hangar_manager','collection_capsule','game_test_client','game_test_server'))
     $dailyZip = Invoke-Package 'Full' 'daily-rewards' (Join-Path $work 'daily')
     Check-Package $dailyZip ($baseMods + @('daily_rewards'))
     $dailyFolder = Join-Path $work 'daily-unpacked'
@@ -111,6 +111,15 @@ try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
+        foreach ($required in @('tools/game_test.py','sdk/include/sdgo/game_test.h','sdk/include/sdgo/pvp_ai_client_observer.h','sdk/include/sdgo/pvp_ai_observer.h')) {
+            if (-not $fullArchive.GetEntry($required)) { throw "GameTest package lacks $required" }
+        }
+        foreach ($relative in @('client/sdgo/mods/game_test_client/mod.ini','server/sdgo/mods/game_test_server/mod.ini')) {
+            $manifestReader = New-Object IO.StreamReader ($fullArchive.GetEntry($relative).Open())
+            try { $manifestText = $manifestReader.ReadToEnd() } finally { $manifestReader.Dispose() }
+            if ($manifestText -notmatch '(?m)^enabled=0\s*$') { throw "GameTest must ship disabled: $relative" }
+        }
+        if ($fullArchive.Entries.FullName -match 'private/account\.ini|gametest/run\.ini|real-native-') { throw 'Private runtime files entered the package' }
         if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('SDGO Mod Manager.exe')) {
             throw 'Full package lost the complete reward owner toolkit'
         }

@@ -142,6 +142,9 @@ sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadou
 sdgo_add_mod(net_route DESCRIPTION "configured network endpoint routes" SOURCES mods/net_route/net_route.cpp LIBS ws2_32 shell32 FILES config.example.ini)
 sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOURCES mods/agent_udp_pool/agent_udp_pool.cpp LIBS ws2_32 FILES config.example.ini)
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
+sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp LIBS user32)
+sdgo_add_mod(game_test_server SERVER DESCRIPTION "isolated native GameTest battle server" SOURCES mods/game_test_server/game_test_server.cpp)
+
 sdgo_add_mod(daily_rewards SERVER DESCRIPTION "daily double battle rewards (Beta)"
              SOURCES mods/daily_rewards/daily_rewards.cpp FILES config.example.ini)
 sdgo_add_mod(rank_progression_fix SERVER DESCRIPTION "native World battle rank progression fix"
@@ -311,6 +314,28 @@ sdgo_strict(daily_rewards_runtime_test)
 # packets, HUDs and native callbacks; no game executable is loaded.
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(game_test_framework_host tests/game_test_framework_host.cpp)
+    target_link_libraries(game_test_framework_host PRIVATE sdgo_api)
+    sdgo_strict(game_test_framework_host)
+    add_test(NAME game_test_framework_offline COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_test_framework_test.py"
+        --host "$<TARGET_FILE:game_test_framework_host>")
+    set_tests_properties(game_test_framework_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(game_test_onboarding_gate_test tests/game_test_onboarding_gate_test.cpp)
+    sdgo_strict(game_test_onboarding_gate_test)
+    add_test(NAME game_test_onboarding_gate_offline COMMAND game_test_onboarding_gate_test)
+    set_tests_properties(game_test_onboarding_gate_offline PROPERTIES TIMEOUT 30)
+    add_executable(game_test_room_actions_test tests/game_test_room_actions_test.cpp)
+    target_link_libraries(game_test_room_actions_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_room_actions_test)
+    add_test(NAME game_test_room_actions_offline COMMAND game_test_room_actions_test)
+    set_tests_properties(game_test_room_actions_offline PROPERTIES TIMEOUT 30)
+    add_executable(game_test_server_test tests/game_test_server_test.cpp)
+    target_link_libraries(game_test_server_test PRIVATE sdgo_api)
+    sdgo_strict(game_test_server_test)
+    add_test(NAME game_test_server_offline COMMAND game_test_server_test)
+    set_tests_properties(game_test_server_offline PROPERTIES TIMEOUT 30)
+
     if(SDGO_BUILD_MANAGER)
         add_test(NAME shop_owner_domain_service COMMAND "${CMAKE_BINARY_DIR}/manager-services/ShopUiTests.exe")
         set_tests_properties(shop_owner_domain_service PROPERTIES TIMEOUT 60)
@@ -523,6 +548,9 @@ if(BUILD_TESTING)
     add_test(NAME mod_catalog_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_mod_catalog.py" -v)
     set_tests_properties(mod_catalog_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_test(NAME game_test_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test.py" -v)
+    set_tests_properties(game_test_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "game_test_server",
+  "title": "原生 GameTest 服务端观察器",
+  "category": "development",
+  "hosts": ["battle"],
+  "description": "开发测试组件，默认关闭。仅为显式测试任务记录真实对战事件，不创建房间或控制玩家。",
+  "settings": [],
+  "presentation": "configurable",
+  "mechanism": "被动观察正常运行的 BattleServer 与对战 AI，通过只读观察接口输出任务回执。"
+}
