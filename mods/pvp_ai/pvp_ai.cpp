@@ -28,14 +28,16 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
-#include "sdgo/ai_catalog_provider.h"
 #include "sdgo/ai_scoring.h"
+#include "sdgo/ai_catalog_provider.h"
+#include "sdgo/room_commands.h"
 
 namespace
 {
@@ -124,14 +126,19 @@ namespace
         std::vector<uint32_t> levels[6]; // [1..5]
     } g_settings;
 
-    unsigned g_random = 0;
+    std::atomic<unsigned> g_random{0};
 
     unsigned NextRandom()
     {
-        g_random ^= g_random << 13;
-        g_random ^= g_random >> 17;
-        g_random ^= g_random << 5;
-        return g_random;
+        unsigned previous = g_random.load(std::memory_order_relaxed);
+        for (;;) {
+            unsigned next = previous ? previous : 1u;
+            next ^= next << 13;
+            next ^= next >> 17;
+            next ^= next << 5;
+            if (g_random.compare_exchange_weak(previous, next, std::memory_order_relaxed))
+                return next;
+        }
     }
 
     std::vector<uint32_t> ParseIds(const char* text)
@@ -211,54 +218,33 @@ namespace
         int level = 2;
     };
 
-    int ReadNumber(const char*& p)
-    {
-        int value = 0;
-        while (*p >= '0' && *p <= '9') {
-            int digit = *p++ - '0';
-            if (value < kSlotsPerTeam)
-                value = value * 10 + digit;
-            if (value > kSlotsPerTeam)
-                value = kSlotsPerTeam;
-        }
-        return value;
-    }
-
     // "!ai" fills both teams to FillTeamSize; "!aiN" asks for N enemies; options after it: eN enemies,
     // aN allies, lvN level. Case-insensitive.
     Plan ParseTitle(const char* title)
     {
         Plan plan;
         plan.level = g_settings.defaultLevel;
-        char lower[kRoomTitleMax + 1];
-        size_t n = 0;
-        for (; n < kRoomTitleMax && title[n]; ++n)
-            lower[n] = (title[n] >= 'A' && title[n] <= 'Z') ? static_cast<char>(title[n] - 'A' + 'a') : title[n];
-        lower[n] = '\0';
-        const char* command = strstr(lower, "!ai");
-        if (!command)
+        namespace commands=sdgo::room_commands;
+        SdgoRoomCommand command{};
+        if (!commands::Find(g_api,title,static_cast<uint32_t>(kRoomTitleMax),"ai",
+                            SDGO_ROOM_COMMAND_ALLOW_COUNT,&command))
             return plan;
         plan.enabled = true;
-        const char* p = command + 3;
-        int count = -1;
-        if (*p >= '0' && *p <= '9')
-            count = ReadNumber(p);
+        const int count=command.has_count ? static_cast<int>((std::min)(command.count,uint32_t{kSlotsPerTeam})) : -1;
         int enemies = -1;
         int allies = -1;
-        while (*p) {
-            while (*p == ' ')
-                ++p;
-            const char* token = p;
-            while (*p && *p != ' ')
-                ++p;
-            size_t length = static_cast<size_t>(p - token);
-            if (length == 3 && token[0] == 'l' && token[1] == 'v' && token[2] >= '1' && token[2] <= '5') {
+        uint32_t cursor=command.arguments_offset;
+        commands::Token argument;
+        while (commands::Next(title,command.arguments_offset+command.arguments_length,cursor,argument)) {
+            const char* token=title+argument.offset;
+            const uint32_t length=argument.length;
+            const char first=commands::Lower(token[0]);
+            if (length == 3 && first == 'l' && commands::Lower(token[1]) == 'v' && token[2] >= '1' && token[2] <= '5') {
                 plan.level = token[2] - '0';
-            } else if (length >= 2 && (token[0] == 'e' || token[0] == 'a') && token[1] >= '0' && token[1] <= '9') {
-                const char* digits = token + 1;
-                int value = ReadNumber(digits);
-                if (digits == p)
-                    (token[0] == 'e' ? enemies : allies) = value;
+            } else if (length >= 2 && (first == 'e' || first == 'a')) {
+                uint32_t value=0;
+                if(commands::Number(token+1,length-1,value))
+                    (first == 'e' ? enemies : allies)=static_cast<int>((std::min)(value,uint32_t{kSlotsPerTeam}));
             }
         }
         if (count < 0 && enemies < 0 && allies < 0) {
@@ -511,7 +497,7 @@ namespace
     // bytes: NPC data id, HP, cost, points, grade for an AI unit) and the deck totals.
     // An AI pilot gets more units of its level pool (all different) the way its first one was
     // built (AI pilot build 0x00485720, then the AI pilot setup 0x004D7A10 on that unit), as
-    // many as fit in 10 points, the closest to 10 first.
+    // many as fit in 10 points, sampling all eligible candidates each battle.
     constexpr size_t kUnitPoints = 0x0A;       // u8, unit record: points (unit data +0xB)
     constexpr int kDeckPoints = 10;
 
@@ -568,13 +554,15 @@ namespace
         while (units < kDeckUnits && !candidates.empty()) {
             int left = kDeckPoints - points;
             int best = -1;
-            unsigned offset = candidates.empty() ? 0 : NextRandom() % candidates.size();
-            for (size_t k = 0; k < candidates.size(); ++k) {
-                size_t i = (k + offset) % candidates.size();
+            unsigned eligible = 0;
+            for (size_t i = 0; i < candidates.size(); ++i) {
                 int p = candidatePoints[i];
                 if (p > left)
                     continue;
-                if (best < 0 || p > candidatePoints[best])
+                // Reservoir sampling avoids preferring the same highest-cost
+                // units when a level grows to include many grade variants.
+                ++eligible;
+                if (NextRandom() % eligible == 0)
                     best = static_cast<int>(i);
             }
             if (best < 0)
@@ -583,7 +571,7 @@ namespace
             uint8_t* unit = pilot + kPilotUnits + units * kUnitStride;
             int p = BuildNpcUnit(room, npc, unit);
             pilot[kPilotForm] = static_cast<uint8_t>(units);
-            bool ok = p > 0 && g_setupAiPilot(g_waitRoomProc, info, pilot, room[kRoomType], room[kRoomMode]);
+            bool ok = p > 0 && p <= left && g_setupAiPilot(g_waitRoomProc, info, pilot, room[kRoomType], room[kRoomMode]);
             pilot[kPilotForm] = 0;
             candidates.erase(candidates.begin() + best);
             candidatePoints.erase(candidatePoints.begin() + best);
@@ -605,20 +593,30 @@ namespace
     int AddTeam(uint8_t* room, uint8_t team, int wanted, const std::vector<uint32_t>& pool,
                 const std::vector<uint8_t>& poolPoints)
     {
+        std::vector<uint32_t> deckCandidates;
+        const std::vector<uint32_t>* choices = &pool;
+        if (PlaysDeck(room[kRoomMode])) {
+            for (size_t i = 0; i < pool.size() && i < poolPoints.size(); ++i)
+                if (poolPoints[i] > 0 && poolPoints[i] <= kDeckPoints && !Contains(deckCandidates, pool[i]))
+                    deckCandidates.push_back(pool[i]);
+            choices = &deckCandidates;
+        }
+        if (choices->empty())
+            return 0;
         int added = 0;
         uint8_t colour = TeamColour(room, team);
         int first = team == 1 ? 0 : kSlotsPerTeam;
         for (int slot = first; slot < first + kSlotsPerTeam && added < wanted; ++slot) {
             if (SlotPilotId(room, slot) != 0)
                 continue;
-            uint32_t pick = pool[NextRandom() % pool.size()];
+            uint32_t pick = (*choices)[NextRandom() % choices->size()];
             for (int tries = 0; tries < 20; ++tries) {
                 bool used = false;
                 for (int other = 0; other < kSlots && !used; ++other)
                     used = (SlotPilotId(room, other) & kAiPilotBit) && PilotUnitId(room, other) == pick;
                 if (!used)
                     break;
-                pick = pool[NextRandom() % pool.size()];
+                pick = (*choices)[NextRandom() % choices->size()];
             }
             if (AddAiPilot(room, slot, pick, team, colour)) {
                 if (PlaysDeck(room[kRoomMode]))

@@ -304,8 +304,11 @@ def toggle(overlay, enabled):
     if enabled:
         overlay.state()
         global_config = overlay.root / "sdgo/sdgo.ini"
-        if global_config.exists() and ini(global_config.read_bytes()).getint("mods", "ai_catalog", fallback=1) == 0:
-            raise ValueError("sdgo.ini has ai_catalog=0; remove that override before enabling")
+        if global_config.exists():
+            config = ini(global_config.read_bytes())
+            for section, key in (("mods", "ai_catalog"), ("features", "ai-catalog"), ("categories", "gameplay")):
+                if config.getint(section, key, fallback=1) == 0:
+                    raise ValueError(f"sdgo.ini has [{section}] {key}=0; remove that override before enabling")
     relative = OWN + "mod.ini"
     current = overlay.read(relative)
     if digest(current) != state["files"][relative]["after"]:

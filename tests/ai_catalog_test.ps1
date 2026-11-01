@@ -4,7 +4,7 @@ $repo=Split-Path -Parent $PSScriptRoot
 $build=[IO.Path]::GetFullPath($(if([IO.Path]::IsPathRooted($BuildDir)){$BuildDir}else{Join-Path $repo $BuildDir}))
 $run=Join-Path $build ('catalog_test_run/'+[guid]::NewGuid().ToString('N'))
 foreach($role in 'client','server') {
-    foreach($case in 'off','on','conflict','changed','deferred','corrupt','missing','rollback','off','on') {
+    foreach($case in 'off','on','featureoff','categoryoff','conflict','changed','deferred','corrupt','missing','rollback','off','on') {
         $dir=Join-Path $run ($role+'-'+$case+'-'+[guid]::NewGuid().ToString('N'))
         $mod=Join-Path $dir 'sdgo/mods/ai_catalog'
         New-Item -ItemType Directory -Force -Path $mod | Out-Null

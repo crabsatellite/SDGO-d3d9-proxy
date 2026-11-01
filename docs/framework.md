@@ -1,8 +1,8 @@
 # Framework reference
 
 For people who build the framework or write mods. Installing is covered in the
-[README](../README.md); using each feature in its guide, linked from the README's
-[Features](../README.md#features) table.
+[installation guide](setup.md); using each feature in its guide, linked from the README's
+[feature categories](../README.md#core-fixes).
 
 * [How the framework gets into the process](#how-the-framework-gets-into-the-process)
 * [Folder layout and configuration](#folder-layout-and-configuration)
@@ -19,6 +19,7 @@ For people who build the framework or write mods. Installing is covered in the
 ```
 GOnline.exe      ── static import ──> d3d9.dll   (loader/d3d9)
 BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
+AgentServer.exe / WorldServer.exe ──> winmm.dll (same server loader)
         │  DllMain: redirect the exe's kernel32!GetSystemTimeAsFileTime import
         │  first CRT call (__security_init_cookie): restore it, then boot      (loader/common)
         ▼
@@ -29,7 +30,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
   sdgo/mods/<id>/<id>.dll
 ```
 
-* Both host executables import a DLL from their own folder at start-up (`d3d9.dll`, and
+* The supported hosts import a DLL from their own folder at start-up (`d3d9.dll`, and
   `winmm.dll` for `timeGetTime`), so a DLL of that name next to the exe is loaded before
   any of the program's own code runs. Neither name is a Windows KnownDLL.
 * The loader does two things. It forwards its exports to the real DLL (system32, or the DLL
@@ -59,6 +60,7 @@ BattleServer.exe ── static import ──> winmm.dll  (loader/winmm)
     symbols\<host key>.ini      one per supported exe build (files for other hosts are ignored)
     mods\<id>\mod.ini           manifest + [settings]
     mods\<id>\<id>.dll          (+ any files the mod reads, located with ModDirectory)
+    mods\<id>\config.ini        optional user settings, supported by the network mods
     logs\sdgo.log, sdgo.prev.log
 ```
 
@@ -119,9 +121,26 @@ its signature and how it is referenced), create `symbols/<new host key>.ini`, ru
 
 ## Mod manifest (mod.ini)
 
+Bundled mods declare `category`, `feature`, `channel`, and `activation` in `[mod]`.
+Categories are `fixes`, `gameplay`, `network`, and `development`; release channels
+(`stable`, `beta`, `experimental`) are independent of category. Several mods can
+share one feature id: for example `coop_ai` and `mission_ai` both belong to
+`coop-wingmen`. Their category/channel/activation must agree.
+
+`tools/mod_catalog.py` validates these declarations against CMake registration,
+feature guides and both README category tables. Builds generate
+`sdgo/catalog.json`; publishers use the same catalog for complete-feature package
+selection. Unknown/incomplete bundled feature metadata fails validation rather
+than silently appearing in a package. The runtime still accepts older third-party
+manifests without these optional fields.
+
 ```ini
 [mod]
 id=my_mod                 ; folder name by default
+category=gameplay
+feature=my-feature
+channel=beta
+activation=manual
 name=My mod
 version=1.0.0
 api=1                     ; SDGO_API_VERSION the mod was built for
@@ -130,6 +149,8 @@ order=100                 ; load order, lower first
 enabled=1                 ; 0 skips the mod (sdgo.ini [mods] my_mod=0 does the same)
 hosts=GOnline-54BE1568-00C97000          ; comma list; the mod loads only into these
 requires=CMissionMode.Init,lua.pcall     ; symbols that must verify, or the mod is skipped
+files=rules.example.json              ; extra shipped data, also list in CMake FILES
+config_files=config.ini,roster.json    ; user-owned files to preserve during updates
 
 [settings]
 ; free-form; read with SettingInt / SettingString
@@ -139,6 +160,19 @@ MySetting=1
 A mod is loaded when it is enabled, its `api` is supported, the running host key is listed
 in `hosts`, and every symbol in `requires` verified. The reason for skipping a mod is
 logged.
+
+`[categories] <category>=0` and `[features] <feature>=0` in `sdgo.ini` disable the
+whole group on that host. They cannot override `enabled=0` or `[mods] <id>=0`.
+All mod folders remain directly under `sdgo/mods`; category is metadata, not an
+extra directory layer. The public ABI and mod IDs remain unchanged.
+
+`files` lists additional payload files relative to the mod directory. `config_files`
+lists user configuration files owned by that mod; updaters preserve existing ones
+unless `-OverwriteConfig` is explicit. Shipped examples and code still update.
+Only relative config/data paths are allowed: no parent traversal, absolute paths,
+DLLs or replacement manifests. Mods read their own data via `ModDirectory`; this
+does not change the existing `[settings]` API or invent a new data format.
+
 
 ## Mod API
 
@@ -162,7 +196,28 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `HookImport(mod, dll, function, detour, &original)` | replace an entry of the exe's import table |
 | `SettingInt` / `SettingString(mod, key, default, ...)` | values from the mod's `[settings]` |
 | `ModDirectory(mod)` | absolute folder of the mod |
+| `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
+| `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
+
+The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
+When present, its `[settings]` section is authoritative; otherwise they use the
+legacy manifest settings. Other mods keep their existing configuration behavior.
+The incremental FRP installer always updates core and loader to the bundled latest
+version and verifies their hashes. It refuses an older kit instead of downgrading.
+Other mods, global switches and settings remain. Network symbols are merged without
+replacing unrelated definitions; conflicts are rejected. Core 1.1.3 supports exact
+ordinal imports in HookImport for the Agent bind. See [distribution](frp-distribution.zh-CN.md).
+Build, regression and installer commands are in [FRP verification](frp-testing.md).
+
+The `new_account_profile` World Mod uses the same per-mod settings helper for
+owner-controlled currency, rank and automatic unit-gift limits. It wraps only
+registration and first-profile creation in a transaction on the native authenticated
+OLE DB session. A locked inventory snapshot protects pre-existing unit identities;
+only newly inserted profile gifts are limited, with counters and selected-unit
+references repaired before commit. Existing profiles bypass initialization, and
+normal starter selection and later gains remain native. The Mod does not replace
+original SQL procedures. See its [owner guide](new-account-profile.md).
 
 Before reading `HookSystemExport`, check
 `api->size >= offsetof(SdgoApi, HookSystemExport) + sizeof(api->HookSystemExport)`
@@ -176,6 +231,17 @@ Rules: one owner per hook site (a second hook on the same site fails); install h
 `SdgoModLoad`, so a failed load can roll them back; detours run on whatever thread the host
 calls them on, so guard shared state; keep detours exception-safe (the bundled mods wrap
 game calls in `__try`/`__except`).
+
+Room-title commands use the shared grammar in `include/sdgo/room_commands.h`.
+Check the optional `FindRoomCommand` field's size before use, or call the SDK's
+`sdgo::room_commands::Find`, which supplies the same parser on older cores. Each
+whitespace-separated `!command` has its own argument span, ending before the next
+`!` token, including unknown commands. Names are case-insensitive; numeric suffixes
+such as `!ai3` require `SDGO_ROOM_COMMAND_ALLOW_COUNT`. The first valid matching
+command wins. The parser does not modify titles or install hooks. This lets mods
+compose `!rand !ai3 lv4` in either order without consuming each other's options.
+AI options must stay inside the `!ai` span; the native 20-byte limit remains.
+See [the composition guide](room-commands.zh-CN.md) for examples.
 
 `HookCode` hooks made while the mods load are switched on together right after the last mod
 has loaded (`core: N code hooks switched on`), before the host's own code runs; `original`
@@ -264,10 +330,13 @@ only its own files plus the two READMEs.
    like `mods/mission_ai/test/sim_mission.lua`.
 5. **Guide.** Write `docs/<feature>.md` with the outline below; add `docs/<feature>.zh-CN.md`
    when the feature is meant for players.
-6. **Catalog.** Add a row to the Features table in `README.md` and `README.zh-CN.md`: name,
-   what it does and how to trigger it in one or two sentences, mods, where to install
-   (`clients`, or `battle server + clients`), guide link. Add its mods to the package listing
-   ("What is in the package") of both READMEs.
+6. **Catalog.** Declare the category, feature id, channel and activation in every
+   participating `mod.ini`; list additional payload/config files when needed. Add
+   one feature row to the matching category block in both READMEs, including all
+   participating mod IDs, its guide and any Beta/experimental channel. Run
+   `python tools/mod_catalog.py` to check build, documentation and distribution
+   consistency. New NPC pools/random-unit gameplay belong to `gameplay`; hosting
+   and connectivity belong to `network`; diagnostic modules start disabled.
 7. **Version.** Bump `VERSION` and each changed mod's `version=` before packaging.
 
 Guide outline (the existing guides follow it; [coop-wingmen.md](coop-wingmen.md) is the
@@ -317,7 +386,17 @@ cmake --build build --config Release
 * `mods/mission_ai/test/sim_mission.lua`: drives `mission_ai.lua` against a mock of the game's
   script API under real Lua 5.0 (`tools/lua50_host.c`, built against Lua 5.0.3 sources).
 * `tools/verify_symbols.py <exe>`: offline check of a symbol file.
-* `tools/package.ps1`: zips `dist/SDGO-ModFramework-<VERSION>.zip`.
+* `new_account_policy_test`: new/existing-account policy, gift limits and rollback.
+  `tests/run_new_account_sql_test.py` is an opt-in actual-core/OLE DB fixture against
+  owned test databases in an isolated SQL container; it checks enabled/configured/
+  disabled behavior, preserved ownership and 64-bit unit identities. Native client
+  login remains manual acceptance; see the [test instructions](new-account-profile.md#verification).
+* `tools/package.ps1`: a full package by default; `-Edition Base` selects core fixes,
+  and `-Features pvp-ai` selects the fixes plus that complete client/server feature.
+  `-BuildDir` chooses the staged build and `-OutputDir` chooses a fresh destination.
+  Existing output is not deleted. Each package includes `CONTENTS.md`, the selected
+  catalog, both installers and their shared config-preservation helper. Stale mod
+  folders, undeclared files, logs and user data do not enter a mod payload.
 * `tools/install_client.ps1` / `install_server.ps1 -Source build/stage/Release/<tree>`:
   install straight from a build.
 

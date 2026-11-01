@@ -57,6 +57,28 @@ namespace
         }
         return false;
     }
+
+    bool NamedExportOrdinal(HMODULE dependency, const char* function, WORD& ordinal)
+    {
+        if (!dependency) return false;
+        auto base = reinterpret_cast<BYTE*>(dependency);
+        auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+        auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        if (!dir.VirtualAddress) return false;
+        auto exports = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(base + dir.VirtualAddress);
+        auto names = reinterpret_cast<DWORD*>(base + exports->AddressOfNames);
+        auto ordinals = reinterpret_cast<WORD*>(base + exports->AddressOfNameOrdinals);
+        for (DWORD i = 0; i < exports->NumberOfNames; ++i) {
+            if (strcmp(reinterpret_cast<const char*>(base + names[i]), function) == 0) {
+                const DWORD value = exports->Base + ordinals[i];
+                if (value > 0xFFFF) return false;
+                ordinal = static_cast<WORD>(value);
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 bool sdgo::hooks::Initialize(std::string& error)
@@ -161,12 +183,18 @@ bool sdgo::hooks::HookImport(const std::string& owner, HMODULE module, const cha
             continue;
         auto names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
         auto iat = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
+        WORD requestedOrdinal = 0;
+        const bool hasOrdinal = NamedExportOrdinal(GetModuleHandleA(dll), function, requestedOrdinal);
         for (size_t i = 0; names[i].u1.AddressOfData; ++i) {
-            if (names[i].u1.Ordinal & IMAGE_ORDINAL_FLAG)
-                continue;
-            auto byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names[i].u1.AddressOfData);
-            if (strcmp(reinterpret_cast<char*>(byName->Name), function) != 0)
-                continue;
+            if (names[i].u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+                // The Windows SDK import libraries and AgentServer use Winsock
+                // ordinals. Match the requested export's exact ordinal, rather
+                // than guessing names or comparing aliased function addresses.
+                if (!hasOrdinal || IMAGE_ORDINAL(names[i].u1.Ordinal) != requestedOrdinal) continue;
+            } else {
+                auto byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names[i].u1.AddressOfData);
+                if (strcmp(reinterpret_cast<char*>(byName->Name), function) != 0) continue;
+            }
             auto slot = reinterpret_cast<void**>(&iat[i].u1.Function);
             return HookSlot(owner, slot, *slot, detour, original, error);
         }

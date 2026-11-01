@@ -60,6 +60,8 @@ python backend/install_ai_catalog.py uninstall --target D:/Games/SDGO
 Apply to the server and every participating client, then restart them. There is
 no live unloading. `[mods] ai_catalog=0` in `sdgo.ini` is also respected. With the
 addon off, the AI mods use their original `LevelN` settings and native filtering.
+On framework 1.1.4+, `[features] ai-catalog=0` or `[categories] gameplay=0`
+also disables it. The separate addon remains outside the Base/Full package catalog.
 
 The installer records originals and restores them on uninstall. It refuses to
 overwrite another updater's subsequent changes; disabling remains available.

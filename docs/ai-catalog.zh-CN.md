@@ -22,6 +22,8 @@ sdgo/mods/ai_catalog/
 客户端和服务器 DLL 不同，Mod ID 都是 `ai_catalog`，默认关闭。`mod.ini` 的 `[mod] enabled=1/0`
 控制它，`sdgo.ini` 的 `[mods] ai_catalog=0` 也会关闭它。修改后要**重新启动相应进程**，不支持对局中热卸载。
 服务端和所有参与者必须成套启停、使用相同目录；未装配套 Mod 的客户端不支持扩展机体房间。
+框架 1.1.4 起也支持在 `sdgo.ini` 中用 `[features] ai-catalog=0` 或 `[categories] gameplay=0`
+统一关闭。它仍是独立附加包，不随 Base / Full 包自动安装。
 
 启用时，服务器从独立目录提供等级池；不再受旧 `LevelN=` 单行 1024 字节限制。
 关闭后，`coop_ai` / `pvp_ai` 继续读取各自原来的 `LevelN` 设置并按原生名单过滤，原有配置不被改写。

@@ -384,10 +384,11 @@ class AiCatalogTests(unittest.TestCase):
             overlay = installer.Overlay(target)
             installer.install(overlay, "client", package, data)
             installer.toggle(overlay, False)
-            (target / "sdgo/sdgo.ini").write_bytes(b"[mods]\nai_catalog=0\nunrelated=1\n")
-            before = file_snapshot(target)
-            with self.assertRaises(ValueError): installer.toggle(overlay, True)
-            self.assertEqual(file_snapshot(target), before)
+            for section, key in (("mods", "ai_catalog"), ("features", "ai-catalog"), ("categories", "gameplay")):
+                (target / "sdgo/sdgo.ini").write_text(f"[{section}]\n{key}=0\nunrelated=1\n", encoding="utf-8")
+                before = file_snapshot(target)
+                with self.assertRaises(ValueError): installer.toggle(overlay, True)
+                self.assertEqual(file_snapshot(target), before)
 
     def test_grouping_includes_five_distinct_levels_and_excludes_non_sortie_rows(self):
         source = tables()
@@ -548,35 +549,40 @@ class AiCatalogTests(unittest.TestCase):
                     catalog.rules_from_json(path)
 
     @unittest.skipUnless(sys.platform == "win32", "release packager uses Windows PowerShell")
-    def test_release_package_contains_only_backend_sources(self):
+    def test_framework_package_excludes_the_independent_addon_and_owner_data(self):
+        import shutil
+        import zipfile
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "portable release fixture"
-            for name in ("tools", "backend", "docs", "third_party/minhook",
-                         "build/stage/Release/client", "build/stage/Release/server"):
+            for name in ("tools", "backend", "docs", "mods/ime_fix", "third_party/minhook"):
                 (root / name).mkdir(parents=True)
-            script = root / "tools/package.ps1"
-            script.write_bytes((repo / "tools/package.ps1").read_bytes())
-            for name in ("ai_catalog.py", "install_ai_catalog.py", "export_ai_catalog.py", "ai_catalog.rules.example.json", "README.zh-CN.md"):
-                (root / "backend" / name).write_bytes((repo / "backend" / name).read_bytes())
-            (root / "backend/private.json").write_text("PRIVATE DO NOT PACKAGE")
-            for name in ("README.md", "README.zh-CN.md", "THIRD_PARTY_NOTICES.md",
-                         "tools/install_client.ps1", "tools/install_server.ps1", "third_party/minhook/LICENSE.txt"):
-                (root / name).write_text("fixture")
+            for name in ("tools/package.ps1", "tools/mod_catalog.py", "README.md", "README.zh-CN.md",
+                         "mods/ime_fix/mod.ini", "docs/ime-fix.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+                shutil.copyfile(repo / name, root / name)
+            for name in ("install_client.ps1", "install_server.ps1", "install_common.ps1"):
+                (root / "tools" / name).write_text("fixture")
+            (root / "third_party/minhook/LICENSE.txt").write_text("fixture")
             (root / "VERSION").write_text("0.0.1")
-            environment = dict(os.environ)
-            modules = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/Modules"
-            environment["PSModulePath"] = str(modules) + os.pathsep + environment.get("PSModulePath", "")
-            run = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-                                 capture_output=True, text=True, timeout=30, env=environment)
+            (root / "CMakeLists.txt").write_text("sdgo_add_mod(ime_fix SOURCES fixture.cpp)")
+            (root / "backend/private.json").write_text("PRIVATE DO NOT PACKAGE")
+            for role, loader in (("client", "d3d9.dll"), ("server", "winmm.dll")):
+                stage = root / "build/stage/Release" / role
+                for name in (loader, "sdgo/core.dll", "sdgo/sdgo.ini", "sdgo/symbols/fixture.ini"):
+                    path = stage / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text("fixture")
+            stage = root / "build/stage/Release/client/sdgo/mods"
+            (stage / "ime_fix").mkdir(parents=True)
+            shutil.copyfile(repo / "mods/ime_fix/mod.ini", stage / "ime_fix/mod.ini")
+            (stage / "ime_fix/ime_fix.dll").write_text("fixture")
+            (stage / "ai_catalog").mkdir()
+            (stage / "ai_catalog/catalog.bin").write_text("PRIVATE OWNER CATALOG")
+            run = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(root / "tools/package.ps1"), "-Edition", "Base"],
+                                 capture_output=True, text=True, timeout=30)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            import zipfile
-            with zipfile.ZipFile(root / "dist/SDGO-ModFramework-0.0.1.zip") as archive:
-                backend = {name for name in archive.namelist() if name.startswith("backend/")}
-                self.assertEqual(backend, {"backend/ai_catalog.py", "backend/install_ai_catalog.py", "backend/export_ai_catalog.py", "backend/ai_catalog.rules.example.json",
-                                           "backend/README.zh-CN.md"})
-                self.assertFalse(any(b"PRIVATE" in archive.read(name) for name in archive.namelist()
-                                     if not name.endswith("/")))
+            with zipfile.ZipFile(root / "dist/SDGO-ModFramework-0.0.1-Base.zip") as archive:
+                self.assertFalse(any(name.startswith("backend/") or "/mods/ai_catalog/" in name for name in archive.namelist()))
+                self.assertFalse(any(b"PRIVATE" in archive.read(name) for name in archive.namelist() if not name.endswith("/")))
 
 
 if __name__ == "__main__":

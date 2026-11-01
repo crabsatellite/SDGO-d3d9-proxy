@@ -11,6 +11,7 @@
 #include "hooks.h"
 #include "log.h"
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_commands.h"
 #include "symbols.h"
 
 struct SdgoMod
@@ -18,6 +19,8 @@ struct SdgoMod
     std::string id;
     std::string name;
     std::string version;
+    std::string category;
+    std::string feature;
     std::wstring directory;
     std::wstring manifest;
     std::wstring dllPath;
@@ -152,6 +155,19 @@ namespace
         return 1;
     }
 
+    int Api_HookSite(SdgoMod* mod, const char* name, void* detour, void** original)
+    {
+        const sdgo::Symbol* symbol = VerifiedSymbol(mod, name, "site");
+        if (!symbol || !mod) return 0;
+        std::string error;
+        if (!sdgo::hooks::HookCode(mod->id, reinterpret_cast<void*>(symbol->address), detour, original, error, true)) {
+            sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_ERROR, "hook site %s failed: %s", name, error.c_str());
+            return 0;
+        }
+        sdgo::log::Writef(mod->id.c_str(), SDGO_LOG_INFO, "hooked site %s", name);
+        return 1;
+    }
+
     int Api_HookSlot(SdgoMod* mod, const char* name, void* detour, void** original)
     {
         const sdgo::Symbol* symbol = VerifiedSymbol(mod, name, "slot");
@@ -242,6 +258,8 @@ namespace
         mod->id = Narrow(IniString(mod->manifest, L"mod", L"id", folderName.c_str()));
         mod->name = Narrow(IniString(mod->manifest, L"mod", L"name", folderName.c_str()));
         mod->version = Narrow(IniString(mod->manifest, L"mod", L"version", L"0"));
+        mod->category = Narrow(IniString(mod->manifest, L"mod", L"category", L""));
+        mod->feature = Narrow(IniString(mod->manifest, L"mod", L"feature", Widen(mod->id.c_str()).c_str()));
         mod->api = GetPrivateProfileIntW(L"mod", L"api", 0, mod->manifest.c_str());
         mod->order = GetPrivateProfileIntW(L"mod", L"order", 100, mod->manifest.c_str());
         mod->enabled = GetPrivateProfileIntW(L"mod", L"enabled", 1, mod->manifest.c_str()) != 0;
@@ -252,6 +270,13 @@ namespace
         // sdgo.ini [mods] <id>=0 switches a mod off without touching its folder.
         const std::wstring global = g_root + L"\\sdgo.ini";
         if (GetPrivateProfileIntW(L"mods", Widen(mod->id.c_str()).c_str(), 1, global.c_str()) == 0)
+            mod->enabled = false;
+        // A feature may have several client/server mods. These switches can
+        // disable the entire group without overriding a mod's own off switch.
+        if (!mod->category.empty() &&
+            GetPrivateProfileIntW(L"categories", Widen(mod->category.c_str()).c_str(), 1, global.c_str()) == 0)
+            mod->enabled = false;
+        if (GetPrivateProfileIntW(L"features", Widen(mod->feature.c_str()).c_str(), 1, global.c_str()) == 0)
             mod->enabled = false;
         return mod;
     }
@@ -405,6 +430,8 @@ extern "C" __declspec(dllexport) int __cdecl SdgoCoreInit(const SdgoBoot* boot)
     g_api.SettingString = Api_SettingString;
     g_api.ModDirectory = Api_ModDirectory;
     g_api.HookSystemExport = Api_HookSystemExport;
+    g_api.HookSite = Api_HookSite;
+    g_api.FindRoomCommand = sdgo::room_commands::Parse;
 
     LoadMods();
     size_t active = 0;

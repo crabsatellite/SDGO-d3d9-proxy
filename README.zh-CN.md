@@ -1,201 +1,112 @@
-# SDGO mod 框架
+# SDGO Mod 框架
 
-SD敢达 Online 游戏客户端（`GOnline.exe`）与对战服务器（`BattleServer.exe`）的 mod 加载框架。它在两个程序里
-各放入一个小核心：核对 exe 版本、使用前校验每个代码地址、加载 mod。各项功能都以 mod 的形式建在框架之上，
-可以只在客户端、只在对战服务器，或两边配合。
+为 SD敢达 Online 客户端和私服提供基础修复与可选扩展。所有 Mod 共用版本校验、加载、配置和更新框架。
+非官方爱好者项目，不包含游戏文件。[English](README.md)
 
-非官方爱好者项目，不包含任何游戏文件；SD敢达 Online 及其素材归其权利人所有。
-English: [README.md](README.md)
+**先安装基础修复，再按需要选择扩展。** Beta 是功能的发布标记，与分类独立。
 
-* [功能](#功能)
-* [包内容](#包内容)
-* [支持的游戏版本](#支持的游戏版本)
-* [安装](#安装) · [卸载](#卸载)
-* [配置](#配置) · [排错](#排错)
-* [从源码构建](#从源码构建) · [新增功能](#新增功能)
+[安装与配置](docs/setup.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [开发接口](docs/framework.md)
 
-## 功能
+## 基础修复
 
-独立的 [AI 机体目录 Mod](docs/ai-catalog.zh-CN.md) 读取服主生成的配套目录，扩充 LV1–LV5 机体池，
-不写数据库或游戏原包。默认关闭，带独立安装器和玩家增量导出；原生 AI 脚本的实际游戏表现仍需手动验收。
+包含客户端兼容性修复、服务端结算修复与新账号起步规则。各项均可单独停用。
 
-每项功能由一个或多个 mod 组成，各有一份说明（使用、设置、日志、实现原理）。
-
-| 功能 | 作用 | mod | 安装在 | 说明 |
+<!-- mod-category:fixes -->
+| 功能 | 作用 | Mod | 安装位置 | 说明 |
 |---|---|---|---|---|
-| 服主 AI 机体目录 | 为现有 AI 功能提供配套 NPC 目录和大等级池；关闭后恢复原等级池。 | `ai_catalog` | 对战服务器 + 所有参战客户端 | [中文](docs/ai-catalog.zh-CN.md) · [English](docs/ai-catalog.md) |
-| 任务模式 AI 僚机 | 任务模式里 AI 驾驶员加入你的队伍，使用游戏原生的 AI 对战机器人 AI，击破正常计算，也会被击落。在房间标题写 `!ai`。 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [中文](docs/coop-wingmen.zh-CN.md) · [English](docs/coop-wingmen.md) |
-| 对战模式 AI 玩家（源码新增） | 在 PvP 房名里用 `!ai` 加入对手和队友，接入原有计分、复活、卡组与死亡后观战。 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [中文](docs/pvp-ai.zh-CN.md) · [English](docs/pvp-ai.md) |
-| 输入法修复 | 修复一处把输入法（中/日/韩）提交的字节数当成字符数的问题。 | `ime_fix` | 客户端 | [中文](docs/ime-fix.zh-CN.md) · [English](docs/ime-fix.md) |
-| 通用输入法修复 | 修复输入法让游戏卡死或崩溃的问题，不区分输入法。整合包的 `SDPlus.dll` 破坏了游戏进程里所有 DLL 的窗口查找（`FindWindowW`），任何需要查找窗口的输入法一开启就会卡死或崩溃。本修复为游戏本体以外的所有代码恢复正常查找。 | `findwindow_fix` | 客户端 | [中文](docs/findwindow-fix.zh-CN.md) · [English](docs/findwindow-fix.md) |
-| 开游戏随机崩溃修复 | 修复开游戏时随机崩溃（读取界面闪退，`0x008FE610`）：读取界面随机挑一组，其机体在客户端数据里不存在时会闪退；现在这种组会换成最近的一组机体存在的读取界面。 | `startup_crash_fix` | 客户端 | [中文](docs/startup-crash-fix.zh-CN.md) · [English](docs/startup-crash-fix.md) |
-| 发包日志 | 开发 mod 用的发包记录，默认关闭。 | `net_probe` | 客户端 | [docs/net-probe.md](docs/net-probe.md) |
+| 输入法提交修复 | 修正输入法提交内容的长度计算 | `ime_fix` | 客户端 | [使用说明](docs/ime-fix.zh-CN.md) |
+| 输入法卡死修复 | 恢复输入法需要的窗口查找，兼容已有插件 | `findwindow_fix` | 客户端 | [使用说明](docs/findwindow-fix.zh-CN.md) |
+| 启动崩溃修复 | 避开引用缺失机体的随机读取界面 | `startup_crash_fix` | 客户端 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
+| Agent 中继日志修复 | 修正原生中继日志的格式错误 | `agent_relay_log_fix` | Agent 服务器 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |
+| 军衔回退修复 | 防止较高子等级误将当前军衔降级，例如 `15-1 → 5-2` | `rank_progression_fix` | World 服务器 | [使用说明](docs/rank-progression-fix.zh-CN.md) |
+| 新账号起始资料修复 | 新账号默认 5,000 GP、0 点券、下士；首次建档自动赠送最多一台机体，保留已有养成 | `new_account_profile` | World 服务器 | [使用说明](docs/new-account-profile.zh-CN.md) |
+<!-- /mod-category:fixes -->
 
-"安装在"写了对战服务器的功能，需要对战服务器装服务器部分、玩家装配套的客户端部分才生效。
-AI 对战房间的所有参与者应使用配套版本。已发布的 1.1.2 包不含新增的对战 AI。
+军衔修复通过 WorldServer 的框架加载，将对应结算调用交给 Mod 自己的修正版过程，保留原生过程，无需更新玩家客户端。
 
-### 游戏内效果
+**新账号规则默认启用，包含在当前 master 构建的 Base 和 Full 包中，只需服主安装到 WorldServer。**
+默认以 **5,000 GP、0 点券、下士 1 阶**起步；首次建档调用中的自动机体赠送最多保留一台，
+不直接发全机库。已有账号的机体与进度保留，正常选初始机体、后续购买、扭蛋和奖励继续按原规则获得。
 
-任务模式 AI 僚机：房间标题含 `!ai` 的任务房间，AI 僚机与玩家同行，攻击任务中的敌人。
+服主在 `sdgo/mods/new_account_profile/config.ini` 配置，`InitialUnitLimit=1` 是这部分自动赠送的上限；
+设为 `0` 可取消这部分赠送。停用可在 `sdgo/sdgo.ini` 的 `[mods]` 中写 `new_account_profile=0` 并重启 World，
+之后的新建档恢复原服规则，已有账号不变。详见[新账号安装、配置与验收教程](docs/new-account-profile.zh-CN.md)。
+这个新增 Mod 已合入 master；若你下载的发布包没有 `server/sdgo/mods/new_account_profile/`，
+请按[源码构建说明](docs/setup.zh-CN.md#从源码构建)生成包含它的包。
 
-![任务模式里 AI 僚机与玩家并肩作战](docs/coop-wingmen-demo.webp)
+<details>
+<summary>查看输入法修复效果</summary>
 
-对战 AI 的新视频尚待录制，见[五段功能展示与手动验收清单](docs/pvp-ai-video.zh-CN.md)。
+![游戏大厅中使用输入法](docs/findwindow-fix-ime.png)
 
-通用输入法修复：游戏大厅里开启输入法（红框为输入法工具栏，截图中是讯飞）。没有 `findwindow_fix` 时，任何需要查找窗口的
-输入法一开启就会让游戏卡死或崩溃。
+</details>
 
-![开启输入法的游戏大厅](docs/findwindow-fix-ime.png)
+## 玩法扩展
 
-## 包内容
+按需使用，让单机或联机玩法更完整。NPC、机体池、随机机体等玩法能力归入这一类。
 
-```
-SDGO-ModFramework-<版本>/
-  client/                 放到 GOnline.exe 同目录
-    d3d9.dll
-    sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            findwindow_fix、ime_fix、mission_ai、match_ai、net_probe（默认关闭）、startup_crash_fix
-  server/                 放到 BattleServer.exe 同目录
-    winmm.dll
-    sdgo\core.dll、sdgo\sdgo.ini、sdgo\symbols\
-    sdgo\mods\            coop_ai、pvp_ai
-  install_client.ps1      把 client\ 安装到游戏目录
-  install_server.ps1      把 server\ 安装到对战服务器目录
-  README.md、README.zh-CN.md、docs\、LICENSE、THIRD_PARTY_NOTICES.md、licenses\
-```
+<!-- mod-category:gameplay -->
+| 功能 | 作用 | Mod | 安装位置 | 说明 |
+|---|---|---|---|---|
+| 任务 AI 僚机 | 用 `!ai` 给任务队伍加入 AI 队友 | `coop_ai`、`mission_ai` | 对战服务器 + 客户端 | [使用说明](docs/coop-wingmen.zh-CN.md) |
+| 对战 AI（Beta） | 在 PvP 加入 AI 对手和队友，支持计分、复活、卡组和观战 | `pvp_ai`、`match_ai` | 对战服务器 + 所有参战客户端 | [使用说明](docs/pvp-ai.zh-CN.md) |
+| AI 机体目录（Beta，独立附加包） | 用服主生成的配套数据扩充 LV1–LV5 机体池，关闭并重启后恢复原池 | `ai_catalog` | 对战服务器 + 所有参战客户端 | [使用说明](docs/ai-catalog.zh-CN.md) |
+| 战斗贡献奖励（Beta） | 原生贡献结算、持久 MB 入账和服主倍率控制 | `battle_rewards` | 对战服务器 + 服主工作器 | [使用说明](docs/battle-rewards.zh-CN.md) |
+| 每局随机机体（Beta） | 用 `!rand` 从各自机库每局随机，卡组严格十点，可与 `!ai` 组合 | `room_random` | 对战服务器 | [使用说明](docs/room-random.zh-CN.md) |
+<!-- /mod-category:gameplay -->
 
-这些 mod 就是[功能](#功能)表里的各项功能；`net_probe` 要在它的 `mod.ini` 里打开才会生效。
+机体目录是**默认关闭的独立 Mod**，Base / Full 框架包不会直接安装它。服主用自己的数据库目录表和
+配套客户端表生成 `catalog.bin`，安装到两端，再导出玩家增量包；玩家只需运行包内的一次性安装工具，
+以后仍用原启动器。房名如 `!ai e2 a1 lv2` 会从扩展后的对应等级池随机抽取，不增加选择界面。
+不改写 SQL 原表或游戏数据包；完整步骤见[服主安装与玩家分发教程](docs/ai-catalog.zh-CN.md)。
 
-| 部件 | 位置 | 作用 |
-|---|---|---|
-| `d3d9.dll` | 游戏目录 | 加载器：GOnline.exe 启动时加载它，它启动 `sdgo\core.dll`，并把 Direct3D 转发给真正的 `d3d9.dll` |
-| `winmm.dll` | 对战服务器目录 | BattleServer.exe 用的同一种加载器（转发 `timeGetTime`） |
-| `sdgo\core.dll` | 两边 | 框架核心：核对 exe 版本，校验每个代码地址，统一管理 hook，加载 mod |
-| `sdgo\sdgo.ini` | 两边 | 框架设置：日志级别、串联的加载器、单独关闭某个 mod（见[配置](#配置)） |
-| `sdgo\symbols\*.ini` | 两边 | 每个支持的 exe 版本一份：已校验的地址与字节特征 |
-| `sdgo\mods\<id>\` | 两边 | 每个 mod 一个目录：`<id>.dll`、`mod.ini`（清单 + 设置）、附带文件 |
+<details>
+<summary>查看 AI 僚机与对战短片</summary>
 
-安装脚本会复制包里的全部内容，新增功能不需要改安装脚本。
+任务模式 AI 僚机：
 
-## 支持的游戏版本
+![任务 AI 僚机](docs/coop-wingmen-demo.webp)
 
-框架只改动它能校验的代码。每个 exe 版本有一个 *host key*（`<exe 名>-<TimeDateStamp>-<SizeOfImage>`），
-`sdgo\symbols\` 里要有对应文件：
+对战 AI（Beta），也支持死亡竞赛、Grid、队长和 Tag 模式：
 
-| exe | host key | 已知发行版 |
-|---|---|---|
-| GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2（及其底包客户端） |
-| BattleServer.exe | `BattleServer-548A891D-0046C000` | 常见私服服务端包（BattleServer1..N 目录） |
+![对战 AI 的队友与敌人交战](docs/pvp-ai-demo.webp)
 
-安装脚本会打印你的 exe 的 host key。其它版本也能装，但框架会记录"没有匹配的 symbol 文件"并关闭所有
-mod，游戏本身不受影响，见[其它游戏版本](#其它游戏版本)。
+</details>
 
-## 安装
+## 联机与服主工具
 
-需要 Windows 自带的 Windows PowerShell 5.1，不需要 VC++ 运行库。从
-[最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest)下载 `SDGO-ModFramework-<版本>.zip`，
-解压后在解压目录打开 PowerShell。
+连接、中继、端口映射和服主部署工具单独分类，由服主按网络环境配置。
+这些工具与玩法扩展分别管理；安装包内的功能目录列出实际包含的工具。
 
-### 客户端（每个玩家）
+<!-- mod-category:network -->
+| 功能 | 作用 | Mod | 安装位置 | 说明 |
+|---|---|---|---|---|
+| FRP 联机（Beta） | 服主配置公网地址、端口映射与可复用 UDP 端口池 | `net_route`、`agent_udp_pool` | 客户端 + Agent 服务器 | [使用说明](docs/frp-distribution.zh-CN.md) |
+<!-- /mod-category:network -->
 
-先关闭游戏，然后：
+## 奖励规则与验证
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games\SDGO"
-```
+[战斗贡献奖励（Beta）](docs/battle-rewards.zh-CN.md)已接入原生结算和服主钱包工作器。
+[规则文档](docs/battle-reward-design.zh-CN.md)包含已确认数值与离线计算器。
+真实账号对局、HUD 和重连仍由服主手动验收；安装保留其他功能与原有状态。
 
-`-GameDir` 是 `GOnline.exe` 所在目录。
+## 开发诊断
 
-* 用什么方式启动游戏都可以（任何启动器、快捷方式、直接运行 GOnline.exe）：Windows 总是从 GOnline.exe
-  所在目录加载 `d3d9.dll`，框架也以 GOnline.exe 的位置找自己的文件。
-* 不影响其它 mod。通过其它 DLL 加载的插件（例如 Ultimate Repack 的 `dinput8.dll` + `SDPlus.dll`）照常工作。
-  如果目录里已经有别的 mod 的 `d3d9.dll`（例如画面增强），安装脚本会把它改名为 `d3d9_chain.dll` 并串联，
-  两者同时生效。
-* 重复运行即为更新：保留 `sdgo\sdgo.ini`；每个 mod 的 `mod.ini` 换成新版，再把你自己的值写回去
-  （`[mod] enabled` 和 `[settings]` 里与新文件不同的每一项），输出里会列出写回了哪些。
-  加 `-OverwriteConfig` 则两者都按包里的原样安装。
+面向开发与排错，默认关闭。
 
-手动安装：把 `client\` 里的内容复制到游戏目录（GOnline.exe 旁边）。这样 `sdgo.ini` 和所有 `mod.ini`
-都会被包里的版本覆盖。
+<!-- mod-category:development -->
+| 工具 | 作用 | Mod | 安装位置 | 说明 |
+|---|---|---|---|---|
+| 发包日志 | 记录发包，辅助协议排错 | `net_probe` | 客户端 | [使用说明](docs/net-probe.md) |
+<!-- /mod-category:development -->
 
-检查：进游戏后 `sdgo\logs\sdgo.log` 开头应有 `core: SDGO core started by d3d9 loader ...`、
-`symbols: N of N verified`，以及每个 mod 一行 `loaded <mod>`。
+## 安装与使用
 
-### 对战服务器（架服务器的人）
+1. 按[安装说明](docs/setup.zh-CN.md#安装)安装所选功能对应的宿主部分；新账号规则和军衔修复只安装到 World，玩家无需客户端组件。
+2. 使用平常的启动器进入游戏，按各功能说明启用扩展。
+3. 更新使用安装脚本，保留个人配置；分类、整项功能和单个 Mod 都有独立开关。
 
-只有"安装在"写了对战服务器的功能才需要。先停止对战服务器，然后：
+包内 `CONTENTS.md` 和 `sdgo/catalog.json` 是该包的功能目录。
+[安装、卸载、配置与排错](docs/setup.zh-CN.md) · [构建与新增扩展](docs/framework.md#adding-a-feature)
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"
-```
-
-`-ServerRoot` 可以是单个对战服务器目录（含 `BattleServer.exe`），也可以是包含多个的上级目录
-（`BattleServer1`、`BattleServer2`……）；`-Only BattleServer3` 只装指定目录。装完再启动对战服务器；用什么方式
-启动（服务端管理器、批处理、服务）都可以。已有的 `winmm.dll` 的串联、更新时保留设置，都和客户端一样。
-手动安装：把 `server\` 的内容复制到每个对战服务器目录。
-
-## 卸载
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games\SDGO" -Uninstall
-powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server" -Uninstall
-```
-
-删除加载器 DLL 和 `sdgo\`（进回收站），并把串联的 `d3d9.dll`/`winmm.dll` 恢复原名。只想关掉某个 mod：
-在 `sdgo\sdgo.ini` 的 `[mods]` 下写 `<mod id>=0`。
-
-## 配置
-
-`sdgo\sdgo.ini`（每个 exe 目录一份）：
-
-| 节 / 键 | 含义 |
-|---|---|
-| `[core] log_level` | 0 调试、1 信息（默认）、2 警告、3 错误 |
-| `[loader] chain_d3d9` / `chain_winmm` | 代替系统副本转发到的另一个 DLL，相对 exe 目录（安装脚本自动设置） |
-| `[mods] <id>=0` | 关闭某个 mod |
-
-各 mod 的设置在其 `mod.ini` 的 `[settings]`，每项都有注释，功能说明里也有列表。
-
-## 排错
-
-所有诊断都写在 exe 旁边的 `sdgo\logs\sdgo.log`（上一次运行是 `sdgo.prev.log`）。框架本身的日志：
-
-| 日志 | 含义 |
-|---|---|
-| 完全没有 `sdgo.log` | 加载器没运行：DLL 不在 exe 旁边，或被其它程序替换了 |
-| `no symbol file for host ...` | 不支持的 exe 版本；所有 mod 关闭，游戏不受影响 |
-| `symbol X rejected: byte +N is .., expected ..` | 该地址的代码不同（其它补丁或不同版本）；需要 X 的 mod 关闭 |
-| `required symbol X ...` / `0 of N mods active` | 某个 mod 需要的 symbol 校验失败，未启动 |
-
-各功能自己的日志见其说明。
-
-### 其它游戏版本
-
-其它版本的 `GOnline.exe` / `BattleServer.exe` 需要为该版本新增 `sdgo\symbols\<host key>.ini`
-（见 [docs/framework.md](docs/framework.md#symbol-files)），在此之前框架会加载但什么都不做。
-
-## 从源码构建
-
-Visual Studio 2022（C++ 工具）与 CMake 3.20+，两端都是 32 位：
-
-```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
-cmake --build build --config Release
-powershell -ExecutionPolicy Bypass -File tools\package.ps1     # 生成 dist\SDGO-ModFramework-<版本>.zip
-```
-
-安装脚本也能直接从构建目录安装：`tools\install_client.ps1 -GameDir ... -Source build\stage\Release\client`。
-
-对战 AI、计分条和观战逻辑的离线测试（不开游戏）见
-[测试说明](docs/ai-offline-tests.md)，入口为 `tests\run_ai_tests.ps1`。
-
-## 新增功能
-
-新功能 = `mods/` 下的一个或多个 mod（在 `CMakeLists.txt` 注册）+ `docs/` 下的一份说明 + 两个 README
-[功能](#功能)表里的一行，以及[包内容](#包内容)列表里加上它的 mod。构建会把它放进 `client\` 或 `server\`，安装脚本和打包脚本无需修改。
-具体步骤、mod API、symbol 文件和说明文档的固定结构见
-[docs/framework.md](docs/framework.md#adding-a-feature)（英文）。
-
-## 许可
-
-MIT，见 [LICENSE](LICENSE)。第三方代码见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（MinHook，BSD 2-Clause）。
+MIT，见 [LICENSE](LICENSE)。第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

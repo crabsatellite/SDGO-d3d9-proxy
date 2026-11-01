@@ -12,9 +12,9 @@ acceptance is pending the user's next test.
 | Check | Result | Evidence scope |
 | --- | --- | --- |
 | Python catalog/install/export/package tests | 32 passed | Includes exported Windows player setup: symbol merge, preserved unrelated content, idempotence and conflict refusal |
-| Release CTest suite | 10 passed | Existing co-op/PvP/client/Lua tests, loader, hooks, installers, staging and new catalog integration |
+| Release CTest suite after master integration | 33 passed | Current framework, co-op/PvP, shared room commands, rewards, category gates, packaging/installers, staging and catalog integration |
 | Debug catalog integration | 20 scenarios passed | Fresh processes with real core and updated DLLs; other Debug suites were run during the initial 0.1.0 validation |
-| Real core + catalog DLL | 20 scenarios per configuration, Release and Debug | Off/on/off/on, collisions, changed source, deferred source, corrupt/missing file, competing hook owner and partial-load rollback |
+| Real core + catalog DLL | 24 Release scenarios after integration; earlier 20 Debug scenarios | Off/on/off/on, feature/category disables, collisions, changed/deferred source, corrupt/missing file, competing hook owner and rollback |
 | Actual native client map + owner records | 819 units, 18055 checks in each of Release and Debug | Shipped addon DLL, native Find and inline tree lookup, insertion, integrity registration, idempotence, unchanged original units and complete native destructor cleanup |
 | Actual BattleServer builder code | 819 units, 4117 checks, Release and Debug | Caller-supplied image mapped without its entry point, with owned maps/records/buffers |
 | Host symbols | 84 client symbols verified, 0 rejected; earlier 27 server symbols verified | Supported on-disk images; new client loader/map/allocator/checksum symbols included |
@@ -98,6 +98,14 @@ destructor instructions in a test-owned address range; it does not run the game
 entry point. It also exposed that native Find returns a bool in AL, with the
 upper EAX bits unspecified on failure; the production binding now uses bool.
 The obsolete resolver-only test has been removed.
+
+Master integration preserves the current 1.1.4 public ABI, shared room command
+parser, pool provider and categorized package selection. Both addon manifests
+declare `category=gameplay` and `feature=ai-catalog`; the independent addon is
+still excluded from Base/Full packages. The installer refuses enable operations
+when a mod/feature/category override disables it. The owner client log has also
+confirmed registration of all 819 records during ordinary startup; this is data
+loading evidence, not rendered battle acceptance.
 
 Deployment readback confirmed client 0.1.1 enabled, unchanged paired catalog
 SHA256 `f95f01cd46eeb6dee27bbc596a3d3c1673e043f60cce98f8d509331d3e73dc27`,

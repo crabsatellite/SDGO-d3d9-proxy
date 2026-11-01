@@ -171,7 +171,8 @@ int wmain(int argc, wchar_t** argv) {
     Check(argc == 3, "role and scenario supplied");
     const bool server = wcscmp(argv[1], L"server") == 0;
     const std::wstring scenario = argv[2];
-    const bool off = scenario == L"off", conflict = scenario == L"conflict", changed = scenario == L"changed";
+    const bool gated = scenario == L"featureoff" || scenario == L"categoryoff";
+    const bool off = scenario == L"off" || gated, conflict = scenario == L"conflict", changed = scenario == L"changed";
     const bool corrupt = scenario == L"corrupt", missing = scenario == L"missing", deferred = scenario == L"deferred";
     const bool rollback = scenario == L"rollback";
     wchar_t executable[MAX_PATH * 2]{}; GetModuleFileNameW(nullptr, executable, MAX_PATH * 2);
@@ -217,10 +218,13 @@ int wmain(int argc, wchar_t** argv) {
     if (corrupt) bytes.back() ^= 1;
     if (!missing) PutFile(mod / L"catalog.bin", bytes);
     std::ofstream manifest(mod / L"mod.ini");
-    manifest << "[mod]\nid=ai_catalog\nname=catalog integration\napi=1\norder=50\nhosts=*\ndll=ai_catalog.dll\nenabled=" << (!off) << "\nrequires="
+    manifest << "[mod]\nid=ai_catalog\ncategory=gameplay\nfeature=ai-catalog\nname=catalog integration\napi=1\norder=50\nhosts=*\ndll=ai_catalog.dll\nenabled=" << (!off || gated) << "\nrequires="
              << (server ? "catalog.npc_manager,catalog.unit_manager,catalog.find_ai_npc,catalog.find_unit,battle.build_ai_pilot" : "grid.find,grid.load_npc_table,mode.base_create_npc,mode.create_npc,mode.create_remote_npc") << "\n";
     manifest.close();
-    std::ofstream global(root / L"sdgo/sdgo.ini"); global << "[mods]\nunrelated_feature=0\n"; global.close();
+    std::ofstream global(root / L"sdgo/sdgo.ini"); global << "[mods]\nunrelated_feature=0\n";
+    if (scenario == L"featureoff") global << "[features]\nai-catalog=0\n";
+    if (scenario == L"categoryoff") global << "[categories]\ngameplay=0\n";
+    global.close();
     const auto base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
     const auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
     fs::create_directories(root / L"sdgo/symbols");

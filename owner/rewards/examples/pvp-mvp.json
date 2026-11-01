@@ -1,0 +1,4 @@
+{
+  "context": {"mode": "pvp", "outcome": "win", "human_count": 4, "event_multiplier": "2", "duration_seconds": 180},
+  "stats": {"kind": "human", "active_seconds": 180, "kills": 3, "assists": 0, "damage": 8000, "is_mvp": true}
+}
