@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "sdgo/sdgo_api.h"
+#include "sdgo/room_titles_lookup.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/room_commands.h"
@@ -97,10 +98,11 @@ namespace
     // title is in the lobby room coop_ai reads): written by the room-settings (0x004BEC60)
     // and title-change (0x004DCA40) handlers, sent to the clients by 0x004DD120.
     constexpr size_t kRoomTitleLength = 0x79;   // u8
-    constexpr size_t kRoomTitle = 0x7A;         // up to 20 bytes, CP949
+    constexpr size_t kRoomTitle = 0x7A;         // up to 20 bytes in the native encoding
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
+    const SdgoRoomTitleApi* g_titleApi = nullptr;
     SetupHumansFn g_setupHumans = nullptr;
     RoomTickFn g_roomTick = nullptr;
     BattleEndFn g_battleEnd = nullptr;
@@ -226,7 +228,7 @@ namespace
         plan.level = g_settings.defaultLevel;
         namespace commands=sdgo::room_commands;
         SdgoRoomCommand command{};
-        if (!commands::Find(g_api,title,static_cast<uint32_t>(kRoomTitleMax),"ai",
+        if (!commands::Find(g_api,title,SDGO_ROOM_TITLE_MAX_UTF8_BYTES,"ai",
                             SDGO_ROOM_COMMAND_ALLOW_COUNT,&command))
             return plan;
         plan.enabled = true;
@@ -296,7 +298,7 @@ namespace
     {
         int humans[3] = {};
         int ai[3] = {};
-        char title[kRoomTitleMax + 1] = {};
+        char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         bool titled = false;
         uint8_t hostTeam = 0;
     };
@@ -310,8 +312,12 @@ namespace
         memcpy(view.title, room + kRoomTitle, length);
         view.title[length] = '\0';
         view.title[strnlen(view.title, length)] = '\0';
-        view.titled = view.title[0] != '\0';
         uint32_t host = *reinterpret_cast<uint32_t*>(room + kRoomHost);
+        char extended[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+        const uint32_t extendedLength = g_titleApi ? g_titleApi->QueryForPilot(host, extended, sizeof(extended)) : 0;
+        if (extendedLength && extendedLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES && extended[extendedLength] == '\0')
+            memcpy(view.title, extended, extendedLength + 1);
+        view.titled = view.title[0] != '\0';
         for (int slot = 0; slot < kSlots; ++slot) {
             uint32_t id = SlotPilotId(room, slot);
             if (id == 0)
@@ -1062,6 +1068,7 @@ SDGO_MOD_ENTRY
 {
     g_api = api;
     g_mod = mod;
+    g_titleApi = sdgo::FindRoomTitleApi(api->ModDirectory(mod));
     bool bound = Bind(g_sizeChecked, "battle.start_size_checked") &&
                  Bind(g_teamChecksPassed, "battle.start_checks_passed") && Bind(g_aiNpcList, "battle.ai_npc_list") &&
                  Bind(g_waitRoomProc, "battle.waitroom_proc") && Bind(g_buildAiPilot, "battle.build_ai_pilot") &&

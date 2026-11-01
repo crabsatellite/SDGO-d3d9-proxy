@@ -11,6 +11,13 @@ Set-Content -LiteralPath (Join-Path $stale 'old.dll') -Value 'not a real DLL' -E
 Set-Content -LiteralPath $undeclared -Value '{"fixture":"not user data"}' -Encoding Ascii
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+function Read-Sha256([string]$path) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($path)
+    try { [BitConverter]::ToString($sha.ComputeHash($stream)) }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function New-FakeExe([string]$path, [uint32]$stamp, [uint32]$size) {
     $bytes = New-Object byte[] 0x100
     $bytes[0] = 0x4D; $bytes[1] = 0x5A
@@ -51,6 +58,8 @@ try {
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
+    $titleZip = Invoke-Package 'Full' 'room-titles' (Join-Path $work 'titles')
+    Check-Package $titleZip ($baseMods + @('room_titles','room_titles_agent','room_titles_server'))
     $rewardZip = Invoke-Package 'Full' 'battle-rewards' (Join-Path $work 'rewards')
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
@@ -61,7 +70,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','battle_rewards','net_probe','net_route','agent_udp_pool'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','net_probe','net_route','agent_udp_pool'))
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
@@ -93,6 +102,31 @@ try {
     $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $customFolder 'install_server.ps1') -ServerRoot $server 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Packaged server installer failed: $output" }
     if (-not (Test-Path -LiteralPath (Join-Path $server 'sdgo\mods\pvp_ai\pvp_ai.dll'))) { throw 'Feature server half not installed' }
+    $titlesFolder = Join-Path $work 'titles-unpacked'
+    [IO.Compression.ZipFile]::ExtractToDirectory($titleZip, $titlesFolder)
+    $oldAi = Read-Sha256 (Join-Path $game 'sdgo\mods\match_ai\match_ai.dll')
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $titlesFolder 'install_client.ps1') -GameDir $game 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged room-title client install failed: $output" }
+    $titleIni = Join-Path $game 'sdgo\mods\room_titles\mod.ini'
+    if (-not (Test-Path -LiteralPath $titleIni) -or [IO.File]::ReadAllText($titleIni) -notmatch '(?m)^enabled=0\s*$') { throw 'Room-title client must be installed disabled' }
+    if ($oldAi -ne (Read-Sha256 (Join-Path $game 'sdgo\mods\match_ai\match_ai.dll')) -or
+        -not ([IO.File]::ReadAllText($ini).Contains('gameplay=0')) -or -not (Test-Path -LiteralPath $other)) { throw 'Room-title install changed existing feature or user state' }
+    [IO.File]::WriteAllText($titleIni, ([IO.File]::ReadAllText($titleIni) -replace '(?m)^enabled=0\s*$', 'enabled=1'))
+    $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $titlesFolder 'install_client.ps1') -GameDir $game 2>&1
+    if ($LASTEXITCODE -ne 0 -or [IO.File]::ReadAllText($titleIni) -notmatch '(?m)^enabled=1\s*$') { throw 'Room-title update lost the owner enable switch' }
+    $agent = Join-Path $work 'agent'
+    New-FakeExe (Join-Path $agent 'AgentServer.exe') 0x548A86BC 0x000D7000
+    foreach ($item in @(@{Root=$server;Role='Battle';Id='room_titles_server';Other='room_titles_agent'}, @{Root=$agent;Role='Agent';Id='room_titles_agent';Other='room_titles_server'})) {
+        $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $titlesFolder 'install_server.ps1') -ServerRoot $item.Root -Role $item.Role 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Packaged room-title $($item.Role) install failed: $output" }
+        if (-not (Test-Path -LiteralPath (Join-Path $item.Root "sdgo\mods\$($item.Id)\$($item.Id).dll"))) { throw 'Room-title server payload missing for selected host role' }
+        # The framework's common server tree intentionally carries both hosts'
+        # Mods. Runtime host manifests decide which DLL can load, as before.
+        $otherManifest = Join-Path $item.Root "sdgo\mods\$($item.Other)\mod.ini"
+        $wrongHost = if ($item.Role -eq 'Battle') { 'BattleServer-' } else { 'AgentServer-' }
+        if ((Test-Path -LiteralPath $otherManifest) -and
+            [IO.File]::ReadAllText($otherManifest) -match ('(?m)^hosts=' + $wrongHost)) { throw 'Room-title manifest allows the wrong server host' }
+    }
     $world = Join-Path $work 'world'
     New-FakeExe (Join-Path $world 'WorldServer.exe') 0x548A86E3 0x0010C000
     $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $baseFolder 'install_server.ps1') -ServerRoot $world -Role World 2>&1

@@ -12,7 +12,13 @@ update `GoUserUnitNum`, inventory or saved decks. No process is restarted by the
 installer. AI mods retain their own pools and use different hook sites.
 The core's shared room-command service scopes arguments to each command. Both
 `!rand !ai3 lv4` and `!ai3 lv4 !rand` work; keep AI options immediately after
-`!ai`, before the next `!command`. The title still holds at most 20 bytes.
+`!ai`, before the next `!command`. Native short titles retain their 20-byte limit.
+For longer descriptive names, enable [extended room titles](room-titles.md) on clients,
+Agents and Battle servers and update `room_random` plus the AI Mods you use. For example:
+`Friendly practice for newcomers !ai e2 a1 lv4 !rand` (128 Unicode scalars / 512 UTF-8 bytes maximum).
+The whole title is read, including commands after byte 20; randomization itself remains server-side.
+Title transport does not install or enable the AI or random-loadout features.
+See [combined commands](room-commands.md).
 
 The incremental installer updates core and already installed `pvp_ai` / `coop_ai`
 DLLs together, preserving their manifests and settings. It does not install missing

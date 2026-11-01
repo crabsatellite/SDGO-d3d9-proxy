@@ -34,7 +34,14 @@ Set the room title, ready up and start normally. AI join at battle start.
 
 `eN` means the team opposite the host; `aN` means the host's team. Commands are
 case-insensitive, with at most six participants per team and twelve overall.
-The native room title holds 20 bytes; these commands fit. `lv1`–`lv5` select unit pools.
+`lv1`–`lv5` select unit pools. With [extended room titles](room-titles.md) enabled on clients,
+Agents and Battle servers, an updated `pvp_ai` reads commands anywhere in the confirmed full title
+(up to 128 Unicode scalars / 512 UTF-8 bytes). For example:
+`Friendly practice for newcomers !ai e2 a1 lv4 !rand`.
+With `room_random` also installed and enabled, humans randomize each round while AI retain their own pools.
+Keep `e2 a1 lv4` after `!ai`, before `!rand`; all participants still need `match_ai`.
+Without the title extension, the native 20-byte limit remains.
+See [combined commands](room-commands.md).
 
 Each battle samples the complete eligible pool again, including deck entries within
 the mode's points/count limits. The owner supplies the unit pool; selection covers

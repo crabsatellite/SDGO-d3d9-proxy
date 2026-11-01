@@ -20,6 +20,13 @@ bool readFailure=false,changeOwner=false;
 bool changeReady=false;
 bool addAiAfterValidation=false;
 bool nativeOverrideSecond=false;
+std::string fullTitle;
+uint32_t __cdecl FullTitle(uint32_t owner,char* out,uint32_t capacity) {
+    if(owner!=1001 || fullTitle.empty() || capacity<=fullTitle.size()) return 0;
+    std::memcpy(out,fullTitle.c_str(),fullTitle.size()+1);
+    return static_cast<uint32_t>(fullTitle.size());
+}
+const SdgoRoomTitleApi fullTitleApi{sizeof(SdgoRoomTitleApi),1,&FullTitle};
 
 uint8_t* Info(int slot) { return room.data()+kSlotBase+slot*kSlotStride; }
 void Title(std::vector<uint8_t>& dst,const char* text,size_t lengthOffset=kTitleLength,size_t textOffset=kTitle) {
@@ -111,6 +118,7 @@ uint8_t* __fastcall LobbyRoom(void*,void*,int,uint16_t) { return lobby.data(); }
 void __fastcall LobbyUnlock(void*,void*,int) {}
 
 void Reset(uint8_t mode=1,const char* title="!rand") {
+    g_titleApi=nullptr;fullTitle.clear();
     g_saved.clear();g_history.clear();g_attempt=nullptr;g_token=0;
     std::fill(room.begin(),room.end(),uint8_t{0});std::fill(lobby.begin(),lobby.end(),uint8_t{0});
     inventory.clear();metadata.clear();built.clear();requestedOwners.clear();ai_test::logs.clear();
@@ -321,6 +329,19 @@ int main() {
         Release(room.data(),nullptr);
     }
     DeleteCriticalSection(reinterpret_cast<CRITICAL_SECTION*>(lobbyProc.data()+0x38));
+
+    SCENARIO("confirmed full room title controls random rules beyond byte twenty");
+    for(uint8_t mode:{uint8_t{1},uint8_t{5},uint8_t{8},uint8_t{10}}) {
+        Reset(mode,"practice");g_titleApi=&fullTitleApi;
+        fullTitle=std::string(32,'x')+" !rand !ai3 lv4";
+        CHECK(Start()==0);CHECK(reads==1);CHECK(builds==2);
+        Release(room.data(),nullptr);
+        Reset(mode,"!rand");g_titleApi=&fullTitleApi;fullTitle="practice";
+        // This fixture's unchanged native selection has zero energy. Without
+        // !rand, the native validator must retain its original empty-unit error.
+        const auto untouched=Sources();
+        CHECK(Start()==0xFB4);CHECK(reads==0);CHECK(builds==0);CHECK(Sources()==untouched);
+    }
 
     SCENARIO("teardown never restores over a replacement room occupant");
     Reset();CHECK(Start()==0);Put<uint32_t>(Info(0),kOwner,2020);Put<uint32_t>(Info(0),kActive,999);

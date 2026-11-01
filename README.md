@@ -42,11 +42,12 @@ and random-unit gameplay belong in this category.
 <!-- mod-category:gameplay -->
 | Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
-| Mission AI wingmen | Add AI teammates with `!ai` in a mission title | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
-| PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
-| AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
+| Mission AI wingmen | Add AI teammates with `!ai` in a mission title; [long-title combinations](#long-room-title-commands) | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
+| PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
 | Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
-| Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`. | `room_random` | Battle server | [Use](docs/room-random.md) |
+| Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
+| Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
 <!-- /mod-category:gameplay -->
 
 The AI catalog is a separate, default-off addon; Base/Full framework packages do
@@ -56,6 +57,27 @@ Players run its included setup once, then use their normal launcher. Room titles
 such as `!ai e2 a1 lv2` use the expanded random pool; there is no extra selection
 screen. No SQL rows or game archives are rewritten. See the
 [owner installation and player distribution guide](docs/ai-catalog.md).
+
+<a id="long-room-title-commands"></a>
+
+### Longer room names and combined commands
+
+Mission wingmen, PvP AI and random loadouts can use [extended room titles](docs/room-titles.md)
+for descriptive names with several commands. With the matching three parts enabled,
+limits are **128 Unicode scalars / 512 UTF-8 bytes**, including commands after byte 20:
+
+| Use | Complete room title example |
+|---|---|
+| Mission: request three level-4 wingmen and randomize humans | `Weekend mission with friends !ai3 lv4 !rand` |
+| PvP: two enemies, one ally and random human loadouts | `Friendly practice for newcomers !ai e2 a1 lv4 !rand` |
+
+Existing player-slot limits still apply. Keep `lv4`, `e2` and `a1` after `!ai`, before the next `!command`.
+Enable `room_titles` on clients, `room_titles_agent` on Agents and `room_titles_server` on Battle servers,
+and update the consuming `coop_ai` / `pvp_ai` / `room_random` DLLs. Players use their normal launcher.
+The three title Mods default to off; AI and random-loadout features still need their own installation and settings.
+Without the title extension, use native 20-byte short titles.
+[Full command grammar and examples](docs/room-commands.md).
+
 
 <details>
 <summary>Short AI gameplay examples</summary>

@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "created_utc": "2026-11-01T02:48:46.209918+00:00",
+  "source_commit": "5ea8ffb50902912b61f2aad9b0565b7870488ffa",
+  "integration_base": "ff5a5c8",
+  "scope": "Offline automatic tests; no game login, gameplay, deployment or service restart",
+  "build": {
+    "generator": "Visual Studio 17 2022",
+    "platform": "Win32",
+    "configuration": "Release",
+    "result": "passed"
+  },
+  "ctest": {
+    "full_suite_passed": 28,
+    "full_suite_failed": 0,
+    "final_affected_checks_passed": 2,
+    "final_affected_checks": [
+      "package_catalog_offline",
+      "room_titles_client_offline"
+    ],
+    "logs": {
+      "full": "def0f080d3c1d090e57f484d8718b9305e665b6b7df4547b33c4b34023761ac5",
+      "affected": "72bdcb4f84268b4fa92dc415ba094b858388e720870e02b8c4da8c5b445f69e7"
+    }
+  },
+  "other_checks": {
+    "frp_python_tests": 7,
+    "network_runtime_fixtures": [
+      "net_route six cases",
+      "net_login three cases",
+      "agent_udp_pool four cases",
+      "frp installer client+Agent"
+    ],
+    "unrelated_source_equal_to_integration_base": true
+  },
+  "symbols": [
+    {
+      "role": "client",
+      "exit_code": 0,
+      "summary": "111 symbols, 0 rejected (GOnline-54BE1568-00C97000)"
+    },
+    {
+      "role": "battle",
+      "exit_code": 0,
+      "summary": "53 symbols, 0 rejected (BattleServer-548A891D-0046C000)"
+    },
+    {
+      "role": "agent",
+      "exit_code": 0,
+      "summary": "7 symbols, 0 rejected (AgentServer-548A86BC-000D7000)"
+    }
+  ],
+  "native_targets_sha256": {
+    "GOnline.exe": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+    "BattleServer.exe": "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4",
+    "AgentServer.exe": "7becced6510c078c48dfff2df1dbd73f6433d312056a862bd161fb4521d2df45"
+  },
+  "products": {
+    "room_titles": {
+      "sha256": "39bab43afe638a3d8b08f466b6c17d071f7be46ac1b73036da26d9b12f60d7d1",
+      "stage_path": "client/sdgo/mods/room_titles/room_titles.dll",
+      "machine": "x86",
+      "imports": [
+        "USER32.dll",
+        "KERNEL32.dll"
+      ]
+    },
+    "room_titles_agent": {
+      "sha256": "4806e53d69cce9186d142f6ccfbaaf0c22d325a0c0a7f42419e2103eb0a071e6",
+      "stage_path": "server/sdgo/mods/room_titles_agent/room_titles_agent.dll",
+      "machine": "x86",
+      "imports": [
+        "KERNEL32.dll"
+      ]
+    },
+    "room_titles_server": {
+      "sha256": "a93ab4b2258d9cfa790cc7de065ce5afb04923a467fdee315cd5e9f5c25365f3",
+      "stage_path": "server/sdgo/mods/room_titles_server/room_titles_server.dll",
+      "machine": "x86",
+      "imports": [
+        "bcrypt.dll",
+        "KERNEL32.dll"
+      ]
+    },
+    "coop_ai": {
+      "sha256": "c65c62c6cf12423a39b52420dbc390cee40ff6b291faa44df828009ea9a9d37a",
+      "stage_path": "server/sdgo/mods/coop_ai/coop_ai.dll",
+      "machine": "x86",
+      "imports": [
+        "KERNEL32.dll"
+      ]
+    },
+    "pvp_ai": {
+      "sha256": "15e5b405e1dd5fc38ca394b79f357a2455cc3d20a46f3c8241369517b65268b8",
+      "stage_path": "server/sdgo/mods/pvp_ai/pvp_ai.dll",
+      "machine": "x86",
+      "imports": [
+        "KERNEL32.dll"
+      ]
+    },
+    "room_random": {
+      "sha256": "9132600f05827bfec16f5299269235cffdd52809b049fd2686104399214f0f9c",
+      "stage_path": "server/sdgo/mods/room_random/room_random.dll",
+      "machine": "x86",
+      "imports": [
+        "ODBC32.dll",
+        "bcrypt.dll",
+        "KERNEL32.dll"
+      ]
+    }
+  },
+  "source_hash_normalization": "CRLF to LF, then SHA-256",
+  "source_hashes": {
+    "CMakeLists.txt": "f46ee9463325ea355c977b2ef2ee7e40719606498b5224fe2d2f44d1e4845bd1",
+    "include/sdgo/room_commands.h": "bb33fb74d728c8110acd7630236dbfe971ca76c9e50952246938c5cba5d44137",
+    "include/sdgo/room_titles.h": "e292d13e861e7605fd8c386a0a0341bab694502db0d005317c60ec115f46d59a",
+    "include/sdgo/room_titles_lookup.h": "9f3607812378b15fc3e75bf2f576b2c92f67c1ecc2f400194e56095f9fbc5cb0",
+    "mods/coop_ai/coop_ai.cpp": "6264a495aa1afc426bfe90aa6960efe8c2e13155de54111d594ce3ecd736e1d2",
+    "mods/coop_ai/mod.ini": "a93f6f8a66048c3bd2afa1203d1bac2ff9cd5cec91a6914e2873148b56da942a",
+    "mods/pvp_ai/mod.ini": "5fc5136624c9630f9bf5430d98fe74001d090fa8c8746fbc1439b0e40df95d68",
+    "mods/pvp_ai/pvp_ai.cpp": "68c26af817c051bf40e4abd5caff6a1a28e3c25cf4cc6a4616eb76acfd85e381",
+    "mods/room_metadata/common/room_metadata_common.cpp": "ff04111c79b556f67f488b2e63d555631a42336449a123d9f2ede1bfc67101ad",
+    "mods/room_metadata/common/room_metadata_common.h": "7661919f0e77fc6992ec309bbe906eef63550f74db6f59dfe748e49d674845fd",
+    "mods/room_random/config.example.ini": "050f258c37be764ae6050dedb5c47b06ae551f5ea4370d4dcc555913e137b239",
+    "mods/room_random/inventory.cpp": "5dfe95e438fd1035cecade936a391480ee2065168663ac11b9e38e3758b66987",
+    "mods/room_random/inventory.h": "385b5f9f5a74d52721249f21aa872c972382ff56ff892f77bafc0418bbd7cd2f",
+    "mods/room_random/mod.ini": "91b9364abaed800b042cf71301942f5e595fc541442c94d166aa7d349035d0ef",
+    "mods/room_random/room_random.cpp": "32b984a4c7b23766f568b89c4cecd06c0d23419ea5f7a3143af61948aca80ba1",
+    "mods/room_titles/client_state.cpp": "6ba5ba54c25161fdd661f5f31e6ab76d30a84c746435b61f2b8bb9e310cff9a9",
+    "mods/room_titles/client_state.h": "c79d9303a0d99837105331bbaa46ea826251217232ce30b190c3de422c570985",
+    "mods/room_titles/mod.ini": "5b2099be5476fecf986f462238be9265cf3c65b064e9362a613f446dfec239a6",
+    "mods/room_titles/native_submit_symbols.ini": "23fbad33e5ed76b15a579a37acef4ad94b6d2315556bd8100aaa41b1ba92ed31",
+    "mods/room_titles/native_transport.cpp": "beced42e1227908dd32c5b4afa8165212fa1632888434a32e805f5140334ccf9",
+    "mods/room_titles/native_transport.h": "cffc89be63e64b0324c58c87fa6ec6584b28f5054201b3f5b46692fc1dfad5aa",
+    "mods/room_titles/native_transport_symbols.ini": "7bbceeb18333757a42eab1bd81413d0d51988a8298a93880105f6f65b4fe8902",
+    "mods/room_titles/native_ui.cpp": "1a313ab9d4971f861028609f2ede7b2a12fcbde632296a4d1621370814f173a1",
+    "mods/room_titles/native_ui.h": "b9cc4f7c6efa04bc71b3fb139852960e254d02f8cc9004cfa4183980e8039829",
+    "mods/room_titles/native_ui_symbols.ini": "06dea5508a3e5532e7211b79b6f70c7a7cd0b0957ce640929b75c4da18064cbf",
+    "mods/room_titles/room_titles.cpp": "4d5c8700714092138ede0f1aa12c105098b852e8b729021b3dd3c09f8ba4e852",
+    "mods/room_titles_agent/mod.ini": "5fe9d1617e6e4346cf22eb2e0c2d76be1f42e50cca80489724003f92f900f3a5",
+    "mods/room_titles_agent/room_titles_agent.cpp": "20a652cbeca1f6add999ed160e9498845e67eb02b8400968f7f103b0bdf59ddf",
+    "mods/room_titles_server/mod.ini": "4b31906efdbf4606898008ea06d96b98cf60018cc11ae981b123f47b47847f47",
+    "mods/room_titles_server/native_symbols.ini": "cd3b3908fc8c5e147d23bf0b73bdd8827f4f01d56fa83bf25d44f6103d143ba0",
+    "mods/room_titles_server/room_domain.h": "fbb1388a04818ee15a39ee6929494fa952c8ed614286eb83175bc9b99ea5fb91",
+    "mods/room_titles_server/room_titles_server.cpp": "1f825bb194c5392cfc790ce4ee3861de95d1a241577cf66e85e904c679a16ac5",
+    "mods/room_titles_server/room_titles_server_logic.cpp": "d1d6f67530bfbe35247bdf626e26f667e2c29b72e18ab3ffb099c56e280e44cd",
+    "mods/room_titles_server/room_titles_server_logic.h": "c865284904b90b7ca042acbb9f039fc74f0a01010ca0938ea128cf490d6e2674"
+  },
+  "manual_acceptance": "NOT RUN; user will test mission modes 5/8/10 and PvP with two clients; see docs/room-titles-verification.md",
+  "optional_tests_not_run": [
+    "Lua simulation dependency not configured",
+    "unrelated live SQL database fixtures"
+  ],
+  "runtime_mutations": "none"
+}
