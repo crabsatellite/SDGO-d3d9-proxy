@@ -100,7 +100,7 @@ expect=55 8B EC 6A FF 68 07 75 E0 00 64 A1 00 00 00 00
 
 | key | meaning |
 |---|---|
-| `kind` | `code` (function start; `HookCode` and plain calls), `site` (an instruction inside a function; only verified, for checks), `slot` (a pointer in memory such as a vtable entry; `HookSlot`), `data` (an address of a global; not verified) |
+| `kind` | `code` (function start; `HookCode` and plain calls), `site` (verified instruction boundary; checks or `HookSite`), `slot` (a pointer in memory such as a vtable entry; `HookSlot`), `data` (an address of a global; not verified) |
 | `rva` | address minus the preferred image base (0x00400000 for both hosts) |
 | `expect` | at least 5 bytes expected at `rva`, hex, `??` for wildcards; required for `code` and `site` |
 | `target_rva` | `slot` only: the rva the pointer must currently point to |
@@ -150,6 +150,7 @@ enabled=1                 ; 0 skips the mod (sdgo.ini [mods] my_mod=0 does the s
 hosts=GOnline-54BE1568-00C97000          ; comma list; the mod loads only into these
 requires=CMissionMode.Init,lua.pcall     ; symbols that must verify, or the mod is skipped
 files=rules.example.json              ; extra shipped data, also list in CMake FILES
+runtime_files=host_helper.exe         ; optional generated EXE, staged by its build target
 config_files=config.ini,roster.json    ; user-owned files to preserve during updates
 
 [settings]
@@ -169,6 +170,9 @@ extra directory layer. The public ABI and mod IDs remain unchanged.
 `files` lists additional payload files relative to the mod directory. `config_files`
 lists user configuration files owned by that mod; updaters preserve existing ones
 unless `-OverwriteConfig` is explicit. Shipped examples and code still update.
+`runtime_files` declares generated native helper EXEs that are required beside a
+mod, such as the shop catalog apply engine. The publisher validates their staged
+presence and copies only declared files; they are never treated as user config.
 Only relative config/data paths are allowed: no parent traversal, absolute paths,
 DLLs or replacement manifests. Mods read their own data via `ModDirectory`; this
 does not change the existing `[settings]` API or invent a new data format.
@@ -199,6 +203,14 @@ SDGO_MOD_ENTRY      // extern "C" __declspec(dllexport) int __cdecl SdgoModLoad(
 | `FindRoomCommand(title, length, name, flags, &out)` | optional API 1 extension: bounded, case-insensitive room-title command lookup; arguments end at the next `!command` |
 | `HookSite(mod, name, detour, &original)` | optional API 1 extension: detour at a verified `kind=site` instruction boundary; preserves the slot used by existing settlement mods |
 | `HookSystemExport(mod, dll, function, detour, &original)` | optional API 1 extension: MinHook detour on a named export in an already loaded system DLL; `dll` is a wide basename, resolved in the system directory |
+
+An instruction site has no function-call ABI. Before using `HookSite`, check
+`api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite)` and a non-null pointer.
+Site detours preserve live registers, flags, stack and FP/SIMD state, then jump to
+the supplied trampoline. Site hooks use the same queued activation, ownership and
+failed-load rollback as `HookCode`. The daily reward Mod also pins separate argument
+layout signatures before touching the captured frame. Existing API 1 fields keep
+their offsets and other Mods retain their configuration and hooks.
 
 The network mods use `ModDirectory` to read `config.ini` without changing this ABI.
 When present, its `[settings]` section is authoritative; otherwise they use the

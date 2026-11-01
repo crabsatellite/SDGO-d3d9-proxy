@@ -17,7 +17,7 @@ function Get-ModConfigPaths([string]$sourceRoot) {
                 @($parts | Where-Object { $_ -in @('', '.', '..') -or $_.EndsWith(' ') -or $_.EndsWith('.') }).Count) {
                 throw "Unsafe config_files path in $manifest : $file"
             }
-            if ([IO.Path]::GetExtension($file).ToLowerInvariant() -notin @('.ini','.json','.toml','.yaml','.yml','.cfg','.txt') -or
+            if ([IO.Path]::GetExtension($file).ToLowerInvariant() -notin @('.ini','.json','.toml','.yaml','.yml','.cfg','.txt','.tsv') -or
                 [IO.Path]::GetFileName($file) -ieq 'mod.ini') {
                 throw "Not a user config file in $manifest : $file"
             }

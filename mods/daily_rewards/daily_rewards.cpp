@@ -6,7 +6,7 @@
 #include <cstring>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mod_settings.h"
-#include "reward_window.h"
+#include "sdgo/reward_window.h"
 #include "reward_sites.h"
 
 namespace {
