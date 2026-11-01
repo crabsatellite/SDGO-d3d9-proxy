@@ -153,8 +153,14 @@ def ini_parser() -> configparser.ConfigParser:
 def read_ini(path: Path) -> configparser.ConfigParser:
     parser = ini_parser()
     try:
-        parser.read_string(path.read_text(encoding="utf-8-sig"))
-    except (OSError, configparser.Error) as error:
+        raw=path.read_bytes()
+        if raw.startswith((b'\xff\xfe',b'\xfe\xff')):
+            decoded=raw.decode('utf-16')
+        else:
+            try:decoded=raw.decode('utf-8-sig')
+            except UnicodeDecodeError:decoded=raw.decode('cp936')
+        parser.read_string(decoded)
+    except (OSError, UnicodeError, configparser.Error) as error:
         raise GameTestError(f"invalid INI file {path}: {error}") from error
     return parser
 
@@ -176,7 +182,17 @@ def copy_file_if_missing(source: Path, destination: Path) -> None:
 
 
 def manifest_requires(path: Path) -> set[str]:
-    parser = read_ini(path)
+    try:
+        parser = read_ini(path)
+    except GameTestError:
+        # An unrelated diagnostic may have legacy duplicate settings sections.
+        # Dependencies belong to its first native [mod] section; do not rewrite
+        # or reinterpret that diagnostic's authored settings.
+        raw=path.read_bytes()
+        decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
+        match=re.search(r'(?ims)^\s*\[mod\]\s*\n(.*?)(?=^\s*\[|\Z)',decoded)
+        if not match:raise GameTestError(f'manifest lacks [mod]: {path}') from None
+        parser=ini_parser();parser.read_string('[mod]\n'+match[1])
     try:
         value = parser["mod"].get("requires", "")
     except KeyError as error:
@@ -184,16 +200,18 @@ def manifest_requires(path: Path) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
-def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests: list[Path]) -> None:
+def merge_required_symbols(stage_symbols: Path, copied_symbols: Path, manifests: list[Path], *, preserve_existing: bool = False) -> None:
     source = read_ini(stage_symbols)
     destination = read_ini(copied_symbols) if copied_symbols.is_file() else ini_parser()
     required = {"host"}
     for manifest in manifests:
         required.update(manifest_requires(manifest))
-    missing = sorted(section for section in required if not source.has_section(section))
+    missing = sorted(section for section in required if not source.has_section(section) and
+                     not (preserve_existing and destination.has_section(section)))
     if missing:
         raise GameTestError(f"stage host symbols lack required sections: {', '.join(missing)}")
     for section in sorted(required):
+        if not source.has_section(section):continue
         if destination.has_section(section):
             destination.remove_section(section)
         destination.add_section(section)
@@ -269,6 +287,30 @@ def overlay_observer(root: Path, stage: Path) -> None:
         write_ini(target_manifest,current_manifest)
         shutil.copy2(staged_target_dll, target_dll)
 
+    # Exercise the built master implementation of every already-installed Mod,
+    # including its Lua policy, while keeping private owner settings local.
+    # An unrelated installed addon without a staged counterpart is preserved.
+    updated_manifests=[observer_target/'mod.ini',target_manifest]
+    for staged_manifest in sorted((stage_client/'sdgo/mods').glob('*/mod.ini')):
+        identifier=staged_manifest.parent.name
+        if identifier in (TEST_MOD,TARGET_MOD):continue
+        destination=root/'sdgo/mods'/identifier
+        installed_manifest=destination/'mod.ini'
+        if not installed_manifest.is_file():continue
+        current=read_ini(staged_manifest)
+        if current.get('mod','category',fallback='')=='development':continue
+        previous=read_ini(installed_manifest)
+        if current.get('mod','id',fallback='')!=identifier:
+            raise GameTestError(f'staged Mod identity mismatch: {identifier}')
+        if previous.has_section('settings'):
+            if not current.has_section('settings'):current.add_section('settings')
+            for key,value in previous.items('settings',raw=True):current['settings'][key]=value
+        write_ini(installed_manifest,current)
+        updated_manifests.append(installed_manifest)
+        for payload in staged_manifest.parent.iterdir():
+            if payload.is_file() and payload.suffix.lower() in ('.dll','.lua'):
+                shutil.copy2(payload,destination/payload.name)
+
     stage_symbols = stage_client / "sdgo" / "symbols" / f"{HOST_KEY}.ini"
     copied_symbols = root / "sdgo" / "symbols" / f"{HOST_KEY}.ini"
     if not stage_symbols.is_file():
@@ -276,8 +318,10 @@ def overlay_observer(root: Path, stage: Path) -> None:
     merge_required_symbols(
         stage_symbols,
         copied_symbols,
-        [observer_target / "mod.ini", target_manifest],
+        updated_manifests,
     )
+    retained_manifests=[manifest for manifest in (root/'sdgo/mods').glob('*/mod.ini') if manifest not in updated_manifests]
+    merge_required_symbols(stage_symbols,copied_symbols,retained_manifests,preserve_existing=True)
     enable_test_configuration(root)
 
 
@@ -309,6 +353,11 @@ def configure_muted_audio(root: Path) -> dict:
     path=root/'config.xml'
     try:
         tree=ET.parse(path)
+        video=tree.getroot().find('Video')
+        if video is None:video=ET.SubElement(tree.getroot(),'Video')
+        screen=video.find('ScreenMode')
+        if screen is None:screen=ET.SubElement(video,'ScreenMode',{'width':'1024','height':'768','bpp':'32'})
+        screen.set('mode','window');screen.set('windowFull','0')
         sound=tree.getroot().find('Sound')
         if sound is None:raise ValueError('missing Sound settings')
         for key in ('BGMVolume','EffectVolume','VoiceVolume'):
@@ -325,7 +374,11 @@ def configure_muted_audio(root: Path) -> dict:
 
 def validate_muted_audio(root: Path) -> None:
     try:
-        sound=ET.parse(root/'config.xml').getroot().find('Sound')
+        document=ET.parse(root/'config.xml').getroot()
+        screen=document.find('Video/ScreenMode')
+        if screen is None or screen.get('mode')!='window' or screen.get('windowFull')!='0':
+            raise ValueError('background tests must use a windowed device and may not change the display mode')
+        sound=document.find('Sound')
         if sound is None or any(sound.find(key) is None or
             sound.find(key).get('Value')!='0' or sound.find(key).get('use') not in ('true','false')
             for key in ('BGMVolume','EffectVolume','VoiceVolume')):
@@ -337,6 +390,7 @@ def validate_muted_audio(root: Path) -> None:
 class QuietRuntime:
     def __init__(self,metadata: dict,receipt_dir: Path):
         self.metadata=metadata;self.directory=receipt_dir;self.process=None;self.firewall=None;self.firewall_attempted=False
+        self.proof_file_written=False
         self.receipt={'status':'preparing','audio':'muted','background':True}
 
     def firewall_action(self,action: str) -> dict:
@@ -378,13 +432,21 @@ class QuietRuntime:
         return self.process
 
     def verify(self,pid: int) -> dict | None:
-        proof=self.process.verify_background(pid)
+        marker=Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-sockets.ini'
+        guard=read_ini(marker) if marker.is_file() else None
+        matching=guard is not None and guard.get('run','id',fallback='')==self.metadata['run_id'] and guard.getint('policy','pid',fallback=0)==pid
+        proxy=guard.getint('graphics','proxy_hwnd',fallback=0) if matching else 0
+        proof=self.process.verify_background(pid,allowed_input_windows=(proxy,) if proxy else ())
+        if self.receipt.get('desktop_probe')!=proof:
+            self.receipt['desktop_probe']=proof
+            self.save()
         if not proof.get('foreground_safe',False):raise GameTestError('owned game attempted to take the user foreground')
         if not proof.get('verified',False):return None
-        marker=Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-sockets.ini'
-        if not marker.is_file():return None
-        guard=read_ini(marker)
-        if guard.get('run','id',fallback='')!=self.metadata['run_id'] or guard.getint('policy','pid',fallback=0)!=pid:return None
+        if not matching:return None
+        if (not proxy or guard.getint('graphics','active',fallback=0)!=1 or guard.getint('graphics','worker_ready',fallback=0)!=1 or
+            guard.getint('graphics','created_devices',fallback=0)<1):return None
+        if guard.getint('graphics','dispatch_failures',fallback=0):raise GameTestError('native background graphics dispatch failed')
+        proof['graphics_backend']='native_d3d9_hal_hidden_proxy'
         opened=guard.getint('audio','opened',fallback=0)
         if guard.getint('audio','active',fallback=0)!=1 or opened<1:return None
         if guard.getint('audio','muted',fallback=0)!=opened or guard.getint('audio','failed',fallback=0):
@@ -403,9 +465,11 @@ class QuietRuntime:
         proof={**proof,'audio_muted':True,'firewall_verified':network_verified,'pid':pid}
         if self.receipt.get('proof')!=proof:
             self.receipt.update(status='running',proof=proof);self.save()
-        parser=ini_parser();parser['run']={'id':self.metadata['run_id']}
-        parser['quiet']={'pid':str(pid),'verified':'1','audio_muted':'1','firewall_verified':'1'}
-        write_ini(Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-verified.ini',parser)
+        if not self.proof_file_written:
+            parser=ini_parser();parser['run']={'id':self.metadata['run_id']}
+            parser['quiet']={'pid':str(pid),'verified':'1','audio_muted':'1','firewall_verified':'1'}
+            write_ini(Path(self.metadata['client']['root'])/'sdgo/gametest/quiet-verified.ini',parser)
+            self.proof_file_written=True
         return proof
 
     def close(self) -> dict:
@@ -838,7 +902,7 @@ def collect_hashes(root: Path) -> tuple[dict, dict]:
             bind(path, immutable)
     mods = root / "sdgo" / "mods"
     for path in sorted(mods.glob("*/*"), key=lambda item: item.as_posix().lower()):
-        if path.is_file() and (path.name.lower() == "mod.ini" or path.suffix.lower() == ".dll"):
+        if path.is_file() and (path.name.lower() == "mod.ini" or path.suffix.lower() in {".dll", ".lua"}):
             bind(path, immutable)
     for name in ("config.xml", "配置文件.ini"):
         path = root / name
@@ -863,11 +927,7 @@ def _remove_owned_preparation(path: Path, token: str) -> str:
         return f"retained preparation with unverifiable marker: {path}"
     if data.get("token") != token or resolved.parent != target.parent:
         return f"retained preparation outside its verified target parent: {path}"
-    try:
-        shutil.rmtree(path)
-        return f"removed owned preparation: {path}"
-    except OSError as error:
-        return f"retained owned preparation after cleanup error {error}: {path}"
+    return f"retained owned preparation for recoverable Recycle Bin cleanup: {path}"
 
 
 def rename_prepared_directory(source: Path, target: Path, timeout: float = 5.0) -> None:
@@ -1445,6 +1505,9 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
             deadline = time.monotonic() + max(0.0, timeout)
             status = "running"
             while time.monotonic() < deadline:
+                if has_run_end(events):
+                    status = "completed"
+                    break
                 if quiet_runtime:
                     proof=quiet_runtime.verify(game_process['pid'])
                     if proof and not metadata['execution'].get('quiet_verified'):
@@ -1455,9 +1518,6 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                     if proof:
                         metadata['execution']['network_verified']=proof
                         atomic_write(run_dir/'run.json',json.dumps(metadata,indent=2,sort_keys=True))
-                if has_run_end(events):
-                    status = "completed"
-                    break
                 if process_image_path(game_process["pid"]) is None:
                     status = "game_exited"
                     break

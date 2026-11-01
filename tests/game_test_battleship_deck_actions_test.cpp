@@ -74,6 +74,7 @@ uint8_t g_lobbyRoot = 0;
 uint8_t g_lobbyControl[0x180] = {};
 uint8_t g_unitInfo[0x100] = {};
 uint8_t g_inventory[8][kFullUnitSize] = {};
+uint8_t g_briefInventory[8][0x19] = {};
 uint8_t g_grids[4][0x140] = {};
 uint8_t g_serviceManagerObject = 0;
 void* g_serviceManager = &g_serviceManagerObject;
@@ -357,7 +358,7 @@ void* __fastcall FakeUnitBriefBySlot(
     if (self == g_unitInfo &&
         slot < sizeof(g_inventory) /
             sizeof(g_inventory[0]))
-        std::memcpy(output, g_inventory[slot], 0x19);
+        std::memcpy(output, g_briefInventory[slot], 0x19);
     return output;
 }
 
@@ -752,6 +753,7 @@ int ApiHookCode(
 void InitializeInventory()
 {
     std::memset(g_inventory, 0, sizeof(g_inventory));
+    std::memset(g_briefInventory,0,sizeof(g_briefInventory));
     *reinterpret_cast<uint32_t*>(g_inventory[1]) =
         270005;
     WriteUid(g_inventory[1] + 0x08, 90001);
@@ -768,6 +770,11 @@ void InitializeInventory()
             full[at] =
                 static_cast<uint8_t>(
                     i * 17 + at);
+    }
+    for (unsigned slot=1;slot<8;++slot) {
+        std::memcpy(g_briefInventory[slot],g_inventory[slot],4);
+        WriteUid(g_briefInventory[slot]+4,ReadUid(g_inventory[slot]+8));
+        *reinterpret_cast<uint16_t*>(g_briefInventory[slot]+12)=static_cast<uint16_t>(slot);
     }
 }
 
@@ -963,7 +970,7 @@ bool DeliverGoOutReply(
 void TestLobbyEntry(BattleShipDeckActions& decks)
 {
     ResetFixture(decks);
-    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 6;
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
     *reinterpret_cast<void***>(g_lobbyManager) =
         g_lobbyVtable;
     *reinterpret_cast<void**>(
@@ -978,7 +985,7 @@ void TestLobbyEntry(BattleShipDeckActions& decks)
         result ==
             BattleShipDeckActions::kOpeningBattleShip &&
             g_lobbyCalls == 1,
-        "app 6 resolves unitmgr and invokes the verified SelectBattleShipBtn callback");
+        "app 5 resolves unitmgr and invokes the verified SelectBattleShipBtn callback");
 }
 
 void TestFullRecordSaveAndDoubleGoOut(
@@ -1101,6 +1108,31 @@ void TestNoAlternativeFailsClosed(
             BattleShipDeckActions::kGoOutAlternativeMissing &&
             g_goOutCalls == 0,
         "already-current ship cannot pass without a new 04A6 or a real alternate ship");
+}
+
+void TestNativeInventoryReloadAfterSave(BattleShipDeckActions& decks)
+{
+    ResetFixture(decks);
+    Check(AdvanceToSaveRequest(decks) && DeliverSaveReply(decks),
+        "native inventory reload scenario consumed a genuine-shaped Save reply");
+    g_unitInfo[0x20]=0;
+    Check(decks.EnsureDeck(kTargetUids)==BattleShipDeckActions::kWaitingForInventory && g_goOutCalls==0,
+        "a temporary native inventory reload waits rather than reporting ownership mutation");
+    g_unitInfo[0x20]=1;
+    Check(decks.EnsureDeck(kTargetUids)==BattleShipDeckActions::kGoingOut,
+        "the native deck flow resumes after the existing inventory is ready again");
+}
+
+void TestSaveInvalidatesLazyFullDetails(BattleShipDeckActions& decks)
+{
+    ResetFixture(decks);
+    Check(AdvanceToSaveRequest(decks) && DeliverSaveReply(decks),"lazy-detail invalidation scenario consumed Save");
+    std::memset(g_inventory[2],0,kFullUnitSize);
+    Check(decks.EnsureDeck(kTargetUids)==BattleShipDeckActions::kGoingOut,
+        "server brief identity and consumed Save survive native invalidation of cached Full99 details");
+    WriteUid(g_briefInventory[2]+4,999999);
+    Check(decks.EnsureDeck(kTargetUids)==BattleShipDeckActions::kRequiredUnitChanged,
+        "a real brief ownership change still fails even when the full-detail cache is absent");
 }
 
 void TestSaveReplyMismatch(
@@ -1315,6 +1347,8 @@ int main()
         TestExistingDeckCleaningUsesUidOffset(decks);
         TestFullRecordSaveAndDoubleGoOut(decks);
         TestNoAlternativeFailsClosed(decks);
+        TestNativeInventoryReloadAfterSave(decks);
+        TestSaveInvalidatesLazyFullDetails(decks);
         TestSaveReplyMismatch(decks);
         TestGoOutReplyMismatch(decks);
         TestReplyObserverGuards(decks);

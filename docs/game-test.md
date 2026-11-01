@@ -16,7 +16,11 @@ start tests or change ordinary play.
 
 Tests default to a separate background desktop with BGM, effects and voice
 muted in the copied client. Desktop/window ownership is checked separately and
-missing evidence fails the run. Local direct tests bind only loopback and do
+missing evidence fails the run. A dedicated graphics thread creates the real
+D3D9 device through one invisible, nonactivating proxy; actual game pages stay
+on the private desktop. Fullscreen is rejected. The native Miles WaveOut
+driver's zero master gain is read back independently. These checks do not claim
+visual acceptance. Local direct tests bind only loopback and do
 not change firewall profiles or notifications. Nonlocal quiet runs require
 permission to prepare their scoped application rule; setup failure never opens
 a UAC prompt or falls back to an interactive client.

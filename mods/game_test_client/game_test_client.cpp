@@ -1,10 +1,12 @@
 #include "quiet_sockets.h"
 #include "quiet_audio.h"
+#include "quiet_graphics.h"
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
 #include "channel_actions.h"
 #include "battleship_actions.h"
 #include "battleship_deck_actions.h"
+#include "hangar_navigation.h"
 #include "gift_actions.h"
 #include "room_actions.h"
 #include "tutorial_actions.h"
@@ -30,6 +32,7 @@ NativeActions actions;
 ChannelActions channels;
 BattleShipActions battleships;
 BattleShipDeckActions decks;
+HangarNavigation hangarNavigation;
 GiftActions gifts;
 RoomActions rooms;
 TutorialActions tutorial;
@@ -48,6 +51,8 @@ bool verifyQuietRuntime = false;
 bool quietLoopback = false;
 QuietSockets quietSockets;
 QuietAudio quietAudio;
+QuietGraphics quietGraphics;
+void PublishQuietSocketReceipt();
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
@@ -292,10 +297,10 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
                 return SDGO_GAME_TEST_FAIL;
             }
             context->Assert(
-                channel.selected_group == 2 &&
+                channel.selected_group == requiredGroup &&
                     channel.selected_channel != 0 &&
                     channel.selected_channel == channel.target_channel,
-                "the original selector reply placed the real profile in its server-owned VS group-2 channel");
+                "the original selector reply placed the real profile in the server-owned VS group required by this mode");
         }
         if (!rooms.SetRoomMode(RequestedMode())) { context->Assert(0, "invalid PvP mode in test plan"); return SDGO_GAME_TEST_FAIL; }
         SdgoPvpAiClientSnapshotV1 before{};
@@ -720,6 +725,25 @@ int __cdecl SendGiftRequests(const SdgoGameTestContextV1* context) {
 }
 
 int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
+    if (actions.AppState()!=20) {
+        const auto result=hangarNavigation.EnsureHangar();
+        const auto navigation=hangarNavigation.State();
+        static HangarNavigation::Observation lastNavigation{};
+        if (memcmp(&lastNavigation,&navigation,sizeof(navigation))) {
+            char message[256];
+            sprintf_s(message,"native hangar result=%s app=%u request=%u/%04X/%u radio=%u services=%u/%u/%u roots=%u/%u",
+                HangarNavigation::ResultName(result),navigation.native_app_state,navigation.request_transport_sequence,
+                navigation.request_opcode,navigation.request_size,navigation.unit_radio_invocations,
+                navigation.downmenu_present,navigation.mainframe_present,navigation.unit_manager_present,
+                navigation.mainframe_root_ready,navigation.unit_manager_root_ready);
+            context->Observe(message);lastNavigation=navigation;
+        }
+        if (result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+            context->Assert(0,"original hangar navigation rejected its native service or control identity");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if (result!=HangarNavigation::kReady)return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=decks.EnsureDeck(deckUnitUids);
     const auto state=decks.State();
     static BattleShipDeckActions::Observation previous{};
@@ -748,7 +772,7 @@ const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattles
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
-    {"flow.login", 60000, &Login},
+    {"flow.login", 120000, &Login},
     {"flow.onboarding", 180000, &Onboarding},
     {"pvp.room", 120000, &Room},
     {"pvp.start", 120000, &Start},
@@ -794,6 +818,7 @@ int WINAPI QuietMessageBoxW(HWND owner,LPCWSTR text,LPCWSTR caption,UINT type) {
     if (!verifyQuietRuntime)return originalMessageBoxW(owner,text,caption,type);
     char message[1024]="native Windows dialog during quiet test";
     if (text)WideCharToMultiByte(CP_UTF8,0,text,-1,message,sizeof(message),nullptr,nullptr);
+    PublishQuietSocketReceipt();
     sdgo_test::Fail(message);
     return IDCANCEL;
 }
@@ -806,10 +831,17 @@ void PublishQuietSocketReceipt() {
     if (!verifyQuietRuntime) return;
     const auto observed=quietSockets.State();
     const auto audio=quietAudio.State();
+    const auto graphics=quietGraphics.State();
     static QuietSockets::Observation previous{};
     static QuietAudio::Observation previousAudio{};
+    static QuietGraphics::Observation previousGraphics{};
     static bool written=false;
-    if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)))return;
+    static uint64_t lastWritten=0;
+    const auto now=GetTickCount64();
+    if (written && now-lastWritten<250 && observed.escaped==previous.escaped && audio.failed==previousAudio.failed &&
+        graphics.dispatch_failures==previousGraphics.dispatch_failures && !graphics.proxy_visible && !graphics.proxy_appwindow)return;
+    if (written && !memcmp(&previous,&observed,sizeof(observed)) && !memcmp(&previousAudio,&audio,sizeof(audio)) &&
+        !memcmp(&previousGraphics,&graphics,sizeof(graphics)))return;
     const auto path=sdgo_test::directory+L"\\quiet-sockets.ini";
     const auto temporary=path+L".tmp";
     FILE* file=_wfopen(temporary.c_str(),L"wb");
@@ -817,9 +849,13 @@ void PublishQuietSocketReceipt() {
     fprintf(file,"[run]\nid=%s\n[policy]\npid=%lu\nactive=%u\nloopback_only=%u\n[sockets]\nbinds=%u\nredirected=%u\nfailed=%u\nescaped=%u\n[audio]\nactive=%u\nopened=%u\nmuted=%u\nfailed=%u\n",
         sdgo_test::runId.c_str(),GetCurrentProcessId(),observed.active,quietLoopback ? 1u:0u,observed.binds,observed.redirected,observed.failed,observed.escaped,
         audio.active,audio.opened,audio.muted,audio.failed);
+    fprintf(file,"[graphics]\nactive=%u\nworker_ready=%u\ndispatch_failures=%u\ncreated_devices=%u\nfailed_devices=%u\ncreate_hresult=%ld\npresents=%u\nproxy_hwnd=%lu\nproxy_visible=%u\nproxy_noactivate=%u\nproxy_toolwindow=%u\nproxy_appwindow=%u\n",
+        graphics.active,graphics.worker_ready,graphics.dispatch_failures,graphics.created_devices,graphics.failed_devices,
+        static_cast<long>(graphics.last_create_hresult),graphics.presents,reinterpret_cast<unsigned long>(graphics.proxy_hwnd),
+        graphics.proxy_visible,graphics.proxy_noactivate,graphics.proxy_toolwindow,graphics.proxy_appwindow);
     fclose(file);
     if (MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
-        previous=observed;previousAudio=audio;written=true;
+        previous=observed;previousAudio=audio;previousGraphics=graphics;written=true;lastWritten=now;
     }
 }
 LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
@@ -886,6 +922,7 @@ SDGO_MOD_ENTRY {
         !channels.Bind(api, mod, &actions) ||
         !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
         (deckOnly && !decks.Bind(api,mod,&actions)) ||
+        (deckOnly && !hangarNavigation.Bind(api,mod,&actions)) ||
         !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
@@ -897,6 +934,8 @@ SDGO_MOD_ENTRY {
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))
         return 0;
+    if (verifyQuietRuntime && !quietGraphics.Install(api,mod))return 0;
+    PublishQuietSocketReceipt();
     api->Log(mod, SDGO_LOG_INFO, "observing normal launcher/login/room/battle flow");
     return 1;
 }

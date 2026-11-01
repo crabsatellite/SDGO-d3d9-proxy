@@ -78,6 +78,27 @@ class FailingApi:
 
 
 class BackgroundProcessPolicyTests(unittest.TestCase):
+    def test_input_desktop_proxy_is_allowed_only_with_exact_hidden_window_identity(self):
+        class Api:
+            def desktop_state(self,desktop,pid):return game_test_windows._DesktopState('owned-private',1,1)
+            def input_desktop_state(self,pid):return game_test_windows._DesktopState('Default',1,1,(self.window,))
+            def foreground_pid(self):return 99
+        api=Api()
+        owner=game_test_windows.WindowsBackgroundProcess.__new__(game_test_windows.WindowsBackgroundProcess)
+        owner.pid=100;owner.run_id='offline';owner.desktop_name='owned-private';owner.desktop_path='WinSta0\\owned-private'
+        owner._desktop_handle=123;owner._api=api;owner._input_desktop_at_launch='Default';owner._closed=True
+        original={'hwnd':456,'class_name':'SDGO.GameTest.GraphicsProxy','visible':False,
+                  'noactivate':True,'toolwindow':True,'appwindow':False}
+        api.window=original.copy()
+        self.assertTrue(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
+        self.assertFalse(owner.verify_background(100)['verified'])
+        with mock.patch.object(api,'input_desktop_state',return_value=game_test_windows._DesktopState('Default',0,0)):
+            self.assertFalse(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
+        for key,value in (('visible',True),('noactivate',False),('toolwindow',False),
+                          ('appwindow',True),('class_name','different'),('hwnd',789)):
+            api.window={**original,key:value}
+            with self.subTest(field=key):self.assertFalse(owner.verify_background(100,allowed_input_windows=(456,))['verified'])
+
     def test_rejects_command_strings_and_invalid_environment(self):
         with self.assertRaises(TypeError):
             game_test_windows._argument_list("python -c pass")

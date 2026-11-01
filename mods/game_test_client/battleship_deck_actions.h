@@ -214,7 +214,7 @@ public:
 
         __try {
             const uint32_t appState = native_->AppState();
-            if (appState == kLobbyAppState)
+            if (appState == kHangarAppState)
                 return EnterBattleShipRoom();
             if (appState != kBattleShipAppState)
                 return Publish(
@@ -250,8 +250,10 @@ public:
                 if (inventory != kAccepted)
                     return Publish(inventory);
                 inventoryResolved_ = true;
-            } else if (!RequiredInventoryStillMatches()) {
-                return Publish(kRequiredUnitChanged);
+            } else {
+                const auto* inventory=unitInfoPointer_ ? static_cast<const uint8_t*>(*unitInfoPointer_):nullptr;
+                if (!inventory || inventory[kUnitInfoReady]==0)return Publish(kWaitingForInventory);
+                if (!RequiredInventoryStillMatches())return Publish(kRequiredUnitChanged);
             }
 
             if (EditorBusy(editor))
@@ -545,6 +547,7 @@ public:
 
 private:
     static constexpr uint32_t kLobbyAppState = 6;
+    static constexpr uint32_t kHangarAppState = 5;
     static constexpr uint32_t kBattleShipAppState = 20;
     static constexpr uint32_t kDeckSize = 4;
     static constexpr uint32_t kRequiredTotalCost = 8;
@@ -840,17 +843,29 @@ private:
                 unitInfo,
                 brief,
                 static_cast<uint16_t>(ownedUnits_[i].slot));
-            if (*reinterpret_cast<uint32_t*>(brief) == 0)
+            if (*reinterpret_cast<uint32_t*>(brief) != ownedUnits_[i].id ||
+                ReadUid(brief+4)!=ownedUnits_[i].uid ||
+                *reinterpret_cast<uint16_t*>(brief+12)!=ownedUnits_[i].slot) {
+                if (api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,"deck inventory identity missing brief slot=%u ready=%u",ownedUnits_[i].slot,unitInfo[kUnitInfoReady]);
                 return false;
+            }
             unitFullBySlot_(
                 unitInfo,
                 full,
                 static_cast<uint16_t>(ownedUnits_[i].slot));
+            // The genuine 0A27 consumer invalidates lazy Full99 detail records
+            // after updating ship assignment. Its server-loaded brief identity
+            // remains authoritative; the original editor/manager/profile and
+            // new Save reply are checked separately before accepting the deck.
+            if (saveRequested_ && *reinterpret_cast<uint32_t*>(full)==0)continue;
             if (ReadUid(full + kFullUnitUid) !=
                     ownedUnits_[i].uid ||
                 *reinterpret_cast<uint32_t*>(full) !=
-                    ownedUnits_[i].id)
+                    ownedUnits_[i].id) {
+                if (api_->Log)api_->Log(mod_,SDGO_LOG_ERROR,"deck inventory identity mismatch slot=%u expected=%llu/%u actual=%llu/%u ready=%u",
+                    ownedUnits_[i].slot,ownedUnits_[i].uid,ownedUnits_[i].id,ReadUid(full+kFullUnitUid),*reinterpret_cast<uint32_t*>(full),unitInfo[kUnitInfoReady]);
                 return false;
+            }
         }
         return true;
     }

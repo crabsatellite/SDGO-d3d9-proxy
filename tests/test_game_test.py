@@ -403,6 +403,19 @@ rva=state
             game_test.sha256(copied / "match_ai.dll"),
         )
 
+    def test_preparation_uses_current_installed_mod_dll_lua_and_keeps_private_settings(self):
+        staged=self.stage/'client/sdgo/mods/other_mod';staged.mkdir()
+        (staged/'mod.ini').write_text(OTHER_MANIFEST+'\n[settings]\nStrength=2\n')
+        (staged/'other_mod.dll').write_bytes(b'current-master-addon')
+        (staged/'policy.lua').write_text('return "current-master-policy"')
+        original=self.template/'sdgo/mods/other_mod/mod.ini'
+        with original.open('a') as stream:stream.write('\n[settings]\nStrength=4\n')
+        run_dir=self.prepare('all-current-installed-mods');copied=run_dir/'client/sdgo/mods/other_mod'
+        self.assertEqual((copied/'other_mod.dll').read_bytes(),b'current-master-addon')
+        self.assertEqual((copied/'policy.lua').read_text(),'return "current-master-policy"')
+        self.assertEqual(game_test.read_ini(copied/'mod.ini')['settings']['Strength'],'4')
+        self.assertEqual((self.template/'sdgo/mods/other_mod/other_mod.dll').read_bytes(),b'other-addon')
+
     def test_two_prepares_reuse_persistent_account_without_public_credentials(self):
         first = self.prepare("private-first")
         second = self.prepare("private-second")
@@ -454,6 +467,23 @@ rva=state
         self.assertFalse((run_dir/'client/.sdgo-updater').exists())
         self.assertEqual((cache/'private-cache').read_bytes(),b'preserve-source')
 
+    def test_native_installer_utf16_manifest_is_read_without_changing_the_source(self):
+        manifest=self.template/'sdgo/mods/other_mod/mod.ini'
+        encoded=OTHER_MANIFEST.encode('utf-16');manifest.write_bytes(encoded)
+        run_dir=self.prepare('native-unicode-manifest')
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/mods/other_mod/mod.ini')['mod']['id'],'other_mod')
+        self.assertEqual(manifest.read_bytes(),encoded)
+
+    def test_runtime_lua_policy_is_bound_to_the_same_receipt_as_its_dll(self):
+        source=self.template/'sdgo/mods/other_mod/policy.lua'
+        source.write_text('return { policy = "original" }',encoding='utf-8')
+        run_dir=self.prepare('lua-identity')
+        copied=run_dir/'client/sdgo/mods/other_mod/policy.lua'
+        self.assertIn('sdgo/mods/other_mod/policy.lua',self.metadata(run_dir)['client']['immutable_hashes'])
+        copied.write_text('return { policy = "different" }',encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):game_test.verify_hashes(self.metadata(run_dir))
+        self.assertEqual(source.read_text(encoding='utf-8'),'return { policy = "original" }')
+
     def test_quiet_audio_tampering_fails_without_launching_a_window(self):
         run_dir=self.prepare('audible-copy')
         path=run_dir/'client/config.xml'
@@ -462,6 +492,20 @@ rva=state
             report=game_test.run_prepared(run_dir,timeout=0,launch_timeout=0)
         launch.assert_not_called()
         self.assertEqual(report['status'],'fail')
+
+    def test_quiet_copy_cannot_request_fullscreen_or_change_the_owners_video_mode(self):
+        path=self.template/'config.xml'
+        tree=ET.parse(path);video=ET.SubElement(tree.getroot(),'Video')
+        ET.SubElement(video,'ScreenMode',{'mode':'full','windowFull':'1','width':'1920','height':'1080','bpp':'32'})
+        tree.write(path);original=path.read_bytes()
+        run_dir=self.prepare('quiet-windowed');copy=run_dir/'client/config.xml'
+        screen=ET.parse(copy).getroot().find('Video/ScreenMode')
+        self.assertEqual((screen.get('mode'),screen.get('windowFull')),('window','0'))
+        self.assertEqual(path.read_bytes(),original)
+        tree=ET.parse(copy);tree.getroot().find('Video/ScreenMode').set('mode','full');tree.write(copy)
+        with mock.patch.object(game_test.subprocess,'Popen') as launch:
+            self.assertEqual(game_test.run_prepared(run_dir,timeout=0,launch_timeout=0)['status'],'fail')
+        launch.assert_not_called()
 
     def test_completed_quiet_run_requires_background_and_cleanup_proof(self):
         run_dir=self.prepare('quiet-proof')
@@ -483,7 +527,7 @@ rva=state
         runtime.process.verify_background.return_value={'verified':True,'foreground_safe':True,'desktop':'offline-fixture'}
         marker=run_dir/'client/sdgo/gametest/quiet-sockets.ini'
         def write_marker(run_id,escaped):
-            marker.write_text(f'[run]\nid={run_id}\n[policy]\npid=1234\nactive=1\nloopback_only=1\n[sockets]\nescaped={escaped}\n[audio]\nactive=1\nopened=1\nmuted=1\nfailed=0\n')
+            marker.write_text(f'[run]\nid={run_id}\n[policy]\npid=1234\nactive=1\nloopback_only=1\n[sockets]\nescaped={escaped}\n[audio]\nactive=1\nopened=1\nmuted=1\nfailed=0\n[graphics]\nactive=1\nworker_ready=1\ncreated_devices=1\ndispatch_failures=0\nproxy_hwnd=456\n')
         self.assertIsNone(runtime.verify(1234))
         write_marker('different-run',0);self.assertIsNone(runtime.verify(1234))
         write_marker(meta['run_id'],1)
@@ -492,7 +536,10 @@ rva=state
         with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[{'local_ipv4':'0.0.0.0','local_port':4000}]):
             with self.assertRaises(game_test.GameTestError):runtime.verify(1234)
         with mock.patch.object(game_test,'owned_udp_endpoints',return_value=[{'local_ipv4':'127.0.0.1','local_port':4000}]):
-            self.assertTrue(runtime.verify(1234)['firewall_verified'])
+            with mock.patch.object(game_test,'write_ini',wraps=game_test.write_ini) as write:
+                self.assertTrue(runtime.verify(1234)['firewall_verified'])
+                self.assertTrue(runtime.verify(1234)['firewall_verified'])
+                self.assertEqual(write.call_count,1,'the sealed login proof must not race repeated native INI reads')
 
     @unittest.skipUnless(game_test.os.name=='nt','Windows process-owned UDP table')
     def test_actual_windows_udp_table_finds_the_owned_loopback_socket(self):
@@ -904,13 +951,17 @@ state=pending_first_login
             return process
 
         def finish_immediately(path):
+            if not getattr(finish_immediately,'checked',False):
+                finish_immediately.checked=True
+                return False
             self.write_events(run_dir, game_test.FLOW_CASES, include_end=True, pid=process.pid)
             return True
 
         with mock.patch.object(game_test.subprocess, "Popen", side_effect=launch), mock.patch.object(
             game_test, "NamedStartupEvent", FakeStartupEvent
         ), mock.patch.object(game_test, "has_run_end", side_effect=finish_immediately), mock.patch.object(
-            game_test,'owned_tcp_peers',return_value=[{'remote_ipv4':'127.0.0.1','remote_port':5001}]):
+            game_test,'owned_tcp_peers',return_value=[{'remote_ipv4':'127.0.0.1','remote_port':5001}]), mock.patch.object(
+            game_test,'process_image_path',return_value=metadata['client']['game']):
             report = game_test.run_prepared(run_dir, timeout=1, launch_timeout=0)
 
         self.assertEqual(

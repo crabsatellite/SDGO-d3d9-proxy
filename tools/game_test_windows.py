@@ -119,6 +119,7 @@ class _DesktopState:
     name: str
     window_count: int
     target_window_count: int
+    target_windows: tuple[dict, ...] = ()
 
 
 @dataclass
@@ -254,6 +255,12 @@ class _Win32Api:
         ]
         u.GetWindowThreadProcessId.restype = wintypes.DWORD
         u.GetForegroundWindow.restype = wintypes.HWND
+        u.IsWindowVisible.argtypes=[wintypes.HWND]
+        u.IsWindowVisible.restype=wintypes.BOOL
+        u.GetWindowLongW.argtypes=[wintypes.HWND,ctypes.c_int]
+        u.GetWindowLongW.restype=wintypes.LONG
+        u.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+        u.GetClassNameW.restype=ctypes.c_int
 
     @staticmethod
     def _error(message: str) -> OSError:
@@ -596,9 +603,10 @@ class _Win32Api:
 
     def _desktop_windows(
         self, desktop: int, target_pid: int,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, tuple[dict, ...]]:
         total = 0
         target = 0
+        target_windows=[]
         callback_type = ctypes.WINFUNCTYPE(
             wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
         )
@@ -617,6 +625,13 @@ class _Win32Api:
             )
             if owner.value == target_pid:
                 target += 1
+                class_name=ctypes.create_unicode_buffer(256)
+                self.user.GetClassNameW(wintypes.HWND(window),class_name,256)
+                extended_style=self.user.GetWindowLongW(wintypes.HWND(window),-20)&0xFFFFFFFF
+                target_windows.append({'hwnd':int(window),'class_name':class_name.value,
+                    'visible':bool(self.user.IsWindowVisible(wintypes.HWND(window))),
+                    'noactivate':bool(extended_style&0x08000000),'toolwindow':bool(extended_style&0x80),
+                    'appwindow':bool(extended_style&0x40000)})
             return True
 
         ctypes.set_last_error(0)
@@ -626,12 +641,12 @@ class _Win32Api:
             code = ctypes.get_last_error()
             if code:
                 raise self._error("EnumDesktopWindows failed")
-        return total, target
+        return total, target, tuple(target_windows)
 
     def desktop_state(self, desktop: int, target_pid: int) -> _DesktopState:
-        total, target = self._desktop_windows(desktop, target_pid)
+        total, target, windows = self._desktop_windows(desktop, target_pid)
         return _DesktopState(
-            self._user_object_name(desktop), total, target
+            self._user_object_name(desktop), total, target, windows
         )
 
     def input_desktop_state(self, target_pid: int) -> _DesktopState:
@@ -735,7 +750,7 @@ class WindowsBackgroundProcess:
             raise RuntimeError("process handle is closed")
         self._api.terminate(self._process_handle)
 
-    def verify_background(self, target_pid: int | None = None) -> dict:
+    def verify_background(self, target_pid: int | None = None, *, allowed_input_windows: tuple[int, ...] = ()) -> dict:
         """Return JSON-safe evidence that target_pid has a window only off-screen."""
         selected_pid = self.pid if target_pid is None else int(target_pid)
         receipt = {
@@ -767,6 +782,15 @@ class WindowsBackgroundProcess:
             )
             current_input = self._api.input_desktop_state(selected_pid)
             foreground_pid = self._api.foreground_pid()
+            allowed=set(allowed_input_windows)
+            # Only the native graphics worker's single, independently read-back
+            # hidden window can live on the input desktop. All game UI remains
+            # on its private desktop; a visible or unidentified proxy fails.
+            accepted=[row for row in current_input.target_windows if
+                row['hwnd'] in allowed and row['class_name']=='SDGO.GameTest.GraphicsProxy' and
+                not row['visible'] and row['noactivate'] and row['toolwindow'] and not row['appwindow']]
+            input_windows_safe=(len(allowed)<=1 and len(accepted)==current_input.target_window_count and
+                                {row['hwnd'] for row in accepted}==allowed)
             receipt.update(
                 background_window_count=background.window_count,
                 target_background_window_count=(
@@ -780,12 +804,14 @@ class WindowsBackgroundProcess:
                 input_target_window_count=(
                     current_input.target_window_count
                 ),
+                input_proxy_windows=accepted,
+                unexpected_input_window_count=current_input.target_window_count-len(accepted),
                 foreground_pid=foreground_pid,
                 foreground_safe=foreground_pid != selected_pid,
                 input_desktop_safe=(
                     current_input.name.casefold() !=
                     self.desktop_name.casefold() and
-                    current_input.target_window_count == 0
+                    input_windows_safe
                 ),
             )
             receipt["verified"] = bool(
