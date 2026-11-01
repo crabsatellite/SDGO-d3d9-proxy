@@ -5,8 +5,8 @@ from . import storage
 
 
 class Hangar(Provider):
-    id,title='hangar','机库整理服务端'
-    fields={'server_ini':'目标原生服务器 INI（需包含 DB Game 与 DB Member）'}
+    id,title='hangar','机库整理与批量回收服务端'
+    fields={'server_ini':'目标原生服务器 INI（需含 DB Game、DB Member、DB StoreBilling）'}
 
     def revision(self):return storage.revision(storage.json_bytes(self.config))
 

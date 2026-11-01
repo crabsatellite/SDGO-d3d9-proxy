@@ -3,6 +3,21 @@
 Server-persisted sorting and native duplicate exchange.
 [简体中文](hangar-manager.zh-CN.md)
 
+Version 0.4.0 makes GB preview immediate from the native inventory summary.
+It no longer requests every full unit record or waits for one network dismantle
+reply per unit. After two confirmations it transfers the exact selected IDs,
+types and slots, then submits one server transaction. The server rechecks owner,
+slot, active/locked/deck/rental/training protection, KeepCopies and reward rates;
+calls native dismantling and credits GB atomically. Incomplete selections do
+nothing; stale or failed batches roll back. Repeated messages do not repeat
+deletion or rewards. Update the server adapter through Manager as well as the
+client; log in again after submission. Experience-capsule exchange retains its
+separate native per-unit path.
+
+Sorting also ensures the registered capacity covers the resulting inventory in
+six-slot blocks, within the native 1200-slot limit. An imported inventory larger
+than `24 + ExpandSlotCount` can crash the native login slot writer.
+
 Version 0.3.0 requires the owner to install the server sort adapter once through
 Manager's hangar server panel, using the native INI with DB Game and DB Member.
 Players submit one request through their existing game connection and log in

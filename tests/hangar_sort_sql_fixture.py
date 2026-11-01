@@ -12,8 +12,8 @@ from manager.engines.hangar.server import Server,HEADER,PARAMETERS,ident
 
 def run(ini):
     tag=uuid.uuid4().hex[:12]
-    game='SDGO_Hangar_TestGame_'+tag;common='SDGO_Hangar_TestCommon_'+tag
-    names=[game,common]
+    game='SDGO_Hangar_TestGame_'+tag;common='SDGO_Hangar_TestCommon_'+tag;billing='SDGO_Hangar_TestBilling_'+tag
+    names=[game,common,billing]
     cn=connect(ini,'DB Member',autocommit=True)
     original=storage.ini_values(Path(ini).read_bytes())
     cur=cn.cursor()
@@ -21,6 +21,9 @@ def run(ini):
         for name in names:cur.execute('CREATE DATABASE '+ident(name))
         cur.execute('USE '+ident(game))
         cur.execute('CREATE TABLE dbo.tbl_Users(AccountNumber int PRIMARY KEY,GoUserUnitNum bigint); CREATE TABLE dbo.tbl_Units(UnitNumber int PRIMARY KEY,UnitGradeNumber int,UnitGradeNumber2 int); CREATE TABLE dbo.tbl_UserUnits(UserUnitNumber bigint PRIMARY KEY,AccountNumber int,UserUnitSlotNumber int,UnitNumber int,DateGet datetime,LockState tinyint,BattleShipCount int,UnitLevelNumber tinyint,Paint int,CONSTRAINT UniqueSlots UNIQUE(AccountNumber,UserUnitSlotNumber)); CREATE TABLE dbo.Untouched(GB bigint,DropItems int); INSERT dbo.Untouched VALUES(12345,9); INSERT dbo.tbl_Users VALUES(1,1001),(2,2001); INSERT dbo.tbl_Units VALUES(10,1,2),(20,4,2),(30,3,4); INSERT dbo.tbl_UserUnits VALUES(1001,1,1,10,\'20260101\',1,1,9,77),(1002,1,3,20,\'20260102\',0,0,1,12),(1003,1,4,30,\'20260103\',0,0,1,13),(2001,2,8,20,\'20260104\',1,1,8,88)')
+        cur.execute('ALTER TABLE dbo.tbl_Users ADD ExpandSlotCount int NOT NULL DEFAULT 0; ALTER TABLE dbo.tbl_UserUnits ADD TimeLimit tinyint NOT NULL DEFAULT 0,RunOut tinyint NOT NULL DEFAULT 0,Forbidden tinyint NOT NULL DEFAULT 0; CREATE TABLE dbo.tbl_UnitGradeInfo(UnitGradeNumber int,UnitGradeNumber2 int,DeleteUnitPoint int,PRIMARY KEY(UnitGradeNumber,UnitGradeNumber2)); INSERT dbo.tbl_UnitGradeInfo VALUES(1,2,400),(4,2,1600),(3,4,1200); CREATE TABLE dbo.NativeDeleted(UserUnitNumber bigint)')
+        cur.execute('CREATE PROCEDURE dbo.sp_DeleteUserUnit @a int,@u bigint,@t int,@d tinyint,@ot int OUTPUT,@ti tinyint OUTPUT,@sh tinyint OUTPUT,@r tinyint OUTPUT,@s bigint OUTPUT,@c int OUTPUT,@sl int OUTPUT,@ret int OUTPUT AS BEGIN SET NOCOUNT ON; DELETE dbo.tbl_UserUnits WHERE AccountNumber=@a AND UserUnitNumber=@u AND UnitNumber=@t; SET @ret=CASE WHEN @@ROWCOUNT=1 THEN 0 ELSE 1 END; IF @ret=0 INSERT dbo.NativeDeleted VALUES(@u); END')
+        cur.execute('USE '+ident(billing));cur.execute('CREATE TABLE dbo.tbls_AccountPocket(f_idx int PRIMARY KEY,f_GP int); INSERT dbo.tbls_AccountPocket VALUES(1,10000),(2,777)')
         cur.execute('USE '+ident(common))
         cur.execute("CREATE TABLE dbo.tbl_Account_Pilot(f_idx int PRIMARY KEY,f_pilot nvarchar(20)); INSERT dbo.tbl_Account_Pilot VALUES(1,N'FixtureA'),(2,N'FixtureB')")
         cur.execute('CREATE PROCEDURE dbo.sp_SendMsgGame '+HEADER+' AS SET @retVal=77; SET @v_outIdx=42; RETURN;')
@@ -29,7 +32,7 @@ def run(ini):
         root.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='hangar-fixture-',dir=root) as temp:
             temp=Path(temp).resolve();assert temp.is_relative_to(root.resolve())
-            for section,name in [('DB Game',game),('DB Member',common)]:original[section]['DBName']=name
+            for section,name in [('DB Game',game),('DB Member',common),('DB StoreBilling',billing)]:original[section]['DBName']=name
             out=io.StringIO();original.write(out)
             fixture_ini=temp/'server.ini';fixture_ini.write_text(out.getvalue(),encoding='utf-8')
             server=Server(fixture_ini)
@@ -57,6 +60,8 @@ def run(ini):
             assert mail()==(0,1)
             cur.execute('SELECT COUNT(*) FROM '+ident(game)+'.dbo.sdgo_mod_HangarSortReceipt');assert cur.fetchone()[0]==1
             cur.execute('SELECT GB,DropItems FROM '+ident(game)+'.dbo.Untouched');assert tuple(cur.fetchone())==(12345,9)
+            from hangar_gb_sql_cases import run_gb_cases
+            run_gb_cases(cur,game,common,billing,mail)
             cur.execute('USE '+ident(game))
             cur.execute("CREATE TRIGGER dbo.FixtureBadSideEffect ON dbo.tbl_UserUnits AFTER UPDATE AS UPDATE dbo.tbl_UserUnits SET Paint=Paint+1 WHERE AccountNumber=1")
             cur.execute('UPDATE dbo.tbl_UserUnits SET UserUnitSlotNumber=UserUnitSlotNumber+10 WHERE AccountNumber=1')
@@ -72,7 +77,7 @@ def run(ini):
     finally:
         cur.execute('USE master')
         for name in reversed(names):
-            assert name.startswith(('SDGO_Hangar_TestGame_','SDGO_Hangar_TestCommon_')) and name.endswith(tag)
+            assert name.startswith(('SDGO_Hangar_TestGame_','SDGO_Hangar_TestCommon_','SDGO_Hangar_TestBilling_')) and name.endswith(tag)
             cur.execute('IF DB_ID(?) IS NOT NULL BEGIN ALTER DATABASE '+ident(name)+' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE '+ident(name)+'; END',name)
         cn.close()
 

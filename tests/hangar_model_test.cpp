@@ -24,6 +24,15 @@ int main() {
     }
     const auto rules=Definitions();
     {
+        auto s=Base();for(int i=1;i<=50;++i){auto u=Make(i,10,static_cast<uint16_t>(i));u.fullReady=false;s.units.push_back(u);}s.capacity=60;s.activeSlot=60;
+        auto plan=GBPreview(s,rules,2);assert(plan.serverBatch && plan.removed==48 && plan.expectedGB==48*400);
+        const auto requests=ServerGBRequests("NativeFixture","12345678-1234-1234-1234-123456789abc",plan,2,false);
+        assert(requests.size()==8 && std::string(reinterpret_cast<const char*>(requests.back().data()+0x2C)).back()=='C');
+        for(const auto& bytes:requests)assert(strlen(reinterpret_cast<const char*>(bytes.data()+0x2C))<=300);
+        bool rejected=false;try{Runner run;run.Start(plan,s);}catch(const std::runtime_error&){rejected=true;}assert(rejected);
+        auto updated=s;updated.units[0].lock=1;assert(!SameGBPreview(s,updated));
+    }
+    {
         auto s=Base();s.units={Make(1,10,1),Make(2,40,4),Make(3,30,7),Make(4,20,8)};
         auto after=Execute(Sort(s,rules));assert(ById(after,2)->slot==1);assert(ById(after,3)->slot==2);assert(ById(after,1)->slot==3);assert(ById(after,4)->slot==8);
         s.units[0].lock=1;after=Execute(Sort(s,rules));assert(ById(after,1)->slot==1);

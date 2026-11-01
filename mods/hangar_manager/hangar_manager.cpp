@@ -46,6 +46,10 @@ Runner g_runner;
 Plan g_preview;
 bool g_hasPreview=false,g_scanning=false,g_mutating=false,g_pumping=false,g_sortAfter=true;
 bool g_needsRelog=false;
+bool g_submittingGB=false;
+std::vector<std::array<uint8_t,0x159>> g_gbRequests;
+size_t g_gbIndex=0;
+Snapshot g_gbBefore;
 Kind g_scanReward=Kind::GB;
 int g_keep=2,g_maxSlots=1200;
 DWORD g_interval=150,g_timeout=10000;
@@ -64,9 +68,10 @@ std::wstring Wide(const std::string& s) {
     MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),w.data(),n);return w;
 }
 void Status(const std::wstring& s) {g_ui.Status(s);}
-bool Busy(){return g_scanning || g_mutating;}
+bool Busy(){return g_scanning || g_mutating || g_submittingGB;}
 void Stop(const wchar_t* text) {
     g_scanning=false;g_detailPending=0;g_hasPreview=false;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating)g_runner.Disconnect();
     g_mutating=false;g_needsRelog=true;
     g_ui.State(Busy(),false);
@@ -160,6 +165,10 @@ void BeginScan(Kind reward) {
     if(Busy())return;
     if(g_needsRelog){Status(L"上一笔状态尚未确认，请重新登录后再操作。");return;}
     Snapshot s;if(!GetSnapshot(s)){Status(L"请打开机库后重试；当前机库数据尚未就绪。");return;}
+    if(reward==Kind::GB) {
+        g_scanReward=reward;g_scanning=false;g_detailPending=0;
+        Preview(GBPreview(s,g_rules,g_keep));return;
+    }
     g_scanBefore=s;g_scanReward=reward;g_scanIds.clear();g_scanIndex=0;g_detailPending=0;g_hasPreview=false;
     std::map<uint32_t,int> count;for(const auto& u:s.units)++count[u.type];
     for(const auto& u:s.units) {
@@ -182,23 +191,36 @@ bool Sender(char* out) {
         return out[0]!=0;
     }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
+std::string NewRequestId() {
+    GUID guid{};if(FAILED(CoCreateGuid(&guid)))throw std::runtime_error("request identity unavailable");
+    char id[37]={};
+    snprintf(id,sizeof(id),"%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",guid.Data1,guid.Data2,guid.Data3,
+        guid.Data4[0],guid.Data4[1],guid.Data4[2],guid.Data4[3],guid.Data4[4],guid.Data4[5],guid.Data4[6],guid.Data4[7]);
+    return id;
+}
+void SubmitGB() {
+    char sender[17]={};if(!Sender(sender)){Status(L"无法准备批量回收请求，尚未发送。");return;}
+    const auto id=NewRequestId();
+    auto requests=ServerGBRequests(sender,id,g_preview,g_keep,g_sortAfter);
+    g_gbBefore=g_preview.before;g_gbRequests=std::move(requests);g_gbIndex=0;
+    g_submittingGB=true;g_hasPreview=false;g_ui.Arm(false);
+    Status(L"正在提交服务端批量回收；完成提交前可以停止。");
+    g_api->Log(g_mod,SDGO_LOG_INFO,"server GB batch queued: %s; %u selected units, %u messages; no per-unit detail requests",id.c_str(),static_cast<unsigned>(g_preview.removed),static_cast<unsigned>(g_gbRequests.size()));
+}
 void BeginSort() {
     if(Busy())return;
     if(g_needsRelog){Status(L"上一笔状态尚未确认，请重新登录后再操作。");return;}
     if(!Visible()){Status(L"请在机体管理页提交整理。");return;}
     try {
-        char sender[17]={};GUID guid{};
-        if(!Sender(sender) || FAILED(CoCreateGuid(&guid))){Status(L"无法准备服务端请求，尚未发送。");return;}
-        char id[37]={};
-        snprintf(id,sizeof(id),"%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",guid.Data1,guid.Data2,guid.Data3,
-            guid.Data4[0],guid.Data4[1],guid.Data4[2],guid.Data4[3],guid.Data4[4],guid.Data4[5],guid.Data4[6],guid.Data4[7]);
+        char sender[17]={};if(!Sender(sender)){Status(L"无法准备服务端请求，尚未发送。");return;}
+        const auto id=NewRequestId();
         const auto bytes=ServerSortRequest(sender,id);
         if(!Send(bytes.data(),static_cast<int>(bytes.size()))){Status(L"无法提交服务端整理，请检查连接。");return;}
         // The native mail transport has no proven client acknowledgement.
         // A send is a submission, never proof that the server committed it.
         g_needsRelog=true;g_hasPreview=false;
         Status(L"已提交服务器整理，请退出并重新登录查看。");
-        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; persistence requires server receipt; relog required",id);
+        g_api->Log(g_mod,SDGO_LOG_INFO,"server sort request submitted: %s; persistence requires server receipt; relog required",id.c_str());
     }catch(const std::exception&){Status(L"服务端整理请求未完成，请重新登录核对。");}
 }
 
@@ -211,6 +233,7 @@ bool AttachUi(void* self) {__try {return g_ui.Attach(self);} __except(EXCEPTION_
 void __fastcall Init(void* self,void*) {
     g_ui.Detach();g_grid=nullptr;
     g_hasPreview=false;g_scanning=false;g_detailPending=0;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating){g_runner.Disconnect();g_mutating=false;g_needsRelog=true;}
     g_init(self);
     g_grid=static_cast<uint8_t*>(self);g_gridVtable=Read<void*>(self);g_thread=GetCurrentThreadId();
@@ -236,7 +259,8 @@ void HandleButton(void* self,void* control) {
         return;
     }
     if(action==ui::Action::Cancel) {
-        if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
+        if(g_submittingGB){g_submittingGB=false;g_gbRequests.clear();Status(L"已停止提交，没有发送批量执行指令。");}
+        else if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
         else if(g_mutating){g_runner.Cancel();Status(L"停止追加请求；等待最后一笔已发送请求的结果。");}
         else {g_hasPreview=false;g_ui.Close();RedrawNow();}
     }else if(action==ui::Action::Previous)g_ui.Page(-1);
@@ -251,8 +275,9 @@ void HandleButton(void* self,void* control) {
         if(action==ui::Action::GB || action==ui::Action::Item) {g_ui.Arm(false);BeginScan(action==ui::Action::GB?Kind::GB:Kind::Item);}
         if(action==ui::Action::Confirm && g_hasPreview) {
             Snapshot s;
-            if(!GetSnapshot(s) || !SamePreview(g_preview.before,s)) {g_hasPreview=false;Status(L"机库或机体状态已变化，请重新预览。");}
+            if(!GetSnapshot(s) || !(g_preview.serverBatch?SameGBPreview(g_preview.before,s):SamePreview(g_preview.before,s))) {g_hasPreview=false;Status(L"机库或机体状态已变化，请重新预览。");}
             else if(!g_ui.Armed())g_ui.Arm(true);
+            else if(g_preview.serverBatch)SubmitGB();
             else StartPlan(g_preview,s);
         }
     }
@@ -283,7 +308,23 @@ void Pump() {
             g_hasPreview=false;
             if(g_ui.Ready())CloseUi();
         } else UiRefresh();
-        if(Busy()) {
+        if(g_submittingGB) {
+            Snapshot current;
+            if(!GetSnapshot(current) || !SameGBPreview(g_gbBefore,current)) {
+                g_submittingGB=false;g_gbRequests.clear();Status(L"机库已变化，取消批量提交；请重新预览。");
+            }else {
+                for(int sent=0;sent<4 && g_submittingGB && g_gbIndex<g_gbRequests.size();++sent) {
+                    const auto& packet=g_gbRequests[g_gbIndex];
+                    if(!Send(packet.data(),static_cast<int>(packet.size()))){Stop(L"提交状态不明，请重新登录核对；不会自动重试。");break;}
+                    ++g_gbIndex;
+                }
+                if(g_submittingGB && g_gbIndex==g_gbRequests.size()) {
+                    g_submittingGB=false;g_gbRequests.clear();g_needsRelog=true;
+                    CloseUi();Status(L"已提交服务端批量回收，请退出并重新登录查看 GB。");
+                }
+            }
+        }
+        if(g_scanning || g_mutating) {
             Snapshot s;
             if(!GetSnapshot(s)){Stop(L"已停止：已离开机库或连接发生变化。请重新登录核对最后一笔状态。");g_pumping=false;return;}
             if(g_scanning) {
@@ -339,6 +380,7 @@ void __fastcall Page(void* self,void*) {
 }
 void __fastcall Clear(void* self,void*) {
     ++g_epoch;g_hasPreview=false;g_scanning=false;g_detailPending=0;
+    g_submittingGB=false;g_gbRequests.clear();
     if(g_mutating){g_runner.Disconnect();g_mutating=false;Status(L"连接或机库缓存已重建，请重新预览。");}
     g_clear(self);
     g_needsRelog=false;

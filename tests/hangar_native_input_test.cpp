@@ -44,6 +44,12 @@ int wmain(int argc,wchar_t** argv) {
         std::array<uint8_t,0x159> nativeMail{};
         mail.Function<MailCtor>()(nativeMail.data(),0,"NativeFixture",0,sdgo::hangar::kSortRecipient,(std::string(sdgo::hangar::kSortPrefix)+request).c_str());
         assert(nativeMail==expected); // full byte parity with the shipped producer
+        sdgo::hangar::Plan gbPlan;gbPlan.serverBatch=true;gbPlan.expectedGB=400;
+        sdgo::hangar::Action selected;selected.kind=sdgo::hangar::Kind::GB;selected.first=0x0102030405060708ULL;selected.type=10;selected.from=3;gbPlan.actions.push_back(selected);
+        for(const auto& bytes:sdgo::hangar::ServerGBRequests("NativeFixture",request,gbPlan,2,true)) {
+            nativeMail={};mail.Function<MailCtor>()(nativeMail.data(),0,"NativeFixture",0,sdgo::hangar::kSortRecipient,reinterpret_cast<const char*>(bytes.data()+0x2C));
+            assert(nativeMail==bytes);
+        }
         Snippet mouse(file,0xC69080,512,"e69debfef6104196f8d5008caa9b157036d027efdba76fef166f0ba243b92c5d");
         mouse.Call(0x1D,&BaseMouse);mouse.Call(0x101,&Focus);
         for(size_t offset:{0x7Au,0x9Cu,0x174u,0x1ABu})mouse.Call(offset,&Event);

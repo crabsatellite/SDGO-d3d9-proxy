@@ -43,6 +43,7 @@ struct Plan {
     size_t removed = 0, pinned = 0, variants = 0, detailsMissing = 0;
     int64_t expectedGB = 0;
     std::map<int,int64_t> expectedItems;
+    bool serverBatch=false;
 };
 using Rules = std::map<uint32_t,Rule>;
 
@@ -181,6 +182,21 @@ inline Plan Duplicates(const Snapshot& s,const Rules& rules,int keep,Kind reward
     return p;
 }
 
+inline Plan GBPreview(const Snapshot& current,const Rules& rules,int keep) {
+    Snapshot cached=current;
+    for(auto& unit:cached.units)unit.fullReady=true; // server validates the selected instances atomically
+    auto plan=Duplicates(cached,rules,keep,Kind::GB,false);
+    plan.before=current;plan.serverBatch=true;return plan;
+}
+inline bool SameGBPreview(const Snapshot& a,const Snapshot& b) {
+    if(!SameLayout(a,b) || a.activeSlot!=b.activeSlot)return false;
+    for(const auto& u:a.units) {
+        const auto* v=ById(b,u.uid);
+        if(u.level!=v->level || u.lock!=v->lock || u.ship!=v->ship || u.rental!=v->rental || u.special!=v->special)return false;
+    }
+    return true;
+}
+
 // Exact wire layouts copied from the verified native send sites, not a new
 // server protocol. All writes go through the authenticated game session.
 #pragma pack(push,1)
@@ -208,6 +224,7 @@ class Runner {
     State state_=State::Idle;
 public:
     void Start(Plan p,const Snapshot& current) {
+        if(p.serverBatch)throw std::runtime_error("server batch cannot use per-unit native runner");
         if (!SameLayout(p.before,current)) throw std::runtime_error("preview is stale");
         plan_=std::move(p);confirmed_=current;index_=0;cancel_=false;
         state_=plan_.actions.empty()?State::Complete:State::Ready;

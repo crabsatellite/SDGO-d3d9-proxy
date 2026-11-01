@@ -14,6 +14,7 @@ std::array<uint8_t,0x80> session{};
 uint8_t* infoPointer=info.data();uint8_t* profilePointer=profile.data();
 std::vector<Unit> owned;
 std::vector<uint8_t> pending;
+std::vector<std::vector<uint8_t>> mailRequests;
 int sends=0,paints=0,gb=0,items=0,nativeClicks=0;
 std::string refreshOrder;
 bool rejected=false;
@@ -39,14 +40,16 @@ void __fastcall Brief(void*,void*,void* out,uint16_t slot){
 }
 void __fastcall Full(void*,void*,void* out,uint16_t slot){memset(out,0,153);for(const auto& u:owned)if(u.slot==slot && u.fullReady)memcpy(out,u.full.data(),153);}
 int __fastcall Send(void*,void*,int connection,const uint8_t* data,int size,int flags){
-    assert(connection==7 && flags==0 && pending.empty());pending.assign(data,data+size);++sends;return 1;
+    assert(connection==7 && flags==0);
+    if(Read<uint16_t>(data)==0x891)mailRequests.emplace_back(data,data+size);else assert(pending.empty());
+    pending.assign(data,data+size);++sends;return 1;
 }
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 SdgoApi api{};
 void Setup(){
     g_ui.Detach();
     owned={Make(101,10,1),Make(102,40,3),Make(103,10,4),Make(104,10,5),Make(105,20,8)};
-    pending.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;refreshOrder.clear();
+    pending.clear();mailRequests.clear();sends=paints=gb=items=nativeClicks=0;rejected=false;refreshOrder.clear();
     Put(info.data(),4,1);Put(info.data(),0x0C,8);info[0x20]=1;Put(profile.data(),0x1AD,uint16_t{8});
     memcpy(profile.data()+0x161,"NativeFixture",14);
     Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,mode.data());Put(mode.data(),0x0C,reinterpret_cast<void*>(0xBAADF00D));
@@ -58,6 +61,7 @@ void Setup(){
     g_clear=reinterpret_cast<NativeVoid>(&Clear);g_sync=reinterpret_cast<NativeSync>(&Sync);g_thread=GetCurrentThreadId();g_epoch=1;
     g_button=reinterpret_cast<ButtonFn>(&NativeClick);
     api.Log=&Log;g_api=&api;g_scanning=g_mutating=g_hasPreview=g_needsRelog=false;g_detailPending=0;g_runner=Runner{};g_sortAfter=false;
+    g_submittingGB=false;g_gbRequests.clear();g_gbIndex=0;
     g_rules.clear();for(uint32_t i=1;i<=4;++i){Rule r;r.unit=i*10;r.rank=static_cast<int>(i);r.subrank=2;r.gb=static_cast<int>(i*400);r.item=2220008;r.amount=static_cast<int>(i*3);r.name=L"Synthetic unit";g_rules[r.unit]=r;}
 }
 Snapshot Capture(){Snapshot s;assert(GetSnapshot(s));return s;}
@@ -98,7 +102,8 @@ int main(){
     fixture::Setup();auto duplicates=Duplicates(fixture::Capture(),g_rules,2,Kind::GB,true);assert(duplicates.removed==1);
     fixture::Run(duplicates);assert(fixture::gb==400 && fixture::Capture().units.size()==4);
     fixture::Setup();fixture::Run(Duplicates(fixture::Capture(),g_rules,2,Kind::Item,false));assert(fixture::items==3 && fixture::gb==0);
-    fixture::Setup();BeginScan(Kind::GB);assert(g_scanning && g_scanIds.size()==3 && fixture::sends==0);
+    fixture::Setup();BeginScan(Kind::GB);assert(!g_scanning && g_hasPreview && g_preview.serverBatch && fixture::sends==0);
+    fixture::Setup();BeginScan(Kind::Item);assert(g_scanning && g_scanIds.size()==3 && fixture::sends==0);
     g_detailPending=101;DetailPacket detail;detail.uid=101;assert(::Send(reinterpret_cast<uint8_t*>(&detail),sizeof(detail)));fixture::Deliver();assert(g_detailObserved);
     fixture::Setup();s=fixture::Capture();auto plan=sdgo::hangar::Sort(s,g_rules);g_runner.Start(plan,s);auto action=*g_runner.Next(s);auto bytes=Packet(action);
     fixture::rejected=true;g_runner.Sent(1,::Send(bytes.data(),static_cast<int>(bytes.size())));fixture::Deliver();g_runner.Observe(fixture::Capture(),200,100);assert(g_runner.state()==State::Unknown);
@@ -138,22 +143,22 @@ int main(){
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarOpen"));
     assert(g_ui.Exchange() && fixture::sends==0);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarGB"));
-    for(int i=0;i<20 && g_scanning;++i) {
-        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
-    }
-    assert(!g_scanning && g_hasPreview && g_preview.removed==1 && !g_mutating && fixture::gb==0);
+    assert(!g_scanning && g_hasPreview && g_preview.removed==1 && !g_mutating && fixture::gb==0 && fixture::sends==0);
     const auto beforeConfirm=fixture::sends;
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
     assert(g_ui.Armed() && !g_mutating && fixture::sends==beforeConfirm);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));
-    assert(g_mutating && fixture::sends==beforeConfirm);
-    for(int i=0;i<30 && g_mutating;++i) {
-        g_nextTick=g_nextSend=0;Pump();if(!fixture::pending.empty())fixture::Deliver();
-    }
-    assert(!g_mutating && fixture::gb==400 && fixture::owned.size()==4);
+    assert(g_submittingGB && !g_mutating && fixture::sends==beforeConfirm);
+    for(int i=0;i<30 && g_submittingGB;++i){g_nextTick=0;Pump();}
+    assert(!g_submittingGB && g_needsRelog && fixture::mailRequests.size()==3 && fixture::gb==0 && fixture::owned.size()==5);
+    assert(std::string(reinterpret_cast<const char*>(fixture::mailRequests.back().data()+0x2C)).back()=='C');
+    fixture::Setup();page_fixture::Setup(fixture::grid.data());assert(g_ui.Attach(fixture::grid.data(),page_fixture::Bind()));
+    g_ui.Open();BeginScan(Kind::GB);g_ui.Arm(true);SubmitGB();
+    HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));g_nextTick=0;Pump();
+    assert(!g_submittingGB && fixture::sends==0);
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarCancel"));assert(!g_ui.Exchange());
     // A second confirmation must never bypass the current native snapshot.
-    g_ui.Open();g_scanReward=Kind::GB;Preview(Duplicates(fixture::Capture(),g_rules,1,Kind::GB,false));
+    g_ui.Open();g_scanReward=Kind::GB;Preview(GBPreview(fixture::Capture(),g_rules,1));
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));assert(g_ui.Armed());
     fixture::owned[0].lock=1;const auto beforeChange=fixture::sends;
     HandleButton(fixture::grid.data(),page_fixture::Pointer(L"ModHangarConfirm"));

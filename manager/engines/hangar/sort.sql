@@ -51,6 +51,11 @@ BEGIN
            OR EXISTS(SELECT __IMMUTABLE_COLUMNS__ FROM dbo.tbl_UserUnits WHERE AccountNumber=@AccountNumber EXCEPT
                      SELECT __IMMUTABLE_COLUMNS__ FROM #Before)
             RAISERROR('Inventory content changed during sorting',16,1);
+        -- The native client allocates 24 + ExpandSlotCount slots before loading
+        -- records. Imported inventories can exceed that metadata and crash the
+        -- unguarded native slot writer. Repair only the minimum six-slot blocks.
+        IF EXISTS(SELECT 1 FROM dbo.tbl_Users WHERE AccountNumber=@AccountNumber AND 24+ExpandSlotCount<@Total)
+            UPDATE dbo.tbl_Users SET ExpandSlotCount=((@Total-24+5)/6)*6 WHERE AccountNumber=@AccountNumber;
         INSERT dbo.sdgo_mod_HangarSortReceipt(AccountNumber,RequestId,ChangedSlots,UnitCount)
             VALUES(@AccountNumber,@Request,@Changed,@Total);
         IF @Own=1 COMMIT TRANSACTION;
