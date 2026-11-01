@@ -46,6 +46,7 @@ def main():
         'Add !rand or !random to a room title; every human gets owned loadouts each round.\n'
         'Single-unit modes keep the unit through respawns; native deck modes total exactly 10 points.\n'
         'The client companion applies full-unit/ship notices immediately, before queued start commands.\n'
+        'It also supplies the matching complete record to native human construction when the room retains an old snapshot.\n'
         'Shared commands: !rand !ai3, or !ai e2 a1 lv4 !rand (19 bytes).\n'
         'Updates core plus already installed pvp_ai/coop_ai DLLs; preserves their settings.\n'
         'Read docs/room-random.zh-CN.md before installing into a STOPPED BattleServer.\n'

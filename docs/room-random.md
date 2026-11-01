@@ -23,9 +23,12 @@ See [combined commands](room-commands.md).
 `!ai !rand` is valid. The server sends native `0x0861` full-unit and, for deck modes,
 `0x098B` full-ship notifications before `0x06C3` battle start. Version 0.1.5 alone
 was insufficient in real gameplay: the 3D room handles those notices as queued
-commands. The 0.1.8 client companion applies complete records before that queue,
-then refreshes them at the start boundary. It also records native human-factory
-observations for manual acceptance. Failed starts and teardown restore originals.
+commands. Client 0.1.8 updated the visible 3D cache, but live testing still created
+the old model from a separate pre-start snapshot. Client 0.1.9 also supplies the
+shared native human converter with a private complete source matched to this
+round's start entry and owner. It preserves unit UIDs, skills, appearance and full
+decks without overwriting the frozen snapshot. Construction and human-factory
+logs support manual acceptance. Failed starts and teardown restore originals.
 
 Server 0.1.7 also retires stale bookkeeping when a disconnect/abort skipped the
 resource-release callback. It requires the native setup's cleared human pilot
@@ -42,11 +45,21 @@ The 3D path does not use the legacy profile room pointer. It resolves the curren
 3D manager and calls the native room/slot accessors; mission and ordinary room
 layouts differ. The runtime fixture covers a null legacy pointer and a separate
 mission-slot layout. Missing live context remains a logged rejection.
+The final converter resolves its supplied model directly, including after a
+scene transition. A missing notice, changed owner/room/start entry or incomplete
+deck leaves the native source unchanged.
 
 The optional command `build/Release/room_random_test.exe D:/Server/BattleServer.exe D:/Client/GOnline.exe`
 executes the actual server model-selection and client cache-copy instructions
 in private fixture memory, without game entry points, imports or networking.
 Full mission/PvP models, weapons, respawn and reward persistence remain manual acceptance.
+The real core/DLL regression also covers frozen mission/PvP sources and complete
+deck conversion. Supply a local client to execute the authenticated native source
+selection and model/attribute projection spans as well:
+
+```powershell
+powershell -File tests/room_random_client_runtime_test.ps1 -GameExe "D:\Client\GOnline.exe"
+```
 
 The incremental installer updates core and already installed `pvp_ai` / `coop_ai`
 DLLs together, preserving their manifests and settings. It does not install missing

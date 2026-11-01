@@ -52,6 +52,42 @@ native interfaces, rather than either fixed offset, select the current layout.
 The fixture covers null legacy publication and independent mission storage;
 existing legacy room data remains supported as a distinct native UI path.
 
+The 0.1.8 live retest still failed: both notices and the start boundary showed
+the new model, while the native type-15 factory constructed the previous one.
+The historical SQL's pre-room guard was a useful clue to an earlier snapshot.
+Native mission model vtable+0x60 (`0x007148B0`) copies `0x3CDB` bytes into
+model+0x2FDE. Its vtable+0x64 wrapper (`0x0072DE60`) passes that normalized
+snapshot to `0x0072DB90`, rather than using the visible mission-slot storage.
+The shared human converter `0x0072D260` passes each normalized `0x48E` pilot and
+the model's retained `0x10F` start entry to `0x00720E20` (four stack arguments,
+`ret 0x10`). That function takes the single unit at pilot+0x49 or the four deck
+records at pilot+0x19E. At `0x00720EA3` it copies the selected template into the
+constructed participant+0x44. Updating only the visible room missed this source.
+
+Client 0.1.9 hooks that final human-record filler. The supplied native model is
+resolved using the same verified interfaces, without requiring app-state 18.
+Complete pending notices are accepted only for the current room/model, source
+owner and exact retained start entry. Decks additionally require the full ship
+notice and four matching announced models. The original filler runs once with a
+private pilot copy containing the full matching unit/ship. Identity, other pilot
+fields and the frozen source remain unchanged; AI is passed through. A later
+notice invalidates the previous construction authorization. No global model-ID
+substitution or permanent selection write is used.
+
+The real core/DLL fixture now keeps the visible and frozen sources independent,
+tests mission and ordinary PvP conversion after scene transition, and checks the
+complete deck. With a supplied authenticated client, it also runs source-selection
+instructions `0x00720E48..0x00720E69` and model/attribute projection instructions
+`0x00720EA3..0x00720EBB` in private memory. These narrow spans omit strings,
+callbacks and other game setup; complete UIDs/skill/appearance preservation is
+checked on the supplied full record, not inferred from those projection spans.
+Passing these checks still does not establish live gameplay acceptance.
+
+The reported post-round Korean notice says the equipped skill part has been
+fully consumed and asks the player to equip a new skill. Its appearance alone
+does not establish which unit was charged, nor identify the transient start
+notice. Do not suppress consumption or alter owned records to hide that popup.
+
 The subsequent re-entry test exposed a separate server lifecycle failure:
 `previous battle has not released its loadouts`. Resource release is not a
 universal disconnect/abort callback. Native human setup clears its battle-pilot

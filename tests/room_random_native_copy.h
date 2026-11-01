@@ -3,7 +3,7 @@
 #include <array>
 #include <memory>
 
-// Only the stock notification's memory-copy instructions run here. No client
+// Only the stock notification copy and human-source projection spans run here. No client
 // imports, entry point, service callbacks, game state, account or socket runs.
 namespace room_random_native_test {
 __declspec(naked) inline void __cdecl Invoke(void*,const void*,void*) {
@@ -23,10 +23,28 @@ __declspec(naked) inline void __cdecl Invoke(void*,const void*,void*) {
         ret
     }
 }
+__declspec(naked) inline void __cdecl InvokeHumanProjection(void*,uint8_t*,void*) {
+    __asm {
+        push ebp
+        push ebx
+        push esi
+        push edi
+        mov ebp,[esp+14h]
+        mov esi,[esp+18h]
+        add esi,48h
+        mov eax,[esp+1Ch]
+        call eax
+        pop edi
+        pop esi
+        pop ebx
+        pop ebp
+        ret
+    }
+}
 class ClientCopies {
     struct Free {void operator()(uint8_t* p) const {if(p) VirtualFree(p,0,MEM_RELEASE);}};
     using Code=std::unique_ptr<uint8_t,Free>;
-    Code unit_,ship_;
+    Code unit_,ship_,projection_;
     static const uint8_t* At(const std::vector<uint8_t>& file,uint32_t rva,size_t length) {
         using namespace room_title_native::detail;
         const auto dos=ReadStruct<IMAGE_DOS_HEADER>(file,0);
@@ -67,12 +85,32 @@ public:
         Require(*At(file,0x0063FA05,1)==0xA4,"native unit-copy final byte changed");
         unit_=Copy(At(file,0x0063F9E2,0x20),"04550dab61ba6e12f802263fcd995f2420e6fd87aec7e35e3509ebafd91b24ce",true);
         ship_=Copy(At(file,0x00640845,0x20),"ef3d15ab15ca035ded83064d4af9d09db53c831386e15333cbc0fb7ad130f604",false);
+        const auto* select=At(file,0x00320E48,0x22);
+        const auto* project=At(file,0x00320EA3,0x19);
+        Require(Sha256(select,0x22)=="0235cde0591b4e67e04b203d69e7c7915a09fd79ae6098c172a2fd4574e07542","native human source selection changed");
+        Require(Sha256(project,0x19)=="1c494f70f542fbd99d654465fd0f7162104c195a0852b62a0272ce1f9460cfc4","native human template/attribute projection changed");
+        constexpr size_t size=0x22+3+0x19+1;
+        projection_=Code(static_cast<uint8_t*>(VirtualAlloc(nullptr,size,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE)));
+        Require(projection_!=nullptr,"native human projection allocation failed");
+        std::memcpy(projection_.get(),select,0x22);
+        // The omitted setup adds 14h to EBX before copying model/unit fields.
+        const uint8_t adjust[]={0x83,0xC3,0x14};
+        std::memcpy(projection_.get()+0x22,adjust,sizeof(adjust));
+        std::memcpy(projection_.get()+0x25,project,0x19);projection_.get()[size-1]=0xC3;
+        DWORD previous=0;
+        Require(VirtualProtect(projection_.get(),size,PAGE_EXECUTE_READ,&previous)!=FALSE,"native human projection protection failed");
+        FlushInstructionCache(GetCurrentProcess(),projection_.get(),size);
     }
     void Apply(std::vector<uint8_t>& service,const uint8_t* packet,uint16_t opcode) {
         std::array<uint8_t,0x1000> frame{};
         auto* base=frame.data()+0x800;
         auto* pointer=service.data();std::memcpy(base-0x7D8,&pointer,sizeof(pointer));
         Invoke(base,packet,opcode==0x0861 ? unit_.get() : ship_.get());
+    }
+    void Project(uint8_t* output,const uint8_t* source,uint8_t deck) {
+        std::array<uint8_t,0x60> frame{};auto* base=frame.data()+0x20;
+        std::memcpy(base+0xC,&source,sizeof(source));base[0x14]=deck;
+        InvokeHumanProjection(base,output,projection_.get());
     }
 };
 }

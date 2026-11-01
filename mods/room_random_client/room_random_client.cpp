@@ -14,6 +14,8 @@ room_random_client::CacheSync g_sync;
 CRITICAL_SECTION g_lock;
 using FactoryFn=void*(__cdecl*)(int,uint32_t);
 FactoryFn g_factory=nullptr;
+using FillFn=void(__thiscall*)(uint8_t*,uint8_t*,const uint8_t*,const uint8_t*,uint8_t);
+FillFn g_fill=nullptr;
 
 room_random_client::Result GuardedPacket(BYTE* frame,uint16_t* opcode) {
     __try {
@@ -70,6 +72,32 @@ void* __cdecl Factory(int type,uint32_t model) {
     }
     SetLastError(error);return result;
 }
+room_random_client::Construction GuardedConstruction(uint8_t* model,const uint8_t* source,
+                                                     const uint8_t* entry,uint8_t deck) {
+    __try {
+        return g_sync.PrepareConstruction(room_random_client::ResolveModel(g_bindings,model),source,entry,deck);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        room_random_client::Construction r;r.reason=7;return r;
+    }
+}
+void __fastcall FillHuman(uint8_t* model,void*,uint8_t* output,const uint8_t* source,
+                          const uint8_t* entry,uint8_t deck) {
+    const DWORD error=GetLastError();
+    EnterCriticalSection(&g_lock);
+    const auto replacement=GuardedConstruction(model,source,entry,deck);
+    LeaveCriticalSection(&g_lock);
+    if(replacement.applied) g_api->Log(g_mod,SDGO_LOG_INFO,
+        "human construction owner %lu: snapshot %lu -> %lu, complete %s record",
+        static_cast<unsigned long>(replacement.owner),static_cast<unsigned long>(replacement.before),
+        static_cast<unsigned long>(replacement.after),deck ? "unit/ship" : "unit");
+    else if(replacement.reason) g_api->Log(g_mod,SDGO_LOG_WARN,
+        "human construction owner %lu: source unchanged, validation reason %u",
+        static_cast<unsigned long>(replacement.owner),replacement.reason);
+    SetLastError(error);
+    // Original runs once, outside the diagnostic SEH/lock. Its strings and unit
+    // attributes are constructed normally from the matching complete source.
+    g_fill(model,output,replacement.applied ? replacement.pilot.data() : source,entry,deck);
+}
 }
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
@@ -93,6 +121,7 @@ SDGO_MOD_ENTRY {
     InitializeCriticalSection(&g_lock);
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
     if(!api->HookCode(mod,"room_random.client_factory",reinterpret_cast<void*>(&Factory),reinterpret_cast<void**>(&g_factory))) return 0;
-    api->Log(mod,SDGO_LOG_INFO,"native loadout notices update the client cache before queued room-start commands; no client configuration");
+    if(!api->HookCode(mod,"room_random.client_fill_human",reinterpret_cast<void*>(&FillHuman),reinterpret_cast<void**>(&g_fill))) return 0;
+    api->Log(mod,SDGO_LOG_INFO,"native loadout notices update room caches and matching human construction snapshots; no client configuration");
     return 1;
 }
