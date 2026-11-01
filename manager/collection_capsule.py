@@ -23,7 +23,7 @@ class CollectionCapsule(Provider):
         'server_ini': '目标 WorldServer 配置文件',
         'client': '配套客户端目录（本机安装目标）',
         'source': '配套完整框架包或服主工具包目录',
-        'cover': '封面 PNG（182×108，留空使用占位图）',
+        'cover': '活动海报 PNG（361×322，留空使用随包海报）',
         'snapshot': '公开目录快照（开发时替代数据库导出）',
     }
 
@@ -52,6 +52,8 @@ class CollectionCapsule(Provider):
 
     def generated(self):
         state = storage.read_json(self.state_file, {})
+        if state.get('machine_kind') != 'activity':
+            raise ValueError('请先生成新版活动收藏扭蛋资源')
         if state.get('config_revision') != storage.revision(storage.json_bytes(self.config)):
             raise ValueError('工作区配置已改变，请重新生成配套资源')
         identity = state.get('build_id', '')
@@ -62,10 +64,12 @@ class CollectionCapsule(Provider):
     def public(self):
         state = storage.read_json(self.state_file, {})
         current = state.get('config_revision') == storage.revision(storage.json_bytes(self.config))
-        return {'revision': self.revision(), 'generated': bool(current),
-                'machine_id': state.get('machine_id', 990001), 'price_gp': 100000,
+        return {'revision': self.revision(), 'generated': bool(current and state.get('machine_kind') == 'activity'),
+                'machine_id': state.get('machine_id', 990001), 'price_gp': 100000, 'machine_kind': 'activity',
+                'rank_weights': {'C': 35, 'B': 30, 'A': 20, 'S': 15},
                 'eligible_roots': state.get('eligible_roots'),
                 'catalog_revision': state.get('catalog_revision'),
+                'placement': state.get('placement'),
                 'validation': 'Beta；实际游戏动画、扣费和重启持久化由服主手动验收'}
 
     def generate(self):
@@ -96,14 +100,14 @@ class CollectionCapsule(Provider):
         cover = Path(self.config['cover']) if self.config.get('cover') else ROOT / 'mods/collection_capsule/assets/cover.png'
         registry = build_client_registry(client_root=client,
             current_registry=current if (current / 'runtime.ini').is_file() else None,
-            source_units=model['pool']['units'], machine_id=machine_id, cover=cover,
+            source_units=model['pool']['units'], unit_items=model['unit_items'], machine_id=machine_id, cover=cover,
             output=output / 'client-registry')
         package_client_registry(registry=output / 'client-registry', framework_stage=stage / 'client',
             support_dll=stage / 'support/capsule-registry/capsule_catalog.dll', output=output / 'player')
         storage.atomic(self.state_file, storage.json_bytes({
             'build_id': identity, 'config_revision': storage.revision(storage.json_bytes(self.config)),
-            'machine_id': machine_id, 'eligible_roots': server['resolved_roots'],
-            'catalog_revision': registry['catalog_revision']}))
+            'machine_id': machine_id, 'machine_kind': 'activity', 'eligible_roots': server['resolved_roots'],
+            'catalog_revision': registry['catalog_revision'], 'placement': registry.get('placement')}))
         return self.public()
 
     def client_install(self, output, check_only=False):

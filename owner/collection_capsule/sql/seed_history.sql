@@ -14,6 +14,12 @@ WHERE NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen s WHERE s.AccountNum
 GROUP BY AccountID,UnitID;
 
 DECLARE @historyTable sysname,@sql nvarchar(max);
+INSERT sdgo_collection_capsule.Seen(AccountNumber,UnitID,FirstTransactionID,Source)
+SELECT b.AccountNumber,c.RefIndex,0,'installed_unit_gift'
+FROM dbo.tbl_UserDropItemBox b JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=b.ItemCategory
+WHERE c.CatalogueID/100000=11 AND c.RefIndex>0
+  AND NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen s WHERE s.AccountNumber=b.AccountNumber AND s.UnitID=c.RefIndex)
+GROUP BY b.AccountNumber,c.RefIndex;
 DECLARE history_tables CURSOR LOCAL FAST_FORWARD FOR
 SELECT t.name FROM sys.tables t JOIN sys.schemas n ON t.schema_id=n.schema_id
 WHERE n.name=N'dbo' AND (t.name LIKE N'tbl[_]UUDs%' OR t.name IN

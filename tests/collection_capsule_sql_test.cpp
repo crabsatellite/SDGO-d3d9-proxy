@@ -13,8 +13,7 @@
 #include "sdgo/sdgo_api.h"
 #include "../mods/collection_capsule/native.h"
 
-using sdgo::collection_capsule::PickInput;
-using sdgo::collection_capsule::PickOutput;
+using sdgo::collection_capsule::ActivityPickRecord;
 
 namespace {
 template<class T>
@@ -108,26 +107,27 @@ public:
 
 struct Native {};
 
-// ECX plus three stack parameters is the shipped __thiscall ABI. The ignored
+// ECX plus two stack parameters is the shipped __thiscall ABI. The ignored
 // EDX argument lets this standalone function expose that exact machine shape
 // without relying on compiler-specific pointer-to-member encodings.
 __declspec(noinline) int __fastcall FixturePick(
-    void*, void*, void*, PickInput* input, PickOutput* output) {
+    void*, void*, void*, ActivityPickRecord* record) {
     InterlockedIncrement(&delegated);
-    input->result = 77;
-    std::memset(output, 0, sizeof(*output));
-    output->unitId = 424242;
+    record->result = 77;
+    record->dropBoxSerial = 4343434343LL;
+    record->itemCategory = 424242;
+    record->amount = 42;
     return 77;
 }
 
 PVOID volatile fixtureEntry = reinterpret_cast<PVOID>(&FixturePick);
 
 int Invoke(
-    Native& native, void* connection, PickInput* input, PickOutput* output) {
+    Native& native, void* connection, ActivityPickRecord* record) {
     auto* entry = InterlockedCompareExchangePointer(
         &fixtureEntry, nullptr, nullptr);
-    return reinterpret_cast<sdgo::collection_capsule::PickFunction>(entry)(
-        &native, connection, input, output);
+    return reinterpret_cast<sdgo::collection_capsule::ActivityPickFunction>(entry)(
+        &native, connection, record);
 }
 
 std::wstring Root() {
@@ -177,7 +177,7 @@ bool WriteSymbols(const std::wstring& root) {
         reinterpret_cast<std::uintptr_t>(&FixturePick);
     char line[256] = {};
     sprintf_s(line,
-              "\n[collection.pick]\nkind=code\nrva=0x%08X\nexpect=",
+              "\n[collection.activity_pick]\nkind=code\nrva=0x%08X\nexpect=",
               static_cast<unsigned>(address - reinterpret_cast<std::uintptr_t>(base)));
     content += line;
     for (unsigned index = 0; index < 12; ++index) {
@@ -211,23 +211,29 @@ bool Configure(const std::wstring& root) {
         directory + L"\\config.ini", "[settings]\nMachineID=990001\n");
 }
 
-bool Same(const PickOutput& left, const PickOutput& right) {
-    return std::memcmp(&left, &right, sizeof(left)) == 0;
+bool SameReward(const ActivityPickRecord& left, const ActivityPickRecord& right) {
+    return left.dropBoxSerial == right.dropBoxSerial &&
+           left.itemCategory == right.itemCategory &&
+           left.amount == right.amount;
 }
 
-PickOutput Pattern() {
-    PickOutput output = {};
-    std::memset(&output, 0xa5, sizeof(output));
-    return output;
+ActivityPickRecord Pattern(std::int32_t account, std::int32_t machine) {
+    ActivityPickRecord record = {};
+    std::memset(&record, 0xa5, sizeof(record));
+    record.result = -1;
+    record.account = account;
+    record.machine = machine;
+    return record;
 }
 
 void DiagnosePick(
-    const char* name, int code, const PickInput& input,
-    const PickOutput& output, LONG delegateCount) {
+    const char* name, int code, const ActivityPickRecord& record,
+    LONG delegateCount) {
     std::printf(
-        "diag %s code=%d result=%d unit=%d slot=%d delegated=%ld\n",
-        name, code, input.result, output.unitId, output.slotIndex,
-        delegateCount);
+        "diag %s code=%d result=%d serial=%lld category=%d amount=%d delegated=%ld\n",
+        name, code, record.result,
+        static_cast<long long>(record.dropBoxSerial), record.itemCategory,
+        record.amount, delegateCount);
 }
 
 class ProcedureSwap {
@@ -285,12 +291,13 @@ int Run() {
     if (failures) return 2;
 
     Native native;
-    PickInput other = {-1, 1900000001, 12345};
-    PickOutput delegatedOutput = {};
+    ActivityPickRecord other = Pattern(1900000001, 12345);
     const LONG before = delegated;
-    const int otherCode = Invoke(native, nullptr, &other, &delegatedOutput);
+    const int otherCode = Invoke(native, nullptr, &other);
     Check(otherCode == 77 && other.result == 77 &&
-              delegatedOutput.unitId == 424242 && delegated == before + 1,
+              other.dropBoxSerial == 4343434343LL &&
+              other.itemCategory == 424242 && other.amount == 42 &&
+              delegated == before + 1,
           "another machine delegates to the unmodified native path without a database session");
 
     constexpr int account = 1900000001;
@@ -300,30 +307,33 @@ int Run() {
               L"INSERT dbo.tbl_Users(AccountNumber,ExpandSlotCount) VALUES(1900000001,0);"),
           "create isolated complete-history account through native capture trigger");
 
-    PickInput success = {-1, account, 990001};
-    PickOutput successOutput = Pattern();
-    const int successCode =
-        Invoke(native, &game.native, &success, &successOutput);
+    ActivityPickRecord success = Pattern(account, 990001);
+    const int successCode = Invoke(native, &game.native, &success);
     const bool successValid =
         successCode == 0 && success.result == 0 &&
-        successOutput.userUnitNumber > INT32_MAX &&
-        successOutput.unitId > 0 && successOutput.slotIndex >= 0 &&
-        successOutput.serialNumber > INT32_MAX;
+        success.dropBoxSerial > INT32_MAX &&
+        success.itemCategory >= 1100000 && success.itemCategory < 1200000 &&
+        success.amount == 1;
     if (!successValid)
         DiagnosePick(
-            "success", successCode, success, successOutput, delegated);
+            "success", successCode, success, delegated);
     Check(successValid,
-          "own machine publishes the exact packed 25-byte native result");
+          "own machine publishes the exact packed 28-byte activity result");
     Check(game.Execute(
-              L"IF NOT EXISTS(SELECT 1 FROM dbo.tbl_UserUnits "
-              L"WHERE AccountNumber=1900000001 AND UserUnitNumber=" +
-              std::to_wstring(successOutput.userUnitNumber) +
-              L" AND UnitNumber=" + std::to_wstring(successOutput.unitId) +
-              L") OR NOT EXISTS(SELECT 1 FROM sdgo_collection_capsule.Seen "
-              L"WHERE AccountNumber=1900000001 AND UnitID=" +
-              std::to_wstring(successOutput.unitId) +
-              L") RAISERROR('Committed collection result missing',16,1);"),
-          "unit and durable acquisition history commit before result publication");
+              L"IF NOT EXISTS(SELECT 1 FROM dbo.tbl_UserDropItemBox b "
+              L"JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=b.ItemCategory "
+              L"JOIN sdgo_collection_capsule.Seen s ON s.AccountNumber=b.AccountNumber "
+              L" AND s.UnitID=c.RefIndex "
+              L"WHERE b.AccountNumber=1900000001 AND b.UserDropItemIdx=" +
+              std::to_wstring(success.dropBoxSerial) +
+              L" AND b.ItemCategory=" + std::to_wstring(success.itemCategory) +
+              L" AND b.Amount=1 AND b.DropConditionID=990001 "
+              L" AND c.CatalogueID/100000=11 AND c.TimeLimit=0 "
+              L" AND c.Option1=1 AND c.Option2=2) "
+              L"OR EXISTS(SELECT 1 FROM dbo.tbl_UserUnits "
+              L"WHERE AccountNumber=1900000001) "
+              L"RAISERROR('Committed activity reward or reservation missing',16,1);"),
+          "drop-box reward and durable acquisition reservation commit before result publication");
 
     {
         ProcedureSwap swap(game);
@@ -332,33 +342,29 @@ int Run() {
                   L"@v_AccountNum int,@v_MachineID int AS "
                   L"BEGIN SET NOCOUNT ON;RETURN 3007;END"),
               "install isolated backend-error procedure");
-        PickInput failed = {-1, account, 990001};
-        const PickOutput untouched = Pattern();
-        PickOutput failedOutput = untouched;
-        const int code = Invoke(
-            native, &game.native, &failed, &failedOutput);
+        ActivityPickRecord failed = Pattern(account, 990001);
+        const ActivityPickRecord untouched = failed;
+        const int code = Invoke(native, &game.native, &failed);
         const bool valid = code == 3007 && failed.result == 3007 &&
-                           Same(failedOutput, untouched);
+                           SameReward(failed, untouched);
         if (!valid)
             DiagnosePick(
-                "backend", code, failed, failedOutput, delegated);
+                "backend", code, failed, delegated);
         Check(valid,
               "backend return code propagates and leaves caller output untouched");
         Check(swap.Restore(), "restore production draw after backend-error case");
     }
 
     NativeConnection unavailable = {};
-    PickInput missing = {-1, account, 990001};
-    const PickOutput missingPattern = Pattern();
-    PickOutput missingOutput = missingPattern;
-    const int missingCode =
-        Invoke(native, &unavailable, &missing, &missingOutput);
+    ActivityPickRecord missing = Pattern(account, 990001);
+    const ActivityPickRecord missingPattern = missing;
+    const int missingCode = Invoke(native, &unavailable, &missing);
     const bool missingValid =
         missingCode == 1 && missing.result == 1 &&
-        Same(missingOutput, missingPattern);
+        SameReward(missing, missingPattern);
     if (!missingValid)
         DiagnosePick(
-            "missing", missingCode, missing, missingOutput, delegated);
+            "missing", missingCode, missing, delegated);
     Check(missingValid,
           "missing native command fails closed without publishing output");
 
@@ -373,19 +379,19 @@ int Run() {
                   L"CREATE PROCEDURE sdgo_collection_capsule.Draw "
                   L"@v_AccountNum int,@v_MachineID int AS BEGIN SET NOCOUNT ON;"
                   L"INSERT dbo.collection_cpp_marker VALUES(@v_AccountNum);"
-                  L"SELECT CONVERT(int,1) AS WrongShape;RETURN 0;END"),
+                  L"SELECT CONVERT(bigint,2147483648) AS WrongSerial,"
+                  L"CONVERT(int,1180000) AS ItemCategory,"
+                  L"CONVERT(int,1) AS Amount;RETURN 0;END"),
               "install isolated malformed-row procedure");
-        PickInput malformed = {-1, account, 990001};
-        const PickOutput malformedPattern = Pattern();
-        PickOutput malformedOutput = malformedPattern;
-        const int code = Invoke(
-            native, &game.native, &malformed, &malformedOutput);
+        ActivityPickRecord malformed = Pattern(account, 990001);
+        const ActivityPickRecord malformedPattern = malformed;
+        const int code = Invoke(native, &game.native, &malformed);
         const bool valid =
             code == 1 && malformed.result == 1 &&
-            Same(malformedOutput, malformedPattern);
+            SameReward(malformed, malformedPattern);
         if (!valid)
             DiagnosePick(
-                "malformed", code, malformed, malformedOutput, delegated);
+                "malformed", code, malformed, delegated);
         Check(valid,
               "malformed row fails closed without publishing partial output");
         Check(game.Execute(
@@ -393,6 +399,52 @@ int Run() {
                   L"RAISERROR('Malformed result escaped transaction rollback',16,1);"),
               "malformed result aborts its independent OLE transaction");
         Check(swap.Restore(), "restore production draw after malformed-row case");
+    }
+
+    {
+        ProcedureSwap swap(game);
+        Check(swap.Install(
+                  L"CREATE PROCEDURE sdgo_collection_capsule.Draw "
+                  L"@v_AccountNum int,@v_MachineID int AS BEGIN SET NOCOUNT ON;"
+                  L"INSERT dbo.collection_cpp_marker VALUES(@v_AccountNum);"
+                  L"SELECT CONVERT(bigint,2147483648) AS DropBoxSerial,"
+                  L"CONVERT(int,1180000) AS ItemCategory,"
+                  L"CONVERT(int,2) AS Amount;RETURN 0;END"),
+              "install isolated invalid-amount procedure");
+        ActivityPickRecord invalidAmount = Pattern(account, 990001);
+        const ActivityPickRecord invalidPattern = invalidAmount;
+        const int code = Invoke(native, &game.native, &invalidAmount);
+        Check(code == 1 && invalidAmount.result == 1 &&
+                  SameReward(invalidAmount, invalidPattern),
+              "non-single activity amount fails closed without publishing output");
+        Check(game.Execute(
+                  L"IF EXISTS(SELECT 1 FROM dbo.collection_cpp_marker) "
+                  L"RAISERROR('Invalid amount escaped transaction rollback',16,1);"),
+              "invalid activity amount aborts its independent OLE transaction");
+        Check(swap.Restore(), "restore production draw after invalid-amount case");
+    }
+
+    {
+        ProcedureSwap swap(game);
+        Check(swap.Install(
+                  L"CREATE PROCEDURE sdgo_collection_capsule.Draw "
+                  L"@v_AccountNum int,@v_MachineID int AS BEGIN SET NOCOUNT ON;"
+                  L"INSERT dbo.collection_cpp_marker VALUES(@v_AccountNum);"
+                  L"SELECT CONVERT(bigint,2147483648) AS DropBoxSerial,"
+                  L"CONVERT(int,1070001) AS ItemCategory,"
+                  L"CONVERT(int,1) AS Amount;RETURN 0;END"),
+              "install isolated non-unit-category procedure");
+        ActivityPickRecord nonUnit = Pattern(account, 990001);
+        const ActivityPickRecord nonUnitPattern = nonUnit;
+        const int code = Invoke(native, &game.native, &nonUnit);
+        Check(code == 1 && nonUnit.result == 1 &&
+                  SameReward(nonUnit, nonUnitPattern),
+              "non-unit activity category fails closed without publishing output");
+        Check(game.Execute(
+                  L"IF EXISTS(SELECT 1 FROM dbo.collection_cpp_marker) "
+                  L"RAISERROR('Non-unit category escaped transaction rollback',16,1);"),
+              "non-unit activity category aborts its independent OLE transaction");
+        Check(swap.Restore(), "restore production draw after non-unit-category case");
     }
 
     return failures ? 1 : 0;

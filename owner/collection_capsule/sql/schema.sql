@@ -54,6 +54,17 @@ IF OBJECT_ID(N'sdgo_collection_capsule.Seen',N'U') IS NULL
         Source varchar(32) NOT NULL,
         PRIMARY KEY(AccountNumber,UnitID)
     );
+IF OBJECT_ID(N'sdgo_collection_capsule.OwnedUnitItems',N'U') IS NULL
+    CREATE TABLE sdgo_collection_capsule.OwnedUnitItems (
+        UnitID int NOT NULL PRIMARY KEY,
+        CategoryID int NOT NULL UNIQUE CHECK(CategoryID BETWEEN 1180000 AND 1199999),
+        Name nvarchar(48) NOT NULL
+    );
+IF OBJECT_ID(N'sdgo_collection_capsule.UnitDelivery',N'U') IS NULL
+    CREATE TABLE sdgo_collection_capsule.UnitDelivery (
+        UnitID int NOT NULL PRIMARY KEY,
+        CategoryID int NOT NULL UNIQUE
+    );
 IF OBJECT_ID(N'sdgo_collection_capsule.Coverage',N'U') IS NULL
     CREATE TABLE sdgo_collection_capsule.Coverage (
         AccountNumber int NOT NULL PRIMARY KEY,
@@ -77,3 +88,7 @@ IF OBJECT_ID(N'sdgo_collection_capsule.Modules',N'U') IS NULL
         InstalledHash char(64) NOT NULL,
         InstalledDefinition nvarchar(max) NOT NULL
     );
+IF COL_LENGTH(N'sdgo_collection_capsule.DrawLog',N'DropItemNumber') IS NULL
+    ALTER TABLE sdgo_collection_capsule.DrawLog ADD DropItemNumber bigint NULL;
+IF COL_LENGTH(N'sdgo_collection_capsule.DrawLog',N'ItemCategory') IS NULL
+    ALTER TABLE sdgo_collection_capsule.DrawLog ADD ItemCategory int NULL;

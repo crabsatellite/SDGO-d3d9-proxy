@@ -29,7 +29,7 @@ def symbol_file(*, pick_rva: str = "0x10") -> bytes:
         "timestamp=0x1\n"
         "size_of_image=0x2\n"
         "\n"
-        "[collection.pick]\n"
+        "[collection.activity_pick]\n"
         "kind=code\n"
         f"rva={pick_rva}\n"
         "expect=AA BB\n"
@@ -59,14 +59,14 @@ class FakeCursor:
         if self.last == "SELECT DB_NAME()":
             return ("CollectionFixture",)
         if self.last.startswith(
-            "SELECT MachineID,PriceGP,Enabled,PoolHash "
-            "FROM sdgo_collection_capsule.State"
+            "SELECT s.MachineID,s.PriceGP,s.Enabled,s.PoolHash,"
         ):
             return (
                 self.model["machine_id"],
                 100000,
                 True,
                 CLI.pool_hash(self.model["pool"]),
+                2, 0, 100000, 0,
             )
         raise AssertionError(f"Unexpected fixture fetch: {self.last}")
 
@@ -95,6 +95,7 @@ class CollectionDeploymentTests(unittest.TestCase):
             "feature": "collection-capsule",
             "machine_id": 990001,
             "price_gp": 100000,
+            "machine_kind": "activity",
             "source_units": [],
             "pool": {"units": [{"unit_id": 1}], "form_aliases": []},
         }
@@ -126,6 +127,7 @@ class CollectionDeploymentTests(unittest.TestCase):
             "feature": "collection-capsule",
             "machine_id": 990001,
             "price_gp": 100000,
+            "machine_kind": "activity",
             "pool_revision": CLI.pool_hash(model["pool"]),
             "files": files,
         }
@@ -225,7 +227,7 @@ class CollectionDeploymentTests(unittest.TestCase):
         merged = CLI.merged_world_symbols(existing, symbol_file())
         text = merged.decode("utf-8")
         self.assertIn("[unrelated.fixture]", text)
-        self.assertIn("[collection.pick]", text)
+        self.assertIn("[collection.activity_pick]", text)
         self.assertIn("[collection.connection_command]", text)
         self.assertEqual(CLI.merged_world_symbols(merged, symbol_file()), merged)
         with self.assertRaisesRegex(ValueError, "conflicts"):
@@ -249,6 +251,17 @@ class CollectionDeploymentTests(unittest.TestCase):
                         ),
                     ):
                         CLI.checked_model(package)
+
+    def test_migration_retires_only_the_verified_ordinary_hook_symbol(self):
+        existing = ("[host]\ntimestamp=0x1\nsize_of_image=0x2\n\n"
+                    "[collection.pick]\nkind=code\nrva=0xE510\nexpect=55 8B EC 81 EC 60 07 00 00\n\n"
+                    "[unrelated.fixture]\nkind=data\nrva=0x30\nexpect=EE\n").encode('utf-8')
+        merged = CLI.merged_world_symbols(existing, symbol_file()).decode('utf-8')
+        self.assertNotIn('[collection.pick]', merged)
+        self.assertIn('[collection.activity_pick]', merged)
+        self.assertIn('[unrelated.fixture]', merged)
+        with self.assertRaisesRegex(ValueError, 'externally edited'):
+            CLI.merged_world_symbols(existing.replace(b'rva=0xE510', b'rva=0xE511'), symbol_file())
 
     def test_scoped_restore_removes_generated_chain_and_restores_old_files(self):
         with tempfile.TemporaryDirectory(prefix="collection server files ") as raw:

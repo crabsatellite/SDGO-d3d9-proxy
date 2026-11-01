@@ -17,7 +17,7 @@ def fake_x86_dll():
     raw[0x40:0x44] = b"PE\0\0"
     struct.pack_into("<H", raw, 0x44, 0x14C)
     struct.pack_into("<H", raw, 0x40 + 22, 0x2102)
-    return bytes(raw)
+    return bytes(raw) + b'SDGO_CAPSULE_REGISTRY_6TABLE_V2'
 
 
 class OwnerPackageFixture:
