@@ -1,218 +1,144 @@
 # SDGO mod framework
 
-A mod loader for the SD Gundam Online game client (`GOnline.exe`) and battle server
-(`BattleServer.exe`). It puts a small core into both programs that checks the exe build,
-verifies every code address before using it and loads mods. Features are built as mods on
-top of it, on the client, the battle server, or both.
+Core fixes and optional extensions for SD Gundam Online clients and private servers.
+All mods share one framework for build verification, loading, configuration and updates.
+Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
-Unofficial fan project. It contains no game files; SD Gundam Online and its assets belong
-to their owners. 简体中文说明：[README.zh-CN.md](README.zh-CN.md)
+**Start with core fixes, then choose your extensions.** Beta is a release channel, independent of category.
 
-* [Features](#features)
-* [What is in the package](#what-is-in-the-package)
-* [Supported game builds](#supported-game-builds)
-* [Install](#install) · [Uninstall](#uninstall)
-* [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
-* [Building from source](#building-from-source) · [Adding a feature](#adding-a-feature)
+[Install and configure](docs/setup.md) · [Latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [Developer API](docs/framework.md)
 
-## Features
+## Core fixes
 
-Each feature is one or more mods with its own guide (use, settings, logs, how it works).
+Client compatibility fixes, server settlement repairs and new-account defaults.
+Each fix can be disabled separately.
 
-| feature | what it does | mods | install on | guide |
+<!-- mod-category:fixes -->
+| Feature | Purpose | Mods | Install on | Guide |
 |---|---|---|---|---|
-| Co-op mission wingmen | AI pilots join your team in co-op missions, fly with the game's AI battle bot AI, score real kills and can be shot down. Put `!ai` in the room title. | `coop_ai`, `mission_ai` | battle server + clients | [English](docs/coop-wingmen.md) · [中文](docs/coop-wingmen.zh-CN.md) |
-| PvP AI players (Beta) | Use `!ai` in a PvP room title for opponents and teammates, with native scoring, respawn, decks and dead-view support. | `pvp_ai`, `match_ai` | battle server + every participating client | [English](docs/pvp-ai.md) · [中文](docs/pvp-ai.zh-CN.md) |
-| Operator manager (preview) | Host UI for names, portraits, item-drop probabilities and amounts, and free-for-all or product registration. Store listing and pricing remain separate. | `operator_catalog`, host assistant and SQL adapter | clients + host; live-game acceptance pending | [English](docs/operator-assistant.md) · [中文](docs/operator-assistant.zh-CN.md) |
-| IME input fix | Fixes text typed with a Chinese/Japanese/Korean IME at one place that reads a byte count as a character count. | `ime_fix` | clients | [English](docs/ime-fix.md) · [中文](docs/ime-fix.zh-CN.md) |
-| General input method fix | Stops input methods from freezing or crashing the game, whichever input method it is. The repack's `SDPlus.dll` breaks window lookup (`FindWindowW`) for every DLL in the game process, so any input method that looks up a window hangs or crashes when it is switched on. The fix restores normal lookup for everything except the game itself. | `findwindow_fix` | clients | [English](docs/findwindow-fix.md) · [中文](docs/findwindow-fix.zh-CN.md) |
-| Random crash at game start | Stops the game from crashing now and then right after it starts, on the loading screen (`0x008FE610`): the screen picks a loading set at random and crashes when its unit is missing from the client's data; such a set is now replaced by the nearest set whose unit is known. | `startup_crash_fix` | clients | [English](docs/startup-crash-fix.md) · [中文](docs/startup-crash-fix.zh-CN.md) |
-| Packet logger | Logs outgoing packets for mod development. Off by default. | `net_probe` | clients | [docs/net-probe.md](docs/net-probe.md) |
+| IME input fix | Correct the length of committed IME text | `ime_fix` | Clients | [Use](docs/ime-fix.md) |
+| Input method freeze fix | Restore window lookup needed by input methods alongside existing plugins | `findwindow_fix` | Clients | [Use](docs/findwindow-fix.md) |
+| Startup crash fix | Avoid loading screens referencing missing units | `startup_crash_fix` | Clients | [Use](docs/startup-crash-fix.md) |
+| Agent relay log fix | Correct native relay logging | `agent_relay_log_fix` | Agent servers | [Use](docs/agent-relay-log-fix.md) |
+| Battle rank regression fix | Prevent a higher sublevel from lowering the major rank, such as 15-1 → 5-2 | `rank_progression_fix` | World server | [Use](docs/rank-progression-fix.md) |
+| New-account starter profile | Configure starting currency, rank and unit grants while preserving existing progress | `new_account_profile` | World server | [Use](docs/new-account-profile.md) |
+<!-- /mod-category:fixes -->
 
-A feature that lists the battle server works only when the battle servers have the server
-part and the players have matching client parts. Every participant in a PvP AI room
-should use a matching build.
+The rank repair loads through the framework in WorldServer. It routes matching battle calls to
+Mod-owned procedures while preserving the original procedures. Players need no client update.
 
-### In game
+<details>
+<summary>Input method example</summary>
 
-Co-op mission wingmen: a mission room with `!ai` in its title. AI wingmen fly with the
-player and fight the mission's enemies.
+![Using an input method in the lobby](docs/findwindow-fix-ime.png)
 
-![Co-op mission with AI wingmen fighting alongside the player](docs/coop-wingmen-demo.webp)
+</details>
 
-PvP AI (Beta): use the room title to add opponents and teammates. Also supports death match, Grid, leader and Tag modes.
+## Gameplay extensions
 
-![AI teammates and opponents in PvP](docs/pvp-ai-demo.webp)
+Optional features for a more complete solo or multiplayer game. NPCs, unit pools
+and random-unit gameplay belong in this category.
 
-General input method fix: the game lobby with an input method switched on (its toolbar is
-boxed in red; iFlytek in this screenshot). Without `findwindow_fix`, any input method that
-looks up a window freezes or crashes the game as soon as it is switched on.
+<!-- mod-category:gameplay -->
+| Feature | Purpose | Mods | Install on | Guide |
+|---|---|---|---|---|
+| Mission AI wingmen | Add AI teammates with `!ai` in a mission title; [long-title combinations](#long-room-title-commands) | `coop_ai`, `mission_ai` | Battle servers + clients | [Use](docs/coop-wingmen.md) |
+| PvP AI (Beta) | AI opponents and teammates with scoring, respawn, decks and spectating; [long-title combinations](#long-room-title-commands) | `pvp_ai`, `match_ai` | Battle servers + all participants | [Use](docs/pvp-ai.md) |
+| AI mech catalog (Beta, separate addon) | Expand LV1–LV5 AI pools using paired owner-generated data; restart with it disabled to restore stock pools; [long-title combinations](#long-room-title-commands) | `ai_catalog` | Battle servers + all participants | [Use](docs/ai-catalog.md) |
+| Battle contribution rewards (Beta) | Native contribution settlement, durable MB and owner-controlled multipliers | `battle_rewards` | Battle servers + owner worker | [Use](docs/battle-rewards.md) |
+| Per-round random loadouts (Beta) | Use `!rand` to randomize each human's owned units every battle; deck modes total exactly ten points. Composes with `!ai`; [long-title combinations](#long-room-title-commands) | `room_random` | Battle server | [Use](docs/room-random.md) |
+| Extended room titles (Beta) | Full mission and PvP titles, including rules after byte 20 | `room_titles`, `room_titles_agent`, `room_titles_server` | Clients + Agent + Battle | [Use](docs/room-titles.md) |
+| Operator supplies and manager (Beta) | Configure portraits and reward rules; five permanent free support officers with in-place migration | `operator_catalog` | Clients + owner assistant/SQL adapter | [Use](docs/operator-assistant.md) |
+<!-- /mod-category:gameplay -->
 
-![Game lobby with an input method switched on](docs/findwindow-fix-ime.png)
+Open the operator host UI with the included `tools/Start-Assistant.ps1` to configure
+names, portraits and drop probabilities/amounts. Five permanent free support officers
+cover blueprints, experience, cosmetics, upgrade kits and capsule coins. Existing
+holdings migrate in place, preserving equipped references and personal nicknames.
+The owner applies server rules and distributes a matching client update; players
+keep their normal launcher. The module registers products for the storefront to
+price and list. In-game display, claiming and settlement still need manual acceptance.
+See the [configuration and migration guide](docs/operator-assistant.md).
 
-## What is in the package
+The AI catalog is a separate, default-off addon; Base/Full framework packages do
+not install it. The owner generates `catalog.bin` from their database catalog and
+matching client tables, installs both halves, and exports a player overlay.
+Players run its included setup once, then use their normal launcher. Room titles
+such as `!ai e2 a1 lv2` use the expanded random pool; there is no extra selection
+screen. No SQL rows or game archives are rewritten. See the
+[owner installation and player distribution guide](docs/ai-catalog.md).
 
-```
-SDGO-ModFramework-<version>/
-  client/                 goes next to GOnline.exe
-    d3d9.dll
-    sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
-    sdgo\mods\            findwindow_fix, ime_fix, mission_ai, match_ai, net_probe (off), startup_crash_fix
-  server/                 goes next to BattleServer.exe
-    winmm.dll
-    sdgo\core.dll, sdgo\sdgo.ini, sdgo\symbols\
-    sdgo\mods\            coop_ai, pvp_ai
-  install_client.ps1      installs client\ into a game folder
-  install_server.ps1      installs server\ into battle server folders
-  README.md, README.zh-CN.md, docs\, LICENSE, THIRD_PARTY_NOTICES.md, licenses\
-```
+<a id="long-room-title-commands"></a>
 
-The mods are the features in [Features](#features); `net_probe` is off until it is switched
-on in its `mod.ini`.
+### Longer room names and combined commands
 
-| part | where | what it does |
-|---|---|---|
-| `d3d9.dll` | game folder | Loader: GOnline.exe loads it at start; it starts `sdgo\core.dll` and forwards Direct3D to the real `d3d9.dll`. |
-| `winmm.dll` | battle server folder | Same loader for BattleServer.exe (forwards `timeGetTime`). |
-| `sdgo\core.dll` | both | Framework core: checks the exe build, verifies every code address it hands out, owns all hooks, loads mods. |
-| `sdgo\sdgo.ini` | both | Framework settings: log level, a chained loader, single mods turned off (see [Configuration](#configuration)). |
-| `sdgo\symbols\*.ini` | both | Verified addresses and byte signatures, one file per supported exe build. |
-| `sdgo\mods\<id>\` | both | One folder per mod: `<id>.dll`, `mod.ini` (manifest + settings), extra files. |
+Mission wingmen, PvP AI and random loadouts can use [extended room titles](docs/room-titles.md)
+for descriptive names with several commands. With the matching three parts enabled,
+limits are **128 Unicode scalars / 512 UTF-8 bytes**, including commands after byte 20:
 
-The installers copy whatever the package contains, so new features need no installer
-changes.
-
-## Supported game builds
-
-The framework only touches code it can verify. Each exe build has a *host key*,
-`<exe name>-<TimeDateStamp>-<SizeOfImage>`, and a matching file in `sdgo\symbols\`:
-
-| exe | host key | known distributions |
-|---|---|---|
-| GOnline.exe | `GOnline-54BE1568-00C97000` | SDGO Ultimate Repack v1.2 (and the client it is based on) |
-| BattleServer.exe | `BattleServer-548A891D-0046C000` | the common private server pack (BattleServer1..N folders) |
-
-The install scripts print the host key of your exe. With another build the framework still
-loads, logs that no symbol file matches and keeps every mod disabled, so the game is
-unaffected. See [Other game builds](#other-game-builds).
-
-## Install
-
-Requirements: Windows with Windows PowerShell 5.1 (built in). No VC++ redistributable is
-needed. Download `SDGO-ModFramework-<version>.zip` from the
-[latest release](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest), extract it,
-then open PowerShell in the extracted folder.
-
-### Client (every player)
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games\SDGO"
-```
-
-`-GameDir` is the folder that contains `GOnline.exe`. Close the game first.
-
-* How the game is started does not matter (any launcher, a shortcut, GOnline.exe directly):
-  Windows loads `d3d9.dll` from GOnline.exe's own folder, and the framework finds all of its
-  files relative to GOnline.exe.
-* Other mods are left alone. Plugins loaded through other DLLs (for example `dinput8.dll` +
-  `SDPlus.dll` in the Ultimate Repack) keep working. If the folder already has a `d3d9.dll`
-  from another mod (a graphics wrapper, say), the installer renames it to `d3d9_chain.dll`
-  and chains it, so both run.
-* Re-running the script updates an existing install. It keeps `sdgo\sdgo.ini`, and installs
-  each mod's new `mod.ini` with your own values written back (`[mod] enabled` and every
-  `[settings]` value that differs from the new file); the output lists them.
-  `-OverwriteConfig` installs both as they are in the package.
-
-Manual install: copy the contents of `client\` into the game folder (next to GOnline.exe).
-This replaces `sdgo.ini` and every `mod.ini` with the package's.
-
-Check: after the game has started, `sdgo\logs\sdgo.log` begins with
-`core: SDGO core started by d3d9 loader ...`, `symbols: N of N verified` and one
-`loaded <mod>` line per mod.
-
-### Battle server (whoever hosts the server)
-
-Only needed for features that list the battle server. Stop the battle servers, then:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server"
-```
-
-`-ServerRoot` is either one battle server folder (with `BattleServer.exe`) or the folder
-that holds several (`BattleServer1`, `BattleServer2`, ...). `-Only BattleServer3` limits it to
-named folders. Start the battle servers again afterwards. How they are started (a server
-manager, batch files, a service) does not matter. An existing `winmm.dll` is chained, and an
-update keeps the settings, the same way as on the client. Manual install: copy the contents
-of `server\` into each battle server folder.
-
-## Uninstall
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install_client.ps1 -GameDir "D:\Games\SDGO" -Uninstall
-powershell -ExecutionPolicy Bypass -File .\install_server.ps1 -ServerRoot "D:\SDGO-Server\Server" -Uninstall
-```
-
-This removes the loader DLL and `sdgo\` (to the Recycle Bin) and puts a chained
-`d3d9.dll`/`winmm.dll` back under its original name. To turn a single mod off instead, set
-`<mod id>=0` under `[mods]` in `sdgo\sdgo.ini`.
-
-## Configuration
-
-`sdgo\sdgo.ini` (one per exe folder):
-
-| section / key | meaning |
+| Use | Complete room title example |
 |---|---|
-| `[core] log_level` | 0 debug, 1 info (default), 2 warn, 3 error |
-| `[loader] chain_d3d9` / `chain_winmm` | another DLL to forward to instead of the system copy, relative to the exe folder (set by the installers) |
-| `[mods] <id>=0` | turn a mod off |
+| Mission: request three level-4 wingmen and randomize humans | `Weekend mission with friends !ai3 lv4 !rand` |
+| PvP: two enemies, one ally and random human loadouts | `Friendly practice for newcomers !ai e2 a1 lv4 !rand` |
 
-Each mod's settings are in the `[settings]` section of its `mod.ini`; every key is
-documented there and in the feature's guide.
+Existing player-slot limits still apply. Keep `lv4`, `e2` and `a1` after `!ai`, before the next `!command`.
+Enable `room_titles` on clients, `room_titles_agent` on Agents and `room_titles_server` on Battle servers,
+and update the consuming `coop_ai` / `pvp_ai` / `room_random` DLLs. Players use their normal launcher.
+The three title Mods default to off; AI and random-loadout features still need their own installation and settings.
+Without the title extension, use native 20-byte short titles.
+[Full command grammar and examples](docs/room-commands.md).
 
-## Troubleshooting
 
-All diagnostics go to `sdgo\logs\sdgo.log` next to the exe (the previous run is
-`sdgo.prev.log`). Framework messages:
+<details>
+<summary>Short AI gameplay examples</summary>
 
-| log line | meaning |
-|---|---|
-| no `sdgo.log` at all | the loader did not run: the DLL is not next to the exe, or another program replaced it |
-| `no symbol file for host ...` | unsupported exe build; every mod stays off and the game is unaffected |
-| `symbol X rejected: byte +N is .., expected ..` | the code at that address differs (another patch or a different build); mods that need X stay off |
-| `required symbol X ...` / `0 of N mods active` | a mod could not start because a symbol it needs failed |
+Mission wingmen:
 
-Messages of a particular feature are listed in its guide.
+![Mission AI wingmen](docs/coop-wingmen-demo.webp)
 
-### Other game builds
+PvP AI (Beta); also supports death match, Grid, leader and Tag:
 
-A different `GOnline.exe` or `BattleServer.exe` needs its own `sdgo\symbols\<host key>.ini`
-with addresses and signatures found for that build; see
-[docs/framework.md](docs/framework.md#symbol-files). Until then the framework loads and does
-nothing.
+![AI teammates and opponents in battle](docs/pvp-ai-demo.webp)
 
-## Building from source
+</details>
 
-Visual Studio 2022 (C++ tools) and CMake 3.20 or newer; both targets are 32-bit.
+## Networking and hosting
 
-```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
-cmake --build build --config Release
-powershell -ExecutionPolicy Bypass -File tools\package.ps1     # dist\SDGO-ModFramework-<version>.zip
-```
+Connections, relays, port mapping and owner deployment tools have their own
+category and owner-supplied configuration. They are managed separately from
+gameplay. The package's feature directory lists the tools actually included.
 
-The install scripts also install straight from a build:
-`tools\install_client.ps1 -GameDir ... -Source build\stage\Release\client`.
+<!-- mod-category:network -->
+| Feature | Purpose | Mods | Install on | Guide |
+|---|---|---|---|---|
+| FRP connectivity (Beta) | Owner-configured endpoint mapping and reusable UDP ports | `net_route`, `agent_udp_pool` | Clients + Agent servers | [Use](docs/frp-distribution.md) |
+<!-- /mod-category:network -->
 
-## Adding a feature
+## Reward rules and verification
 
-A new feature is one or more mods under `mods/`, registered in `CMakeLists.txt`, plus a guide
-in `docs/`, a row in the [Features](#features) table of both READMEs and its mods in their
-[package listing](#what-is-in-the-package). The build stages it
-into `client\` or `server\`, and the installers and the package pick it up without changes.
-Step by step, with the mod API, symbol files and the guide outline:
-[docs/framework.md](docs/framework.md#adding-a-feature).
+[Battle contribution rewards (Beta)](docs/battle-rewards.md) are wired to native
+settlement and the owner wallet worker. The [rule guide](docs/battle-reward-design.md)
+contains the approved values and offline calculator. Real account combat, HUD and
+reconnect acceptance remain manual; installation keeps existing unrelated state.
 
-## License
+## Developer tools
 
-MIT, see [LICENSE](LICENSE). Third-party code: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-(MinHook, BSD 2-Clause).
+For development and troubleshooting; disabled by default.
+
+<!-- mod-category:development -->
+| Tool | Purpose | Mods | Install on | Guide |
+|---|---|---|---|---|
+| Packet logger | Capture outgoing packets for protocol troubleshooting | `net_probe` | Clients | [Use](docs/net-probe.md) |
+<!-- /mod-category:development -->
+
+## Install and use
+
+1. Follow the [installation guide](docs/setup.md#install) for the hosts required by your chosen feature. New-account defaults and rank repair install only on World; players need no client component.
+2. Start with your usual launcher and enable extensions using their guides.
+3. Use the installer to update while keeping your configuration. Categories,
+   whole features and individual mods have separate switches.
+
+`CONTENTS.md` and `sdgo/catalog.json` describe the features selected for the package.
+[Installation, removal and troubleshooting](docs/setup.md) · [Build and add extensions](docs/framework.md#adding-a-feature)
+
+MIT: [LICENSE](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

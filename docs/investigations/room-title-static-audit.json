@@ -1,0 +1,152 @@
+{
+  "scope": "static file bytes only; no runtime or gameplay acceptance",
+  "targets": [
+    {
+      "role": "client",
+      "file_name": "GOnline.exe",
+      "sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+      "expected_sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+      "identity_matches": true,
+      "anchors": [
+        {
+          "name": "mission_setting_title_bound",
+          "va": "0x0084C626",
+          "file_offset": 4507174,
+          "expected_hex": "80 f9 14 76 0d",
+          "actual_hex": "80 f9 14 76 0d",
+          "matches": true,
+          "interpretation": "cmp cl,20; jbe"
+        },
+        {
+          "name": "mission_setting_title_clamp",
+          "va": "0x0084C62B",
+          "file_offset": 4507179,
+          "expected_hex": "c6 85 3f ff ff ff 14",
+          "actual_hex": "c6 85 3f ff ff ff 14",
+          "matches": true,
+          "interpretation": "set byte length to 20"
+        },
+        {
+          "name": "mission_setting_packet_size",
+          "va": "0x0084C666",
+          "file_offset": 4507238,
+          "expected_hex": "6a 3e",
+          "actual_hex": "6a 3e",
+          "matches": true,
+          "interpretation": "push 62-byte packet size"
+        },
+        {
+          "name": "pvp_make_room_title_copy",
+          "va": "0x008D43FE",
+          "file_offset": 5063678,
+          "expected_hex": "6a 14 50",
+          "actual_hex": "6a 14 50",
+          "matches": true,
+          "interpretation": "push 20; push source"
+        },
+        {
+          "name": "pvp_make_room_packet_size",
+          "va": "0x008D471E",
+          "file_offset": 5064478,
+          "expected_hex": "6a 53",
+          "actual_hex": "6a 53",
+          "matches": true,
+          "interpretation": "push 83-byte packet size"
+        },
+        {
+          "name": "mission_make_room_title_bound",
+          "va": "0x009EE32B",
+          "file_offset": 6218539,
+          "expected_hex": "80 f9 14 76 02 b1 14",
+          "actual_hex": "80 f9 14 76 02 b1 14",
+          "matches": true,
+          "interpretation": "cmp cl,20; jbe; mov cl,20"
+        },
+        {
+          "name": "mission_make_room_title_copy",
+          "va": "0x009EE389",
+          "file_offset": 6218633,
+          "expected_hex": "6a 14",
+          "actual_hex": "6a 14",
+          "matches": true,
+          "interpretation": "push 20"
+        },
+        {
+          "name": "mission_make_room_packet_size",
+          "va": "0x009EE7AA",
+          "file_offset": 6219690,
+          "expected_hex": "6a 53",
+          "actual_hex": "6a 53",
+          "matches": true,
+          "interpretation": "push 83-byte packet size"
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "role": "battle",
+      "file_name": "BattleServer.exe",
+      "sha256": "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4",
+      "expected_sha256": "f74d16037fc8f4fe49a8041488aabd1948df1b1a9f2d125de9dad4a2347b63a4",
+      "identity_matches": true,
+      "anchors": [
+        {
+          "name": "lobby_create_title_length_field",
+          "va": "0x004FDED4",
+          "file_offset": 1037012,
+          "expected_hex": "88 50 53",
+          "actual_hex": "88 50 53",
+          "matches": true,
+          "interpretation": "mov byte ptr [eax+0x53],dl"
+        },
+        {
+          "name": "lobby_create_title_copy",
+          "va": "0x004FDEE6",
+          "file_offset": 1037030,
+          "expected_hex": "6a 14",
+          "actual_hex": "6a 14",
+          "matches": true,
+          "interpretation": "push 20"
+        },
+        {
+          "name": "battle_rename_title_length_field",
+          "va": "0x004DCCE3",
+          "file_offset": 901347,
+          "expected_hex": "88 41 79",
+          "actual_hex": "88 41 79",
+          "matches": true,
+          "interpretation": "mov byte ptr [ecx+0x79],al"
+        },
+        {
+          "name": "battle_rename_title_copy",
+          "va": "0x004DCCE6",
+          "file_offset": 901350,
+          "expected_hex": "6a 14",
+          "actual_hex": "6a 14",
+          "matches": true,
+          "interpretation": "push 20"
+        },
+        {
+          "name": "battle_setting_title_copy",
+          "va": "0x004BF190",
+          "file_offset": 779664,
+          "expected_hex": "6a 14",
+          "actual_hex": "6a 14",
+          "matches": true,
+          "interpretation": "push 20"
+        },
+        {
+          "name": "battle_room_info_title_copy",
+          "va": "0x004F611D",
+          "file_offset": 1004829,
+          "expected_hex": "6a 14",
+          "actual_hex": "6a 14",
+          "matches": true,
+          "interpretation": "push 20"
+        }
+      ],
+      "status": "passed"
+    }
+  ],
+  "status": "passed"
+}
