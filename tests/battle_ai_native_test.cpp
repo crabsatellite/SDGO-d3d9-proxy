@@ -605,6 +605,17 @@ int wmain(int argc,wchar_t** argv) {
         unit.Init(reinterpret_cast<void*>(4));Sleep(2100);unit.Think();
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
               "enemy AI selects the opposing team's AI while excluding its own lower-HP AI teammate");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(2));unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
+              "authoritative knockdown protection excludes the previous target from attack selection");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(1));
+        auto protectedMovement=native_world::movements[2].data();native_world::Put(protectedMovement,8,protectedMovement+0x110);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
+              "a pending native get-up phase remains protected before authoritative state synchronization");
+        native_world::Put(protectedMovement,8,uint32_t(0));native_world::Put(protectedMovement,4,protectedMovement+0xE8);unit.Think();
+        Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
+              "ordinary hit-stun immediately becomes a legal target after the protected phase clears");
+        native_world::Put(protectedMovement,4,protectedMovement+0x20);
         native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(0));unit.Think();
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==3)"),
               "the target's native permission state excludes an unattackable AI without excluding remote humans");
@@ -626,8 +637,56 @@ int wmain(int argc,wchar_t** argv) {
         native_world::Put(native_world::sameTeamNpc.data(),0x20,int32_t(1));unit.Think();
         Check(Eval("assert(SDGO_BattleAI_Universal.states[20].target==2)"),
               "host-side allied AI attacks the opposing AI and never the host or its own AI teammate");
+        auto protectionFsm=native_world::fsms[0].data();
+        native_world::Put(protectionFsm,0x240,int32_t(0));native_world::Put(protectionFsm,0x248,native_world::weapons[0].data());
+        native_world::Put(protectionFsm,0x200,uint32_t(2));native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(2));
+        auto sourceCallbacks=reinterpret_cast<native_world::Callbacks*>(protectionFsm);
+        const int beforeProtectedAdmission=native_world::attackAdmissions;sourceCallbacks->AttackAdmission();
+        Check(native_world::attackAdmissions==beforeProtectedAdmission,
+              "native melee admission rejects protection even if it changed after the last Lua decision");
+        native_world::Put(protectionFsm,4,protectionFsm+0x48);native_world::Put(protectionFsm,8,uint32_t(0));
+        uint8_t trackingInput[0x20]={};trackingInput[0xD]=1;
+        const int beforeProtectedTracking=native_world::trackUpdates;sourceCallbacks->TrackingUpdate(trackingInput);
+        Check(*reinterpret_cast<uint8_t**>(protectionFsm+4)==protectionFsm+0x48&&
+              *reinterpret_cast<uint8_t**>(protectionFsm+8)==protectionFsm+0x20&&native_world::trackUpdates==beforeProtectedTracking,
+              "protected-target knife tracking queues a normal release instead of chasing or snapping an active swing");
+        native_world::Put(protectionFsm,8,uint32_t(0));native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(1));
+        sourceCallbacks->TrackingUpdate(trackingInput);
+        Check(native_world::trackUpdates==beforeProtectedTracking+1,
+              "ordinary tracking resumes immediately when target protection clears");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(2));native_world::Put(protectionFsm,8,protectionFsm+0x5C);
+        sourceCallbacks->TrackingUpdate(trackingInput);
+        Check(*reinterpret_cast<uint8_t**>(protectionFsm+8)==protectionFsm+0x5C&&native_world::trackUpdates==beforeProtectedTracking+2,
+              "protection cancellation never overwrites an already queued native action");
+        native_world::Put(protectionFsm,4,protectionFsm+0x5C);uint8_t protectedInput[0x20]={};protectedInput[0xD]=1;
+        sourceCallbacks->SwingUpdate(protectedInput);
+        Check(native_world::swingInput==0&&protectedInput[0xD]==1,
+              "native continuation suppresses another slash against a protected target without corrupting shared input");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(1));sourceCallbacks->AttackAdmission();
+        sourceCallbacks->SwingUpdate(protectedInput);
+        Check(native_world::attackAdmissions==beforeProtectedAdmission+1&&native_world::swingInput==1,
+              "ordinary hurt resumes legal native melee admission and continuation immediately");
+        native_world::Put(protectionFsm,4,protectionFsm+0x20);native_world::Put(protectionFsm,8,uint32_t(0));native_world::Put(protectionFsm,0x240,int32_t(1));
+        native_world::Put(protectionFsm,0x248,native_world::weapons[1].data());
         native_world::Put(native_world::document.data(),0x70,static_cast<native_world::ListNode*>(nullptr));
         native_world::Put(native_world::document.data(),0x7C,static_cast<native_world::ListNode*>(nullptr));
+    }
+    if(generic||medium) {
+        native_world::Initialize(unit.bytes,g_L);
+        Config(generic?"[settings]\nDifficulty=Hard\nCoverChance=0\n":"[settings]\nDifficulty=Medium\n");
+        native_world::SetRoomTitle(generic?L"!ai hard":L"!ai medium");
+        native_world::Put(native_world::enemy1.data(),0x38,int32_t(0));
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(2));
+        native_world::Put(native_world::nodes[2].data(),0x88,native_world::Vec3{0,0,150});
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,-1});
+        unit.Init(reinterpret_cast<void*>(5));Sleep(2100);unit.Think();
+        Check(!unit.bytes[0x312A]&&!unit.bytes[0xDCD]&&unit.bytes[0x30DC]&&
+              reinterpret_cast<native_world::Vec3*>(native_world::nodes[0].data()+0x6C)->z>0.99f,
+              "a sole knocked-down enemy triggers non-firing repositioning while the actor keeps its front toward the get-up target");
+        native_world::Put(native_world::enemy2.data(),0x9D8,int32_t(1));unit.Think();
+        Check(unit.bytes[0x312A]&&unit.bytes[0xDCD],
+              "the first fully cleared get-up observation resumes a natively ready shot without an extra timer");
     }
     if(generic||medium) {
         native_world::Initialize(unit.bytes,g_L);native_world::directPathFixture=true;native_world::pathMode=0;
@@ -673,6 +732,20 @@ int wmain(int argc,wchar_t** argv) {
         const int beforePointRoute=native_world::pathCalls;unit.Think();
         Check(unit.bytes[0x30DC]&&native_world::pathCalls>beforePointRoute,
               "an explicit defensive destination remains navigable without a living threat object");
+        crossfire();
+        native_world::Put(native_world::nodes[0].data(),0x6C,native_world::Vec3{0,0,1});
+        native_world::Put(unit.bytes,0x3090,native_world::Vec3{0,0,1});
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) local before=SDGO_BattleAI_Observe(); SDGO_BattleAI_RecoveryMode(1); SDGO_BattleAI_CancelRoute(); n:SetMoveTargetPos_Dir(3,350,3,false); n:SetMoveType(1); n:SetJumpTime(0); n:SetAttackOnOff(true); local after=SDGO_BattleAI_Observe(); assert(after.movementRecovery==1 and after.defenceMoving==0); return 123 end");
+        auto recoveryGoal=location()+native_world::Vec3{177,0,0};native_world::Put(unit.bytes,0x3078,recoveryGoal);
+        const int routesBeforeRecovery=native_world::pathCalls,turnsBeforeRecovery=native_world::rotations;
+        Sleep(16);unit.Think();
+        const auto retainedGoal=*reinterpret_cast<native_world::Vec3*>(unit.bytes+0x3078);
+        Check(native_world::pathCalls==routesBeforeRecovery&&battle_ai::Length(retainedGoal-recoveryGoal)<0.01&&unit.bytes[0x30DC],
+              "a wall-recovery motor lease prevents defence from restoring the blocked route in the same Think");
+        Check(native_world::rotations>turnsBeforeRecovery,
+              "wall recovery keeps bounded front-facing defence while it owns the movement goal");
+        Eval("SDGO_BattleAI_GenericUpdate=function(n) SDGO_BattleAI_RecoveryMode(0); local o=SDGO_BattleAI_Observe(); assert(o.movementRecovery==0); return 123 end");
+        unit.Think();
     }
     std::printf("NATIVE ADAPTER CHECKS %s\n",g_failures?"FAILED":"PASSED");
     // Mods live for this process; do not unload an installed trampoline.

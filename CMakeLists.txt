@@ -658,13 +658,21 @@ if(BUILD_TESTING)
     add_test(NAME game_test_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test.py" -v)
     set_tests_properties(game_test_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_library(battle_ai_server_bridge_fixture SHARED tests/battle_ai_server_bridge_fixture.cpp)
+    sdgo_strict(battle_ai_server_bridge_fixture)
     foreach(mod pvp_ai match_ai coop_ai mission_ai)
         add_executable(${mod}_test "tests/${mod}_test.cpp")
         target_link_libraries(${mod}_test PRIVATE sdgo_api)
         sdgo_strict(${mod}_test)
-        add_test(NAME ${mod}_offline COMMAND ${mod}_test)
+        if(mod STREQUAL "pvp_ai")
+            add_test(NAME ${mod}_offline
+                COMMAND ${mod}_test "$<TARGET_FILE:battle_ai_server_bridge_fixture>")
+        else()
+            add_test(NAME ${mod}_offline COMMAND ${mod}_test)
+        endif()
         set_tests_properties(${mod}_offline PROPERTIES TIMEOUT 30)
     endforeach()
+    add_dependencies(pvp_ai_test battle_ai_server_bridge_fixture)
     target_link_libraries(match_ai_test PRIVATE minhook)
 
     find_program(SDGO_POWERSHELL NAMES powershell pwsh)
@@ -677,6 +685,11 @@ if(BUILD_TESTING)
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/ai_catalog_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
         set_tests_properties(ai_catalog_integration PROPERTIES TIMEOUT 60)
+        add_test(NAME battle_ai_server_native_integration COMMAND "${SDGO_POWERSHELL}"
+            -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/battle_ai_server_native_test.ps1"
+            -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
+        set_tests_properties(battle_ai_server_native_integration PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
         add_test(NAME catalog_gates_offline COMMAND "${SDGO_POWERSHELL}"
             -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/catalog_gate_test.ps1"
             -Config "$<CONFIG>" -BuildDir "${CMAKE_BINARY_DIR}")
@@ -833,6 +846,7 @@ sdgo_strict(battle_ai_loadout_test)
 add_executable(battle_ai_server_native_test tests/battle_ai_server_native_test.cpp)
 target_link_libraries(battle_ai_server_native_test PRIVATE sdgo_api)
 sdgo_strict(battle_ai_server_native_test)
+add_dependencies(battle_ai_server_native_test battle_ai_server ai_catalog_server sdgo_core)
 add_library(battle_ai_bridge_fixture SHARED tests/battle_ai_bridge_fixture.cpp)
 sdgo_strict(battle_ai_bridge_fixture)
 add_executable(match_ai_loadout_bridge_test tests/match_ai_loadout_bridge_test.cpp)

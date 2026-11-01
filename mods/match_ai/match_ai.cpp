@@ -961,6 +961,7 @@ namespace
     const Bot* BotByObject(void* um, uint32_t objectId);
     void* g_targetTeamOriginal = nullptr;
     void* g_targetParticipants = nullptr;
+    void* g_scoreboardNpcGateOriginal = nullptr;
 
     // Integer/TLS-only helper: the site detour preserves integer registers and
     // flags, and this function does not touch x87 or SIMD state.
@@ -1147,6 +1148,45 @@ namespace
             if (bot.objectId == objectId && SlotHolds(um, bot))
                 return &bot;
         return nullptr;
+    }
+
+    // The battle Tab panel builds one row per player slot, but after FindPlayer it
+    // rejects every IsA(10) unit.  match_ai participants are CNPCs, so that native
+    // check hides every AI row even though the exact 1001+ object-id lookup succeeds.
+    // Override only the saved IsA result for a live, registered match_ai participant;
+    // ordinary NPCs and stale/reused slots retain the native filter.
+    int __stdcall ScoreboardParticipant(uint8_t* unit)
+    {
+        if (!unit || !g_game.unitManager)
+            return 0;
+        __try {
+            void* um = *g_game.unitManager;
+            if (!um)
+                return 0;
+            const Bot* bot = BotByObject(um, *reinterpret_cast<uint32_t*>(unit + kUnitObjectId));
+            return bot && bot->unit == unit;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    }
+
+    __declspec(naked) void ScoreboardNpcGate()
+    {
+        __asm {
+            pushfd
+            pushad
+            push dword ptr [ebp-84h]
+            call ScoreboardParticipant
+            test eax, eax
+            jz native_filter
+            // pushad saved EAX at +28.  Clear only AL, the IsA(10) result that
+            // the relocated native `test al, al` consumes in the trampoline.
+            mov byte ptr [esp+28], 0
+        native_filter:
+            popad
+            popfd
+            jmp dword ptr [g_scoreboardNpcGateOriginal]
+        }
     }
 
     // No game mode, or one of the PvP modes: slot indexes >= 1000 are not mapped by the game.
@@ -1920,6 +1960,9 @@ SDGO_MOD_ENTRY
         return 0;
     if (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite ||
         !api->HookSite(mod, "ainormal.target_team_gate", reinterpret_cast<void*>(&TargetTeamGate), &g_targetTeamOriginal))
+        return 0;
+    if (!api->HookSite(mod, "hud.scoreboard_npc_gate", reinterpret_cast<void*>(&ScoreboardNpcGate),
+                       &g_scoreboardNpcGateOriginal))
         return 0;
     // The profile pointer is only used by the optional read-only GameTest
     // observer. Older supported symbol maps must still load the production AI

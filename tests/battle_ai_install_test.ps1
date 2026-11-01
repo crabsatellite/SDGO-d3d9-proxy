@@ -27,10 +27,11 @@ if([IO.File]::ReadAllBytes((Join-Path $work 'sdgo\mods\battle_ai\battle_ai.dll')
 $match=[IO.File]::ReadAllText((Join-Path $work 'sdgo\mods\match_ai\mod.ini'))
 if(-not $match.Contains('LogDiagnostics=1') -or -not $match.Contains('[private.extra]') -or $match.Contains('version=old')) { throw 'Match AI manifest/user-section preservation failed' }
 if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\match_ai\match_ai.dll'))) { throw 'Matching loadout bridge missing' }
-foreach($id in 'battle_ai','match_ai') {
+foreach($id in 'battle_ai','match_ai','mission_ai') {
     $management=Get-Content -LiteralPath (Join-Path $work "sdgo\mods\$id\manager.json") -Raw | ConvertFrom-Json
     if($management.id -ne $id) { throw "Missing or wrong Manager registration for $id" }
 }
+if(-not (Test-Path -LiteralPath (Join-Path $work 'sdgo\mods\mission_ai\mission_ai.lua'))) { throw 'Mission search/transition adapter missing' }
 Write-Output "PASS additive, idempotent install preserves separate config and unrelated network settings: $work"
 if($ServerExe) {
     $hostWork=Join-Path (Split-Path -Parent $work) 'server with spaces'

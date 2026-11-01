@@ -11,6 +11,7 @@ function SDGO_BattleAI_Observe() return observation end
 function SDGO_BattleAI_Native() calls.native=calls.native+1; return 123 end
 function SDGO_BattleAI_AimTarget(id) calls.aim=id end
 function SDGO_BattleAI_Cadence(ms) calls.cadence=ms end
+function SDGO_BattleAI_RecoveryMode(active) calls.recoveryMode=active end
 function SDGO_BattleAI_MeleeGate(value) calls.meleeGate=value end
 function SDGO_BattleAI_Chance(percent) calls.rolls=(calls.rolls or 0)+1;return calls.roll or 0 end
 function SDGO_BattleAI_Cover(id,x,y,z) calls.coverQueries=(calls.coverQueries or 0)+1;calls.coverX=x;return calls.coverCandidate end
@@ -38,8 +39,11 @@ function npc:SetMoveTargetPos_Dir(dir,distance,facing,jump)
   assert(dir==facing and jump==false and distance>0)
   calls.moves=calls.moves+1;calls.direction=dir
 end
-function npc:SetMoveType(mode) calls.mode=mode end
-function npc:SetJumpTime(seconds) calls.jumps=calls.jumps+1;calls.jumpSeconds=seconds end
+function npc:SetMoveType(mode) calls.mode=mode;if mode==UNIT_MOVE_EVENT_DASH then calls.dashes=(calls.dashes or 0)+1 end end
+function npc:SetJumpTime(seconds)
+  calls.jumps=calls.jumps+1;calls.jumpSeconds=seconds
+  if seconds>0 then calls.positiveJumps=(calls.positiveJumps or 0)+1 else calls.jumpCancels=(calls.jumpCancels or 0)+1 end
+end
 local function Target(id,hp,distance)
   return {id=id,hp=hp,distance=distance,enemy=1,attackable=1,visible=1,rangedFiring=0}
 end
@@ -316,7 +320,7 @@ for _,difficulty in pairs({1,2}) do
   observation.hurt=0;Tick(9)
   Check(calls.fire==true,'native hurt recovery resumes attack on its first legal frame: '..difficulty)
   SDGO_BattleAI_Universal.states[20].recoverUntil=10000;Tick(10)
-  Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recoverUntil==nil,'a ready attack immediately preempts timed stuck recovery: '..difficulty)
+  Check(calls.fire==true and SDGO_BattleAI_Universal.states[20].recoverUntil==nil,'an orphaned recovery timestamp without motor ownership is discarded: '..difficulty)
   observation.weapons[3].ready=0;Tick(11)
   Check(not calls.fire and calls.moves>0,'native weapon cooldown uses movement without inventing an attack: '..difficulty)
   Reset({Difficulty=difficulty});observation.targets={};Tick(0);local patrols=calls.patrol
@@ -507,4 +511,116 @@ now=0;SDGO_BattleAI_ProfileRelease(npc);now=251;SDGO_BattleAI_ProfileRelease(npc
 calls.fire=true;now=252;SDGO_BattleAI_ProfileRelease(npc)
 Check(lease==-1 and calls.fire==true,'Easy or disable handoff cannot keep clearing attack after permanent restoration rejection')
 SDGO_BattleAI_ProfilePreviousSlot=nil;SDGO_BattleAI_BoundSlot=nil;SDGO_BattleAI_ProfileLease=nil
+
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.moving=1;observation.targets[2].rangedFiring=1
+  Tick(0)
+  for time=100,1500,100 do observation.pos={x=0,y=time/20,z=0};Tick(time) end
+  local state=SDGO_BattleAI_Universal.states[20]
+  Check(state.recovering and calls.recoveryMode==1 and calls.mode==UNIT_MOVE_EVENT_MOVE and calls.jumpSeconds==0,
+        'ready ranged AI with no horizontal progress releases thrust and enters ground recovery: '..difficulty)
+  Check(calls.fire==true,'legal moving-shot output continues during wall recovery: '..difficulty)
+  local dashCount=calls.dashes or 0;local jumpCount=calls.positiveJumps or 0;local deadline=state.recoverUntil
+  observation.moving=0;Tick(1600)
+  Check(state.recoverUntil==deadline and state.recovering and calls.recoveryMode==1 and
+        (calls.dashes or 0)==dashCount and (calls.positiveJumps or 0)==jumpCount,
+        'ready weapon and a cleared motor flag cannot preempt recovery with more dash or lift: '..difficulty)
+  observation.goal=observation.pos;Tick(1700)
+  Check(not state.recovering and calls.recoveryMode==0,'arrival releases recovery motor ownership: '..difficulty)
+end
+Reset();observation.moving=1;observation.rangedBusy=1;observation.weapons[2].active=1
+observation.weapons[2].ammoReady=0;observation.weapons[2].ready=0;Tick(0);Tick(1500)
+Check(SDGO_BattleAI_Universal.states[20].recovering and calls.fire==true and calls.jumpSeconds==0,
+      'active native moving-shot ranged state cannot bypass the wall watchdog')
+Reset();observation.moving=1;observation.rangedBusy=1;observation.weapons[2].movingShot=0
+observation.moveCancelOpen=0;Tick(0);Tick(1500)
+Check(not SDGO_BattleAI_Universal.states[20].recovering and calls.fire==true and calls.recoveryMode~=1,
+      'wall watchdog does not cancel a stationary-only native action before its legal window')
+observation.moveCancelOpen=1;Tick(1501)
+Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1,
+      'the first legal movement-cancel window admits pending wall recovery')
+for _,branch in pairs({'empty','switch','defence','flank'}) do
+  Reset();observation.moving=1
+  if branch=='empty' then for _,w in pairs(observation.weapons) do w.ammoReady=0 end
+  elseif branch=='switch' then observation.selectedSlot=0
+  elseif branch=='defence' then observation.defenceMoving=1;observation.routeActive=1
+  else
+    local target=observation.targets[2];target.pos={x=1000,y=100,z=0};target.groundPos={x=1000,y=0,z=0};target.forward={x=1,y=0,z=0};target.hurt=1
+    observation.allies={{id=40,contactTarget=2,contactAt=0,meleeSwinging=1}}
+  end
+  Tick(0);Tick(1500)
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1 and calls.mode==UNIT_MOVE_EVENT_MOVE,
+        'wall watchdog runs before the '..branch..' early-return movement branch')
+end
+Reset();observation.moving=1;Tick(0);Tick(1500)
+local timed=SDGO_BattleAI_Universal.states[20];local expires=timed.recoverUntil
+Tick(expires+1)
+Check(not timed.recovering and calls.recoveryMode==0,'recovery expiry cannot permanently monopolize movement')
+
+Reset();observation.targets={Target(2,200,1000)};observation.targets[1].hurt=1;Tick(0)
+Check(calls.target==2 and calls.fire==true,
+      'ordinary hit-stun remains a legal attack and combo target when native damage protection is absent')
+Reset();observation.targets[2].damageProtected=1;Tick(0)
+Check(calls.target==1 and calls.fire==true,
+      'a protected low-HP target yields immediately to another legal enemy')
+Reset();observation.targets={Target(2,200,1000)}
+local protected=observation.targets[1];protected.damageProtected=1
+protected.pos={x=1000,y=100,z=0};protected.groundPos={x=1000,y=0,z=0};Tick(0)
+Check(calls.fire==false and calls.aim==2 and calls.target==2 and calls.moves>0 and
+      calls.mode==UNIT_MOVE_EVENT_MOVE and (calls.positiveJumps or 0)==0,
+      'a sole protected target is faced and circled on foot without invulnerable attack output')
+Reset();observation.targets={Target(2,200,3000)}
+protected=observation.targets[1];protected.damageProtected=1
+protected.pos={x=3000,y=100,z=0};protected.groundPos={x=3000,y=0,z=0};Tick(0)
+Check(calls.fire==false and calls.routes==1 and calls.routeX>1700 and calls.routeX<2000 and
+      calls.mode==UNIT_MOVE_EVENT_MOVE and SDGO_BattleAI_Universal.states[20].movementIntent,
+      'a distant protected target uses native walking navigation to a weapon-range staging point')
+Reset();observation.targets={Target(2,200,100)}
+protected=observation.targets[1];protected.damageProtected=1
+protected.pos={x=100,y=100,z=0};protected.groundPos={x=100,y=0,z=0};Tick(0)
+Check(calls.fire==false and calls.direction==UNIT_MOVE_DIR_BACKWARD and calls.mode==UNIT_MOVE_EVENT_MOVE,
+      'a protected target inside the current weapon spacing causes a fuel-free walking retreat')
+Reset();observation.targets={Target(2,200,1000)};Tick(0)
+observation.targets[1].damageProtected=1;observation.targets[1].visible=0;calls.fire=nil;Tick(1)
+Check(SDGO_BattleAI_Universal.states[20].memory[2]==nil and calls.fire==false and calls.aim==0 and
+      (calls.patrol or 0)>0,
+      'live protection deletes stale target memory instead of resurrecting an invulnerable chase')
+Reset();Tick(0)
+observation.targets[2].damageProtected=1;observation.meleeBusy=1;observation.selectedSlot=0
+calls.fire=nil;calls.meleeGate=nil;Tick(1)
+Check(calls.target==1 and calls.fire==false and calls.meleeGate==1,
+      'a protected held melee target cannot override retargeting or request another combo segment')
+observation.meleeBusy=0;Tick(2)
+Check(calls.meleeGate==0 and calls.switch==1,
+      'protected-target melee suppression releases for the first legal post-animation weapon request')
+observation.selectedSlot=1;Tick(3)
+Check(calls.fire==true,'retargeted ranged fire starts on the first committed post-protection weapon frame')
+Reset();observation.targets={Target(2,200,1000)};Tick(0)
+observation.targets[1].damageProtected=1;observation.rangedBusy=1;observation.weapons[2].active=1
+calls.fire=nil;Tick(1)
+Check(calls.fire==false and calls.aim==2,
+      'an active native ranged state stops held attack input while its sole target is protected')
+DefensiveSpecial();observation.targets[2].damageProtected=1;now=1;calls.switch=nil;calls.fire=nil
+SDGO_BattleAI_ProfileUpdate(npc)
+Check(calls.switch==1 and calls.fire==false,
+      'a pending special returns to its ordinary weapon when native target protection begins')
+Reset();observation.targets={Target(2,200,1000)}
+protected=observation.targets[1];protected.damageProtected=1;protected.hurt=1
+protected.pos={x=1000,y=100,z=0};protected.groundPos={x=1000,y=0,z=0};Tick(0)
+protected.damageProtected=0;calls.fire=nil;Tick(1)
+Check(calls.fire==true and calls.target==2,
+      'protection expiry resumes attack immediately even while ordinary target hit-stun remains active')
+
+for _,difficulty in pairs({1,2}) do
+  Reset({Difficulty=difficulty});observation.moving=0;observation.targets[2].rangedFiring=1
+  Tick(0)
+  for time=100,1500,100 do Tick(time) end
+  Check(SDGO_BattleAI_Universal.states[20].recovering and calls.recoveryMode==1,
+        'repeated policy movement without a native moving flag still accumulates horizontal stagnation: '..difficulty)
+end
+
+Reset();observation.targets[2].rangedFiring=1;Tick(0)
+local previousBoosts=calls.dashes or 0;observation.moving=1;observation.boostFraction=0.1;Tick(1)
+Check(calls.mode==UNIT_MOVE_EVENT_MOVE and calls.jumpSeconds==0 and (calls.dashes or 0)==previousBoosts,
+      'fuel exhaustion releases held thrust and lift before the next lateral-switch timer')
 print(string.format('ALL %d UNIVERSAL CONTROLLER CHECKS PASSED (Lua 5.0)',checks))

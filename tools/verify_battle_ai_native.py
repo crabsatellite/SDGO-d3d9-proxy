@@ -62,6 +62,10 @@ def main():
         ("sp_melee_notice_ret4",0x4C387F,b"\xc2\x04\x00"),
         ("sp_ranged_notice_ret4",0x4C3EE8,b"\xc2\x04\x00"),
         ("ordinary_state_notice_ret4",0x4CFDEF,b"\xc2\x04\x00"),
+        ("mission_player_warp_binding",0x511178,bytes.fromhex("68 b0 1f 50 00")),
+        ("mission_player_warp_calls_unit_warp",0x50205F,bytes.fromhex("e8 dc 82 17 00")),
+        ("mission_unit_warp_binding",0x511B19,bytes.fromhex("68 40 a3 67 00 68 8c 56 e4 00")),
+        ("mission_unit_warp_ret8",0x67A50E,b"\xc2\x08\x00"),
     ]:
         assert bytes_at(address,len(expected))==expected,name
         contracts[name]=hex(address)

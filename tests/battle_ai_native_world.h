@@ -35,6 +35,7 @@ inline void* protectedPath=nullptr;
 inline int jumps=0,moves=0,frees=0,queries=0;
 inline int lastWait=0;
 inline int trackEntries=0,trackUpdates=0,swingEntries=0,rotations=0,faces=0;
+inline uint8_t* volatile lastCallbackSelf=nullptr;
 inline int swingInput=-1;
 inline int attackAdmissions=0;
 inline int levelApplications=0,partApplications=0;
@@ -83,17 +84,18 @@ struct Callbacks {
         auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
         Put(node,0x6C,battle_ai::Horizontal(cache));Put(unit,0xD98,0.0f);
     }
-    __declspec(noinline) void AttackAdmission() {++attackAdmissions;}
+    __declspec(noinline) void AttackAdmission() {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++attackAdmissions;}
     __declspec(noinline) bool PlayerSpGate() {
         auto owner=*reinterpret_cast<uint8_t**>(reinterpret_cast<uint8_t*>(this)+0xB2C);
         return *reinterpret_cast<int*>(owner+0xBC8)>29999;
     }
-    __declspec(noinline) void TrackingEntry(void*) { ++trackEntries; }
-    __declspec(noinline) void TrackingUpdate(void*) { ++trackUpdates; }
-    __declspec(noinline) void SwingEntry(void*) { ++swingEntries; }
-    __declspec(noinline) void SwingUpdate(void* event) {swingInput=static_cast<uint8_t*>(event)[0xD];}
+    __declspec(noinline) void TrackingEntry(void*) {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++trackEntries;}
+    __declspec(noinline) void TrackingUpdate(void*) {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++trackUpdates;}
+    __declspec(noinline) void SwingEntry(void*) {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);++swingEntries;}
+    __declspec(noinline) void SwingUpdate(void* event) {lastCallbackSelf=reinterpret_cast<uint8_t*>(this);swingInput=static_cast<uint8_t*>(event)[0xD];}
     __declspec(noinline) bool Message(uint32_t id,void*,uint32_t) {return id==1||id==2||id==20;}
     __declspec(noinline) void QueueSwing() {auto fsm=reinterpret_cast<uint8_t*>(this);Put(fsm,8,fsm+0x5C);}
+    __declspec(noinline) bool QueueState(uint8_t* next) {Put(reinterpret_cast<uint8_t*>(this),8,next);return true;}
     __declspec(noinline) void Face() {++faces;}
     __declspec(noinline) void Rotate(float degrees,int dispatch) {
         ++rotations;auto unit=reinterpret_cast<uint8_t*>(this);auto cache=*reinterpret_cast<Vec3*>(unit+0x3090);
@@ -134,6 +136,7 @@ struct Callbacks {
         Put(unit,0x3204,0.5f);Put(unit,0x31F4,60);
     }
     __declspec(noinline) Ray3* Ray(Ray3* out) {
+        lastCallbackSelf=reinterpret_cast<uint8_t*>(this);
         if(nullRay) return nullptr;
         out->origin={12,100,13};out->direction={0,0,1};return out;
     }
@@ -276,6 +279,7 @@ inline void Symbols(FILE* f,void(*symbol)(FILE*,const char*,void*,bool)) {
     symbol(f,"um.deliver_message",messageEntry,false);
     symbol(f,"combat.melee_contact_return",contactReturn,false);
     symbol(f,"combat.queue_melee_swing",Address(&Callbacks::QueueSwing),false);
+    symbol(f,"fsm.queue_state",Address(&Callbacks::QueueState),false);
     symbol(f,"npc.face_target",Address(&Callbacks::Face),false);
     symbol(f,"unit.rotate_y",Address(&Callbacks::Rotate),false);
     symbol(f,"combat.fire_receipts",Address(&Callbacks::Receipts),false);
