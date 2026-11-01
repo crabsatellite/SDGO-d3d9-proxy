@@ -502,6 +502,11 @@ if(BUILD_TESTING)
     add_library(native_agent_cash_probe_mod SHARED tests/native_agent_cash_probe_mod.cpp)
     target_link_libraries(native_agent_cash_probe_mod PRIVATE sdgo_api)
     sdgo_strict(native_agent_cash_probe_mod)
+    # Explicit local image probe; no game bytes are bundled or required in CI.
+    add_executable(battle_reward_native_result_probe EXCLUDE_FROM_ALL tests/battle_reward_native_result_probe.cpp)
+    target_link_libraries(battle_reward_native_result_probe PRIVATE sdgo_api bcrypt)
+    target_include_directories(battle_reward_native_result_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(battle_reward_native_result_probe)
     # Exercise the shipped daily reward Mod in contribution-reward coexistence tests.
     add_executable(battle_rewards_runtime_test tests/battle_rewards_runtime_test.cpp)
     target_link_libraries(battle_rewards_runtime_test PRIVATE sdgo_api)
