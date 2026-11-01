@@ -16,6 +16,10 @@ data = [(str(root/'manager/static'),'manager/static'),
         (str(root/'owner/rewards/policy.example.json'),'owner/rewards'),
         (str(root/'owner/rewards/sql'),'owner/rewards/sql'),
         (str(root/'backend/install_ai_catalog_client.ps1'),'backend')]
+data += [(str(root/'owner/collection_capsule/sql'),'owner/collection_capsule/sql'),
+         (str(root/'mods/collection_capsule/assets'),'mods/collection_capsule/assets'),
+         (str(root/'support/capsule_registry'),'support/capsule_registry')]
+data += [(str(root/'tools'/name),'tools') for name in ('install_server.ps1','install_common.ps1')]
 data += [(str(path),str(path.parent.relative_to(root))) for path in sorted((root/'mods').glob('*/manager.json'))]
 python_license=Path(sys.base_prefix)/'LICENSE.txt'
 if python_license.is_file():data.append((str(python_license),'licenses/Python'))

@@ -77,6 +77,10 @@ if ($catalog.features.PSObject.Properties.Name -contains 'battle-rewards') {
     & python (Join-Path $PSScriptRoot 'package_rewards.py') --out (Join-Path $out 'rewards') --binaries (Join-Path $buildRoot $Config) --directory-only
     if ($LASTEXITCODE -ne 0) { throw 'Battle reward owner toolkit packaging failed' }
 }
+if ($catalog.features.PSObject.Properties.Name -contains 'collection-capsule') {
+    & python (Join-Path $PSScriptRoot 'package_collection_capsule.py') --out (Join-Path $out 'collection') --stage $stage --directory-only
+    if ($LASTEXITCODE -ne 0) { throw 'Collection capsule owner toolkit packaging failed' }
+}
 if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
     $shopDestination=Join-Path $out 'shop'
     New-Item -ItemType Directory -Path $shopDestination -Force | Out-Null

@@ -171,6 +171,19 @@ sdgo_add_mod(room_titles_server SERVER DESCRIPTION "extended room titles (Battle
 
 sdgo_add_mod(new_account_profile SERVER DESCRIPTION "new-account starter currency and rank" SOURCES mods/new_account_profile/new_account_profile.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
 
+sdgo_add_mod(collection_capsule SERVER DESCRIPTION "never-acquired base-form capsule machine"
+             SOURCES mods/collection_capsule/collection_capsule.cpp LIBS ole32 oleaut32 uuid FILES config.example.ini)
+
+# Shared capsule resource provider, distributed inside the owner toolkit. The
+# generated player bundle uses one capsule_catalog instance for all machines.
+add_library(capsule_registry_support SHARED
+    support/capsule_registry/capsule_catalog.cpp support/capsule_registry/capsule_runtime.cpp)
+set_target_properties(capsule_registry_support PROPERTIES OUTPUT_NAME capsule_catalog)
+target_link_libraries(capsule_registry_support PRIVATE sdgo_api)
+sdgo_strict(capsule_registry_support)
+sdgo_version_resource(capsule_registry_support capsule_catalog.dll "SDGO shared capsule resource registry")
+sdgo_stage(capsule_registry_support "support/capsule-registry")
+
 # Optional catalog provider, same mod id in the two processes. Owner-generated
 # catalog.bin is never staged or bundled by a framework build.
 foreach(role client server)
@@ -231,6 +244,11 @@ if(SDGO_BUILD_MANAGER)
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.json" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.ps1" "${CMAKE_CURRENT_SOURCE_DIR}/manager/*.sql"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/shop/*.cs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/owner/collection_capsule/sql/*.sql"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/*collection_capsule*.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/capsule_registry/*"
+        "${CMAKE_CURRENT_SOURCE_DIR}/mods/collection_capsule/assets/*"
         "${CMAKE_CURRENT_SOURCE_DIR}/mods/*/manager.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.py" "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.json"
         "${CMAKE_CURRENT_SOURCE_DIR}/owner/rewards/*.sql" "${CMAKE_CURRENT_SOURCE_DIR}/backend/*.py"
@@ -655,4 +673,10 @@ if(BUILD_TESTING)
     add_executable(new_account_sql_test tests/new_account_sql_test.cpp)
     target_link_libraries(new_account_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
     sdgo_strict(new_account_sql_test)
+    add_test(NAME collection_capsule_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_collection*.py" -v)
+    set_tests_properties(collection_capsule_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
+    add_executable(collection_capsule_sql_test tests/collection_capsule_sql_test.cpp)
+    target_link_libraries(collection_capsule_sql_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(collection_capsule_sql_test)
 endif()

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "collection_capsule",
+  "title": "收藏扭蛋（Beta）",
+  "category": "gameplay",
+  "hosts": ["world"],
+  "provider": "collection_capsule",
+  "presentation": "configurable",
+  "description": "100,000 GP 抽取从未获得的初始形态；出售后仍不重复。配套资源、安装与玩家分发由收藏扭蛋面板管理。",
+  "mechanism": "World Mod 截获本机台交付，独立事务动态解析当前机体族和获得历史；原生流程预扣及失败补偿。初始形态来自原生目录或导入元数据，非固定奖品名单。",
+  "settings": [
+    {
+      "id": "machine_id", "key": "MachineID", "label": "机台内部编号（须与生成包一致）",
+      "type": "integer", "default": 990001, "minimum": 1, "maximum": 2147483647,
+      "file": "config.ini", "section": "settings", "audience": "developer",
+      "activation": "restart_required"
+    }
+  ]
+}

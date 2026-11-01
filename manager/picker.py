@@ -13,7 +13,7 @@ $owner=New-Object System.Windows.Forms.Form
 $owner.TopMost=$true;$owner.ShowInTaskbar=$false;$owner.Opacity=0;$owner.Show()
 try {
  if($request.kind -eq 'directory'){$dialog=New-Object System.Windows.Forms.FolderBrowserDialog}
- else {$dialog=New-Object System.Windows.Forms.OpenFileDialog;$dialog.Filter='Supported files|*.ini;*.json;*.dll;*.zip|All files|*.*'}
+ else {$dialog=New-Object System.Windows.Forms.OpenFileDialog;$dialog.Filter='Supported files|*.ini;*.json;*.dll;*.zip;*.png|All files|*.*'}
  try {
   $result=$dialog.ShowDialog($owner)
   $value=$null

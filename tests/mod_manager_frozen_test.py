@@ -40,7 +40,9 @@ def main():
             assert info['mode']=='standard'
             assert [mod['id'] for mod in info['hosts'][0]['mods']]==['mission_ai']
             assert [mod['id'] for mod in info['hosts'][0]['archive']]==['findwindow_fix']
-            assert len(info['panels'])==6
+            assert {p['id'] for p in info['panels']} >= {'shop','rewards','collection_capsule'}
+            collection=call('/api/providers/collection_capsule/api/state')
+            assert collection['price_gp']==100000 and not collection['generated']
             context=call('/api/ai-context',{'provider':'shop','kind':'bug'})
             assert 'SDGO-Mod-Framework' in context['text'] and 'AI models:' in context['text']
             catalog=call('/api/providers/shop/api/shop/catalog');assert catalog['demo'] and catalog['items']
@@ -48,7 +50,7 @@ def main():
             assert len(created['catalog']['products'])==1
             call('/api/exit',{});process.wait(timeout=30)
             assert process.returncode==0
-            print('PASS frozen EXE: standalone launch, default daily mode, fix archive, six providers, AI/PR guidance and C# shop CRUD')
+            print('PASS frozen EXE: standalone launch, daily mode, fix archive, collection provider, AI/PR guidance and C# shop CRUD')
         finally:
             if process.poll() is None:
                 if base and token:
