@@ -58,6 +58,17 @@ try {
     Check-Package $baseZip $baseMods
     $customZip = Invoke-Package 'Full' 'pvp-ai' (Join-Path $work 'custom')
     Check-Package $customZip ($baseMods + @('match_ai','pvp_ai'))
+    $operatorZip = Invoke-Package 'Full' 'operator-assistant' (Join-Path $work 'operators')
+    Check-Package $operatorZip ($baseMods + @('operator_catalog'))
+    $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
+    try {
+        foreach ($required in @('tools/Start-Assistant.ps1','tools/Initialize-OperatorDefaults.py','tools/assistant_modules/operators/presets.py','tools/assistant_modules/operators/ui.html','assistant_module/operator_catalog/server/free.sql','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+            if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
+        }
+        foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
+            if ($operatorArchive.GetEntry($forbidden)) { throw "Operator feature package contains unrelated toolkit $forbidden" }
+        }
+    } finally { $operatorArchive.Dispose() }
     $titleZip = Invoke-Package 'Full' 'room-titles' (Join-Path $work 'titles')
     Check-Package $titleZip ($baseMods + @('room_titles','room_titles_agent','room_titles_server'))
     $rewardZip = Invoke-Package 'Full' 'battle-rewards' (Join-Path $work 'rewards')
@@ -70,7 +81,7 @@ try {
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
     } finally { $rewardArchive.Dispose() }
     $fullZip = Invoke-Package 'Full' '' (Join-Path $work 'full')
-    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','net_probe','net_route','agent_udp_pool','shop_catalog'))
+    Check-Package $fullZip ($baseMods + @('match_ai','pvp_ai','mission_ai','coop_ai','room_random','room_titles','room_titles_agent','room_titles_server','battle_rewards','operator_catalog','net_probe','net_route','agent_udp_pool','shop_catalog'))
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
         foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
@@ -81,6 +92,9 @@ try {
         }
         if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1')) {
             throw 'Full package lost the complete reward owner toolkit'
+        }
+        if (-not $fullArchive.GetEntry('tools/Start-Assistant.ps1') -or -not $fullArchive.GetEntry('assistant_module/operator_catalog/server/schema.sql')) {
+            throw 'Full package lost the operator owner assistant or SQL adapter'
         }
     } finally { $fullArchive.Dispose() }
 

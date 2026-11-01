@@ -84,6 +84,26 @@ if ($catalog.features.PSObject.Properties.Name -contains 'shop-catalog') {
     }
 }
 Add-Type -AssemblyName System.IO.Compression
+if ($catalog.features.PSObject.Properties.Name -contains 'operator-assistant') {
+    New-Item -ItemType Directory -Force -Path (Join-Path $out 'tools') | Out-Null
+    foreach ($helper in @('mod_assistant.py','operator_snapshot.py','Install-Operator.ps1','Start-Assistant.ps1','Initialize-OperatorDefaults.py','requirements-operator-assistant.txt')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $helper) -Destination (Join-Path $out 'tools')
+    }
+    $operatorTools=Join-Path $out 'tools\assistant_modules\operators'
+    New-Item -ItemType Directory -Force -Path $operatorTools | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assistant_modules\__init__.py') -Destination (Join-Path $out 'tools\assistant_modules')
+    foreach ($file in @('__init__.py','assets.py','model.py','presets.py','server.py','workspace.py','ui.html')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "assistant_modules\operators\$file") -Destination $operatorTools
+    }
+    $operatorData=Join-Path $out 'assistant_module\operator_catalog'
+    New-Item -ItemType Directory -Force -Path (Join-Path $operatorData 'server') | Out-Null
+    foreach ($file in @('mod.ini','symbols.fragment.ini','module.json','display.example.ini')) {
+        Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\$file") -Destination $operatorData
+    }
+    foreach ($file in @('schema.sql','random.sql','drop.sql','free.sql')) {
+        Copy-Item -LiteralPath (Join-Path $repo "mods\operator_catalog\server\$file") -Destination (Join-Path $operatorData 'server')
+    }
+}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
 try {

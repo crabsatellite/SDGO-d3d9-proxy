@@ -129,6 +129,8 @@ sdgo_stage(shop_catalog_apply "server/sdgo/mods/shop_catalog")
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(operator_catalog DESCRIPTION "operator names, portraits and item registration"
+             SOURCES mods/operator_catalog/operator_catalog.cpp FILES display.example.ini)
 sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and owner multipliers"
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
@@ -275,6 +277,16 @@ if(BUILD_TESTING)
         add_test(NAME shop_package_installer COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/shop_install_test.py" --build "${CMAKE_BINARY_DIR}")
         set_tests_properties(shop_package_installer PROPERTIES TIMEOUT 360)
     endif()
+    add_executable(operator_catalog_test tests/operator_catalog_test.cpp)
+    target_link_libraries(operator_catalog_test PRIVATE sdgo_api)
+    sdgo_strict(operator_catalog_test)
+    foreach(case RANGE 0 2)
+        add_test(NAME operator_catalog_${case} COMMAND operator_catalog_test "$<TARGET_FILE:operator_catalog>"
+                 "${CMAKE_BINARY_DIR}/operator-case-${case}" "${case}")
+    endforeach()
+    add_test(NAME operator_assistant_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+             -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_operator_assistant.py")
+    set_tests_properties(operator_assistant_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
     add_library(catalog_conflict_mod SHARED tests/catalog_conflict_mod.cpp)
     target_link_libraries(catalog_conflict_mod PRIVATE sdgo_api)
     sdgo_strict(catalog_conflict_mod)
