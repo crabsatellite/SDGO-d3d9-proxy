@@ -22,3 +22,6 @@ desktop.ini
 
 # Release packages (tools/package.ps1)
 dist/
+
+# Offline Python configuration tools
+__pycache__/

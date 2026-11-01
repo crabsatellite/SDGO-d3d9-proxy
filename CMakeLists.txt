@@ -113,6 +113,12 @@ sdgo_add_mod(net_probe DESCRIPTION "packet logger" SOURCES mods/net_probe/net_pr
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
+sdgo_add_mod(capsule_catalog DESCRIPTION "native capsule catalog overlay"
+             SOURCES mods/capsule_catalog/capsule_catalog.cpp mods/capsule_catalog/capsule_runtime.cpp)
+sdgo_add_mod(capsule_currency_fix DESCRIPTION "activity capsule currency display fix"
+             SOURCES mods/capsule_currency_fix/capsule_currency_fix.cpp mods/capsule_currency_fix/capsule_currency_logic.cpp)
+sdgo_add_mod(capsule_price_probe DESCRIPTION "read-only capsule price UI diagnostics"
+             SOURCES mods/capsule_price_probe/capsule_price_probe.cpp)
 
 # ---- data: symbol files and default configuration ---------------------------------
 file(GLOB SDGO_SYMBOL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/symbols/*.ini")
@@ -129,6 +135,21 @@ add_custom_target(sdgo_data ALL
 # ---- tests: runtime check of the loader's forwarding (tests/loader_test.ps1) -------
 add_executable(loader_test tests/loader_test.c)
 sdgo_strict(loader_test)
+
+add_executable(capsule_client_runtime_harness tests/capsule_client_runtime_harness.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_runtime_harness PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_runtime_harness)
+add_executable(capsule_client_native_stream_test tests/capsule_client_native_stream_test.cpp
+               mods/capsule_catalog/capsule_runtime.cpp)
+target_include_directories(capsule_client_native_stream_test PRIVATE mods/capsule_catalog)
+sdgo_strict(capsule_client_native_stream_test)
+add_executable(capsule_currency_fix_test mods/capsule_currency_fix/capsule_currency_fix_test.cpp
+               mods/capsule_currency_fix/capsule_currency_logic.cpp)
+target_include_directories(capsule_currency_fix_test PRIVATE mods/capsule_currency_fix)
+sdgo_strict(capsule_currency_fix_test)
+add_executable(capsule_price_probe_test mods/capsule_price_probe/capsule_price_probe_test.cpp)
+sdgo_strict(capsule_price_probe_test)
 
 # ---- tests: findwindow_fix against a simulated SDPlus hook (tests/findwindow_fix_test.ps1)
 # None of these are staged into the client or server package.
