@@ -155,8 +155,11 @@ class CollectionCapsule(Provider):
             server = install_server(output / 'server-package', Path(self.config['server_ini']), check_only=True)
             return {**server, **self.client_install(output, check_only=True), 'revision': self.revision()}
         if path == '/api/install-server':
-            return {**install_server(output / 'server-package', Path(self.config['server_ini'])),
-                    'revision': self.revision()}
+            try:
+                result = install_server(output / 'server-package', Path(self.config['server_ini']))
+            except RuntimeError as error:
+                raise ValueError(str(error)) from None
+            return {**result, 'revision': self.revision()}
         if path == '/api/install-client':
             return {**self.client_install(output), 'revision': self.revision()}
         if path == '/api/export':

@@ -59,7 +59,9 @@ def run(container: str, credential_file: Path, output: Path, native_build: Path 
     created = False
     cases = []
     try:
-        admin(f"CREATE DATABASE [{database}];\nGO\nUSE [{database}];CREATE TABLE dbo.fixture_owner(token varchar(32));INSERT dbo.fixture_owner VALUES('{token}');\nGO\n")
+        temp_collation = admin("SELECT CONVERT(nvarchar(128),DATABASEPROPERTYEX('tempdb','Collation'));\nGO\n")
+        fixture_collation = 'Latin1_General_CI_AS' if temp_collation.strip() == 'Thai_CI_AS' else 'Thai_CI_AS'
+        admin(f"CREATE DATABASE [{database}] COLLATE {fixture_collation};\nGO\nUSE [{database}];CREATE TABLE dbo.fixture_owner(token varchar(32));INSERT dbo.fixture_owner VALUES('{token}');\nGO\n")
         created = True
         admin(f"USE master;CREATE LOGIN [{login}] WITH PASSWORD='$(COLLECTION_PASSWORD)',CHECK_POLICY=OFF;GRANT VIEW SERVER STATE TO [{login}];GRANT VIEW SERVER PERFORMANCE STATE TO [{login}];\nGO\nUSE [{database}];CREATE USER [{login}] FOR LOGIN [{login}];ALTER ROLE db_owner ADD MEMBER [{login}];\nGO\n")
         bridge_module.Bridge.request_queue_size = 128
@@ -86,6 +88,10 @@ def run(container: str, credential_file: Path, output: Path, native_build: Path 
                 raise AssertionError(label)
             cases.append(label)
             print("PASS " + label, flush=True)
+
+        check(scalar("SELECT CONVERT(nvarchar(128),DATABASEPROPERTYEX(DB_NAME(),'Collation'))")
+              != scalar("SELECT CONVERT(nvarchar(128),DATABASEPROPERTYEX('tempdb','Collation'))"),
+              "fixture database and tempdb deliberately use different collations")
 
         execute("""
 CREATE TABLE dbo.tbl_Users(AccountNumber int PRIMARY KEY,ExpandSlotCount int DEFAULT 0);
