@@ -21,5 +21,10 @@ environment and submit a tested PR. PR text must disclose actual AI model names 
 versions, their scope, human verification and remaining uncertainty. Use explicit
 Unknown when the tool did not disclose a model, and None when no AI was used.
 
+The interface is built on the SDGO Mecha UI library (`manager/static/ui.css`, `ui.js`;
+gallery at `/ui-kit.html` in the developer view). Mobile-suit and hangar artwork is read
+at run time from the selected client's own GPackData; the repository and package carry
+no game art.
+
 See the [full guide](mod-manager.zh-CN.md), [contribution guidance](contributing.zh-CN.md)
 and [registration design](mod-manager-design.zh-CN.md).

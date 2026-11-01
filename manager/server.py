@@ -48,10 +48,16 @@ def make_server(workspace, port=0):
                     if not 0 < length <= 16 * 1024 * 1024: raise ValueError('请求大小无效')
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict): raise ValueError('请求必须是 JSON 对象')
-                if method == 'GET' and path == '/':
-                    return self.response(200, (static / 'index.html').read_bytes(), 'text/html; charset=utf-8')
-                if method == 'GET' and path in ('/app.js', '/style.css', '/panel_helpers.js'):
+                if method == 'GET' and path in ('/', '/ui-kit.html'):
+                    return self.response(200, (static / ('index.html' if path == '/' else 'ui-kit.html')).read_bytes(), 'text/html; charset=utf-8')
+                if method == 'GET' and path in ('/app.js', '/style.css', '/panel_helpers.js', '/ui.css', '/ui.js'):
                     return self.response(200, (static / path[1:]).read_bytes(), 'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+                if method == 'GET' and path.startswith('/api/art/'):
+                    from .art import image
+                    try:
+                        return self.response(200, image(workspace, path[len('/api/art/'):], (query.get('host') or [None])[0]), 'image/jpeg')
+                    except LookupError as error:
+                        return self.send_json(404, {'error': str(error)})
                 if method == 'GET' and path.startswith('/panels/'):
                     name = path[len('/panels/'):]
                     if name not in {key + '.js' for key in workspace.providers}: raise ValueError('面板未登记')

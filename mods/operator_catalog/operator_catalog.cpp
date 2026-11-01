@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <intrin.h>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -21,7 +22,10 @@ struct Pair { uint32_t id; Box* box; };
 struct InsertResult { void* node; uint8_t inserted; uint8_t padding[3]; };
 using MakeFn = void*(__thiscall*)(void*, const Pair*);
 using InsertFn = void(__thiscall*)(void*, InsertResult*, void*, char);
-struct Entry { uint32_t id, category, source, avatar; std::wstring name, sprite; };
+struct Entry { uint32_t id, category, source, avatar; std::wstring name, sprite; bool fixedName = false; };
+using ConvertFn = int(WINAPI*)(UINT,DWORD,LPCCH,int,LPWSTR,int);
+ConvertFn g_convert = nullptr;
+uintptr_t g_nameDecoder = 0;
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 LoadFn g_originalLoad = nullptr;
@@ -32,6 +36,42 @@ DeleteFn g_delete = nullptr;
 MakeFn g_make = nullptr;
 InsertFn g_insert = nullptr;
 std::vector<Entry> g_entries;
+
+bool FixedToken(const char* text, uint32_t* id)
+{
+    __try {
+        if (!text || std::memcmp(text,"@SDGO:",6)) return false;
+        uint32_t value=0;
+        for (size_t i=6;i<11;++i) {
+            if (text[i]<'0' || text[i]>'9') return false;
+            value=value*10+static_cast<uint32_t>(text[i]-'0');
+        }
+        if (text[11]) return false;
+        *id=value;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+int WINAPI ConvertName(UINT page,DWORD flags,LPCCH text,int count,LPWSTR output,int capacity)
+{
+    const uintptr_t caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
+    uint32_t id=0;
+    // Only the verified host's 108-byte CP874 decoder may resolve these tokens.
+    // Hooking the game IAT preserves shop_labels' ownership of that decoder.
+    if (caller>=g_nameDecoder && caller<g_nameDecoder+108 && page==874 && !flags && count==-1 &&
+        FixedToken(text,&id)) {
+        for (const Entry& entry:g_entries) {
+            if (!entry.fixedName || entry.id!=id) continue;
+            const int needed=static_cast<int>(entry.name.size()+1);
+            if (!capacity) return needed;
+            if (capacity<0 || !output) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
+            if (capacity<needed) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return 0; }
+            std::memcpy(output,entry.name.c_str(),static_cast<size_t>(needed)*sizeof(wchar_t));
+            return needed;
+        }
+    }
+    return g_convert(page,flags,text,count,output,capacity);
+}
 
 bool ReadRecord(uint32_t id, int type, uint8_t* out, size_t size)
 {
@@ -150,6 +190,11 @@ bool ReadConfig(const wchar_t* dir)
         e.category = GetPrivateProfileIntW(section, L"Category", 0, file.c_str());
         e.source = GetPrivateProfileIntW(section, L"Template", 0, file.c_str());
         e.avatar = GetPrivateProfileIntW(section, L"AvatarProfile", 0, file.c_str());
+        const bool defaultId=e.id==60003 || e.id==60013 || e.id==60018 || e.id==60025 || e.id==60041;
+        // Older Manager exports omit this optional field. Their default entries
+        // still resolve the server's fixed-name tokens after a client DLL update.
+        e.fixedName = GetPrivateProfileIntW(section,L"FixedName",defaultId?1:0,file.c_str())!=0;
+        if (e.fixedName && e.id!=60003 && e.id!=60013 && e.id!=60018 && e.id!=60025 && e.id!=60041) return false;
         wchar_t name[100] = {}, sprite[100] = {}, nameHex[200] = {};
         DWORD n = GetPrivateProfileStringW(section, L"Name", L"", name, 100, file.c_str());
         const DWORD hexCount = GetPrivateProfileStringW(section, L"NameHex", L"", nameHex, 200, file.c_str());
@@ -203,5 +248,14 @@ SDGO_MOD_ENTRY
     g_delete = reinterpret_cast<DeleteFn>(api->Symbol(mod, "operator.native_delete"));
     if (!g_data || !g_find || !g_make || !g_insert || !g_new || !g_delete || !ReadConfig(api->ModDirectory(mod))) return 0;
     if (g_entries.empty()) { api->Log(mod, SDGO_LOG_INFO, "no operator overrides configured"); return 1; }
+    for (const Entry& entry:g_entries) {
+        if (!entry.fixedName) continue;
+        g_nameDecoder=reinterpret_cast<uintptr_t>(api->Symbol(mod,"operator.native_name_decode"));
+        if (!g_nameDecoder) g_nameDecoder=reinterpret_cast<uintptr_t>(api->Symbol(mod,"text.ansi_to_wide"));
+        if (!g_nameDecoder || !api->HookImport ||
+            !api->HookImport(mod,"kernel32.dll","MultiByteToWideChar",reinterpret_cast<void*>(&ConvertName),
+                             reinterpret_cast<void**>(&g_convert))) return 0;
+        break;
+    }
     return api->HookCode(mod, "operator.load_data", reinterpret_cast<void*>(&Load), reinterpret_cast<void**>(&g_originalLoad));
 }

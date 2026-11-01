@@ -19,6 +19,17 @@ CREATE TABLE dbo.sdgo_OperatorRules (
     PRIMARY KEY (OperatorID,RuleIndex),
     CHECK (MinAmount BETWEEN 1 AND 65535 AND MaxAmount BETWEEN MinAmount AND 65535)
 );
+IF COL_LENGTH(N'dbo.sdgo_OperatorProfiles',N'FixedName') IS NULL
+    ALTER TABLE dbo.sdgo_OperatorProfiles ADD FixedName BIT NOT NULL
+        CONSTRAINT DF_sdgo_OperatorFixedName DEFAULT 0;
+IF OBJECT_ID(N'dbo.sdgo_OperatorFixedNameBackup',N'U') IS NULL
+CREATE TABLE dbo.sdgo_OperatorFixedNameBackup (
+    UserOperatorNumber BIGINT NOT NULL PRIMARY KEY,
+    AccountNumber INT NOT NULL,
+    OperatorNumber INT NOT NULL,
+    OperatorNickname VARCHAR(16) NOT NULL,
+    IsSetName TINYINT NOT NULL
+);
 IF OBJECT_ID(N'dbo.sdgo_OperatorProcedureBackup', N'U') IS NULL
 CREATE TABLE dbo.sdgo_OperatorProcedureBackup (
     ProcedureName SYSNAME NOT NULL PRIMARY KEY,

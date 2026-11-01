@@ -33,17 +33,45 @@ def migrate_default_aliases(cur, catalog):
     for identity,alias in LEGACY_ALIASES.items():
         if identity not in enabled:continue
         # Only exact aliases written by the historical script are migrated.
-        # SQL varchar nicknames cannot reliably carry the new Unicode titles;
-        # clearing the generated alias lets the client use its definition name.
+        # The following fixed-name migration replaces these historical aliases
+        # with an ASCII token and a completed-name flag in the same transaction.
         cur.execute('''INSERT dbo.sdgo_OperatorLegacyNameBackup
             SELECT U.UserOperatorNumber,U.AccountNumber,U.OperatorNickname,U.IsSetName
             FROM dbo.tbl_UserOperators U WHERE U.OperatorNumber=?
             AND U.OperatorNickname COLLATE Latin1_General_100_BIN2=?
             AND NOT EXISTS(SELECT 1 FROM dbo.sdgo_OperatorLegacyNameBackup B WHERE B.UserOperatorNumber=U.UserOperatorNumber)''',identity,alias)
-        cur.execute('''UPDATE dbo.tbl_UserOperators SET OperatorNickname='',IsSetName=0
-            WHERE OperatorNumber=? AND OperatorNickname COLLATE Latin1_General_100_BIN2=?''',identity,alias)
+        row=cur.execute('''SELECT COUNT(*) FROM dbo.tbl_UserOperators
+            WHERE OperatorNumber=? AND OperatorNickname COLLATE Latin1_General_100_BIN2=?''',identity,alias).fetchone()
+        changed+=row[0]
+    return changed
+
+
+def migrate_fixed_default_names(cur,catalog):
+    from .presets import fixed_name_ids
+    changed=0
+    for identity in sorted(fixed_name_ids(catalog)):
+        token='@SDGO:'+str(identity)
+        cur.execute('''INSERT dbo.sdgo_OperatorFixedNameBackup
+            SELECT U.UserOperatorNumber,U.AccountNumber,U.OperatorNumber,U.OperatorNickname,U.IsSetName
+            FROM dbo.tbl_UserOperators U WHERE U.OperatorNumber=? AND ISNULL(U.Forbidden,0)=0
+            AND (U.IsSetName<>1 OR U.OperatorNickname COLLATE Latin1_General_100_BIN2<>?)
+            AND NOT EXISTS(SELECT 1 FROM dbo.sdgo_OperatorFixedNameBackup B WHERE B.UserOperatorNumber=U.UserOperatorNumber)''',identity,token)
+        cur.execute('''UPDATE dbo.tbl_UserOperators SET OperatorNickname=?,IsSetName=1
+            WHERE OperatorNumber=? AND ISNULL(Forbidden,0)=0
+            AND (IsSetName<>1 OR OperatorNickname COLLATE Latin1_General_100_BIN2<>?)''',token,identity,token)
         changed+=max(0,cur.rowcount)
     return changed
+
+
+def install_fixed_name_guard(cur):
+    name='dbo.sdgo_OperatorFixedNames'
+    row=cur.execute('SELECT definition FROM sys.sql_modules WHERE object_id=OBJECT_ID(?)',name).fetchone()
+    text=(MODULE_DIR/'server/naming.sql').read_text(encoding='utf-8')
+    if row:
+        if '-- SDGO_OPERATOR_FIXED_NAMES_V1' not in row[0]:
+            raise ValueError('固定副官命名触发器已被其他内容占用，未覆盖')
+        text=re.sub(r'^CREATE TRIGGER','ALTER TRIGGER',text,count=1)
+    cur.execute(text)
 
 
 def migrate_default_entitlements(cur, catalog):
@@ -227,13 +255,15 @@ def apply_catalog(catalog, server_ini):
             cur.execute("UPDATE dbo.tbl_OperatorData SET DropType=? WHERE OperatorID=?", drop_type, operator_id)
         cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET Enabled=0")
         rev = revision(catalog)
+        from .presets import fixed_name_ids
+        fixed_names=fixed_name_ids(catalog)
         for op in managed:
             row = cur.execute("SELECT 1 FROM dbo.sdgo_OperatorProfiles WHERE OperatorID=?", op["id"]).fetchone()
-            values = (op["category_id"], int(op["enabled"]), op["delivery"], op["name"], rev, op["id"])
+            values = (op["category_id"], int(op["enabled"]), op["delivery"], op["name"], rev, int(op['id'] in fixed_names), op["id"])
             if row:
-                cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET CategoryID=?,Enabled=?,DeliveryMode=?,DisplayName=?,Revision=? WHERE OperatorID=?", *values)
+                cur.execute("UPDATE dbo.sdgo_OperatorProfiles SET CategoryID=?,Enabled=?,DeliveryMode=?,DisplayName=?,Revision=?,FixedName=? WHERE OperatorID=?", *values)
             else:
-                cur.execute("INSERT dbo.sdgo_OperatorProfiles(CategoryID,Enabled,DeliveryMode,DisplayName,Revision,OperatorID) VALUES(?,?,?,?,?,?)", *values)
+                cur.execute("INSERT dbo.sdgo_OperatorProfiles(CategoryID,Enabled,DeliveryMode,DisplayName,Revision,FixedName,OperatorID) VALUES(?,?,?,?,?,?,?)", *values)
             cur.execute("DELETE FROM dbo.sdgo_OperatorRuleItems WHERE OperatorID=?", op["id"])
             cur.execute("DELETE FROM dbo.sdgo_OperatorRules WHERE OperatorID=?", op["id"])
             cumulative = 0
@@ -251,12 +281,15 @@ def apply_catalog(catalog, server_ini):
         install_procedures(cur)
         legacy_aliases=migrate_default_aliases(cur,catalog)
         entitlements=migrate_default_entitlements(cur,catalog)
+        fixed_names_changed=migrate_fixed_default_names(cur,catalog)
+        install_fixed_name_guard(cur)
         cur.execute("COMMIT TRANSACTION")
         return {"revision": rev, "managed_operators": len(managed), "storefront_changes": False,
-                "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": bool(legacy_aliases),
-                "personal_nicknames_changed":False,
+                "free_grant": "on normal native operator login/page reads", "player_nicknames_changed": bool(legacy_aliases or fixed_names_changed),
+                "non_default_nicknames_changed":False,
                 "legacy_script_aliases_cleared":legacy_aliases,
-                "existing_default_entitlements_upgraded":entitlements}
+                "existing_default_entitlements_upgraded":entitlements,
+                "fixed_default_names_applied":fixed_names_changed}
     except Exception:
         try:
             cn.cursor().execute("IF XACT_STATE()<>0 ROLLBACK TRANSACTION")
