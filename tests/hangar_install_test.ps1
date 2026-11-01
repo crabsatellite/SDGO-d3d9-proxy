@@ -45,6 +45,11 @@ foreach ($name in $protected) { if ((Hash (Join-Path $existing $name)) -ne $befo
 if (-not [IO.File]::ReadAllText($symbols).Contains($unrelated)) { throw 'Lost unrelated symbol section' }
 $mod=Join-Path $existing 'sdgo\mods\hangar_manager'
 $ini=Join-Path $mod 'mod.ini';$rules=Join-Path $mod 'units.tsv'
+if (-not (Test-Path -LiteralPath (Join-Path $mod 'manager.json'))) { throw 'Missing unified Manager registration' }
+$required=[regex]::Match([IO.File]::ReadAllText($ini),'(?m)^requires=(.*)$').Groups[1].Value
+foreach ($symbol in @('hangar.init','hangar.button_clicked','hangar.ui_add_button','hangar.ui_find_control','hangar.ui_text_item','hangar.ui_button_vtable')) {
+    if (-not $required.Contains($symbol) -or -not [IO.File]::ReadAllText($symbols).Contains('['+$symbol+']')) { throw "Missing in-game UI prerequisite: $symbol" }
+}
 [IO.File]::WriteAllText($ini,([IO.File]::ReadAllText($ini).Replace('KeepCopies=2','KeepCopies=1')+"`nOwnerSetting=kept`n"))
 [IO.File]::AppendAllText($rules,"`n# owner rule sentinel`n")
 $oldRules=Hash $rules

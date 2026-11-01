@@ -118,9 +118,9 @@ END;
         sql += f"DELETE sdgo_collection_capsule.Modules WHERE ObjectName={literal(name)};\n"
         sql += f"INSERT sdgo_collection_capsule.Modules VALUES({literal(name)},{literal(sha)},{literal(body)});\n"
     sql += """
-CREATE TABLE #CollectionRootInput(UnitID int PRIMARY KEY,UnitRank int,UnitSubgrade int,Origin varchar(16));
+CREATE TABLE #CollectionRootInput(UnitID int PRIMARY KEY,UnitRank int,UnitSubgrade int,Origin varchar(16) COLLATE DATABASE_DEFAULT);
 CREATE TABLE #CollectionSourceInput(UnitID int PRIMARY KEY,TransformTo int,Ready int,UnitRank int,UnitSubgrade int,UnitGraph int,Placeholder bit);
-CREATE TABLE #CollectionImportInput(UnitID int PRIMARY KEY,RootUnitID int,PackageID nvarchar(128),RevisionHash char(64));
+CREATE TABLE #CollectionImportInput(UnitID int PRIMARY KEY,RootUnitID int,PackageID nvarchar(128) COLLATE DATABASE_DEFAULT,RevisionHash char(64) COLLATE DATABASE_DEFAULT);
 """
     roots = [u for u in pool["units"] if u.get("basis") != "unique ownable transform root"]
     for root in roots:
