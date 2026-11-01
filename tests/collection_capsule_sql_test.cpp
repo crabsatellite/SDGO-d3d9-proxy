@@ -305,7 +305,7 @@ int Run() {
               L"IF EXISTS(SELECT 1 FROM dbo.tbl_Users WHERE AccountNumber=1900000001) "
               L"RAISERROR('Collection C++ fixture account collision',16,1);"
               L"INSERT dbo.tbl_Users(AccountNumber,ExpandSlotCount) VALUES(1900000001,0);"),
-          "create isolated complete-history account through native capture trigger");
+          "create isolated account without any history import");
 
     ActivityPickRecord success = Pattern(account, 990001);
     const int successCode = Invoke(native, &game.native, &success);
@@ -322,7 +322,7 @@ int Run() {
     Check(game.Execute(
               L"IF NOT EXISTS(SELECT 1 FROM dbo.tbl_UserDropItemBox b "
               L"JOIN dbo.tbl_ItemCategory c ON c.CatalogueID=b.ItemCategory "
-              L"JOIN sdgo_collection_capsule.Seen s ON s.AccountNumber=b.AccountNumber "
+              L"JOIN sdgo_collection_capsule.CatalogUnlocks s ON s.AccountNumber=b.AccountNumber "
               L" AND s.UnitID=c.RefIndex "
               L"WHERE b.AccountNumber=1900000001 AND b.UserDropItemIdx=" +
               std::to_wstring(success.dropBoxSerial) +

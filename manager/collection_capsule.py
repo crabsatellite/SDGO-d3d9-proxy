@@ -67,6 +67,7 @@ class CollectionCapsule(Provider):
         return {'revision': self.revision(), 'generated': bool(current and state.get('machine_kind') == 'activity'),
                 'machine_id': state.get('machine_id', 990001), 'price_gp': 100000, 'machine_kind': 'activity',
                 'rank_weights': {'C': 35, 'B': 30, 'A': 20, 'S': 15},
+                'collection_policy': 'catalog_then_inventory',
                 'eligible_roots': state.get('eligible_roots'),
                 'catalog_revision': state.get('catalog_revision'),
                 'placement': state.get('placement'),
@@ -145,10 +146,10 @@ class CollectionCapsule(Provider):
         self.check_revision(body)
         if path == '/api/generate':
             return self.generate()
-        if path == '/api/import-history':
-            from owner.collection_capsule.deployment import connection, import_history
+        if path == '/api/upgrade-catalog':
+            from owner.collection_capsule.deployment import connection, upgrade_catalog
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:
-                return {**import_history(db, body['history']), 'revision': self.revision()}
+                return {**upgrade_catalog(db), 'revision': self.revision()}
         if path == '/api/register-family':
             from owner.collection_capsule.deployment import connection, register_unit_family
             with contextlib.closing(connection(Path(self.config['server_ini']))) as db:

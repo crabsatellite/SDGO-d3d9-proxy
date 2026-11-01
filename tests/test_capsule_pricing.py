@@ -90,6 +90,110 @@ def initialize(catalog, price=None):
         return c.initialize("fixture", catalog, price)
 
 
+def final_catalog_for_c_rebalance():
+    native_c_ids = list(range(30000, 30085))
+    native_a_ids = list(range(40000, 40035))
+    repeated_c_ids = [10203, 10086, 10218]
+    root_ids = list(range(50000, 50119))
+    units = (
+        [unit(uid, 1) for uid in native_c_ids + repeated_c_ids]
+        + [unit(uid, 3) for uid in native_a_ids]
+        + [unit(uid, 3 if index % 2 else 2)
+           for index, uid in enumerate(root_ids)]
+    )
+    unit_map = {row["id"]: row for row in units}
+    native = []
+    for index in range(78):
+        ids = [
+            native_c_ids[(index * 3 + offset) % len(native_c_ids)]
+            for offset in range(3)
+        ] + [
+            native_a_ids[(index * 3 + offset) % len(native_a_ids)]
+            for offset in range(3)
+        ]
+        native.append({
+            "id": 101 + index * 100,
+            "name": f"native-{index}",
+            "enabled": True,
+            "price": 1200,
+            "owner": "native",
+            "draw_policy": "native_sequence",
+            "slots": [{
+                "unit_id": uid,
+                "weight": WEIGHTS[slot_index],
+                "native_draw_group": GROUPS[slot_index],
+                "sprites": unit_map[uid]["capsule_sprites"],
+            } for slot_index, uid in enumerate(ids)],
+        })
+
+    c_sequence = [repeated_c_ids[index % 3] for index in range(56)]
+    prices = [1400] * 2 + [1200] * 8 + [1600] * 18
+    prices += [7500] * 2 + [14800] * 5
+    generated = []
+    root_cursor = 0
+    c_cursor = 0
+    for index, machine_price in enumerate(prices):
+        old_uid = native_a_ids[index]
+        if index < 28:
+            current_c = c_sequence[c_cursor:c_cursor + 2]
+            c_cursor += 2
+            current_roots = root_ids[root_cursor:root_cursor + 3]
+            root_cursor += 3
+            ids = [old_uid, *current_c, *current_roots]
+            roles = [
+                "filler_native_overlap",
+                "filler_non_native",
+                "filler_non_native",
+                "new_root",
+                "new_root",
+                "new_root",
+            ]
+        else:
+            current_roots = root_ids[root_cursor:root_cursor + 5]
+            root_cursor += 5
+            ids = [old_uid, *current_roots]
+            roles = ["filler_native_overlap"] + ["new_root"] * 5
+        old_ids = [old_uid]
+        non_old_fillers = [
+            uid for uid, role in zip(ids, roles)
+            if role == "filler_non_native"
+        ]
+        generated.append({
+            "id": 7901 + index * 100,
+            "name": f"generated-{index}",
+            "enabled": True,
+            "price": machine_price,
+            "owner": "initialization",
+            "draw_policy": "independent_weighted",
+            "initialization_mix": {
+                "new_root_unit_ids": list(current_roots),
+                "baseline_filler_unit_ids": list(old_ids),
+                "initialized_filler_unit_ids": list(non_old_fillers),
+                "native_overlap_unit_ids": list(old_ids),
+                "non_native_filler_unit_ids": list(non_old_fillers),
+                "native_overlap_slot_count": 1,
+                "non_native_slot_count": 5,
+            },
+            "slots": [{
+                "unit_id": uid,
+                "weight": WEIGHTS[slot_index],
+                "native_draw_group": GROUPS[slot_index],
+                "sprites": unit_map[uid]["capsule_sprites"],
+                "template_grade": unit_map[uid]["grade"],
+                "initialization_role": role,
+            } for slot_index, (uid, role) in enumerate(zip(ids, roles))],
+        })
+    return {
+        "schema_version": 1,
+        "units": units,
+        "fixed_machines": native + generated,
+        "custom_machines": [
+            {"id": 1, "name": "custom-one"},
+            {"id": 2, "name": "custom-two"},
+        ],
+    }, set(root_ids[:100]), set(native_c_ids + native_a_ids)
+
+
 class InitializationPricingTests(unittest.TestCase):
     def test_largest_remainder_matches_native_price_distribution(self):
         self.assertEqual(
@@ -154,6 +258,73 @@ class InitializationPricingTests(unittest.TestCase):
 
 
 class InitializationDiversityTests(unittest.TestCase):
+    def test_c_rebalance_uses_global_budget_and_preserves_existing_content(self):
+        catalog, required, original_fixed_units = (
+            final_catalog_for_c_rebalance())
+        native_before = copy.deepcopy(catalog["fixed_machines"][:78])
+        custom_before = copy.deepcopy(catalog["custom_machines"])
+        units = {row["id"]: row for row in catalog["units"]}
+        generated = catalog["fixed_machines"][78:]
+        ab_before = {
+            (machine["id"], index):
+                (slot["unit_id"], slot["weight"])
+            for machine in generated
+            for index, slot in enumerate(machine["slots"])
+            if units[slot["unit_id"]]["grade"] in ("A", "B")
+        }
+
+        report = c.rebalance_initialization_c_fillers(
+            catalog,
+            [machine["id"] for machine in generated],
+            original_fixed_units,
+            required,
+        )
+
+        self.assertEqual(catalog["fixed_machines"][:78], native_before)
+        self.assertEqual(catalog["custom_machines"], custom_before)
+        self.assertEqual(report["total_generated_slot_count"], 210)
+        self.assertEqual(report["old_overlap_slot_count_before"], 35)
+        self.assertEqual(report["maximum_old_overlap_slots"], 62)
+        self.assertEqual(report["old_overlap_slot_count_after"], 62)
+        self.assertLess(report["old_overlap_rate_after"], 0.3)
+        self.assertEqual(report["replacement_count"], 27)
+        self.assertEqual(report["c_max_use_before"], 19)
+        self.assertEqual(report["c_max_use_after"], 10)
+        self.assertEqual(report["c_unique_before"], 3)
+        self.assertEqual(report["c_unique_after"], 30)
+        self.assertEqual(report["retained_required_root_count"], 100)
+        self.assertEqual(report["missing_required_unit_ids"], [])
+        self.assertTrue(all(
+            row["price"] in (1200, 1400, 1600)
+            for row in report["replacements"]))
+
+        generated_ids = {
+            slot["unit_id"] for machine in generated
+            for slot in machine["slots"]
+        }
+        self.assertTrue(required <= generated_ids)
+        self.assertTrue(all(
+            row["old_overlap_slot_count"] <= 2
+            for row in report["per_machine"]))
+        self.assertTrue(all(
+            len({slot["unit_id"] for slot in machine["slots"]}) == 6
+            for machine in generated))
+        self.assertEqual(
+            {
+                (machine["id"], index):
+                    (slot["unit_id"], slot["weight"])
+                for machine in generated
+                for index, slot in enumerate(machine["slots"])
+                if units[slot["unit_id"]]["grade"] in ("A", "B")
+            },
+            ab_before,
+        )
+        c_after = {
+            row["unit_id"]: row["uses"]
+            for row in report["c_usage_after"]
+        }
+        self.assertEqual(c_after[10203], 10)
+
     def test_strict_mix_uses_five_non_old_units_and_reports_all_usage(self):
         base = catalog_for(3, 3601, 14800, range(100, 110))
         for row in base["units"]:
