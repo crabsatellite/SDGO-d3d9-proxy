@@ -4,6 +4,8 @@ AI pilots join your team in co-op missions the way the game's AI battle modes ad
 bots. They fly with the game's own AI battle bot AI, score real kills and can be shot down.
 中文：[coop-wingmen.zh-CN.md](coop-wingmen.zh-CN.md)
 
+![Mission AI wingmen](coop-wingmen-demo.webp)
+
 | mod | host | part |
 |---|---|---|
 | `coop_ai` | battle server | adds the AI pilots to the room when the mission starts |
