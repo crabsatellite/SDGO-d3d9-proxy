@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Sdgo.Shop
 {
     public sealed class ShopService : IDisposable
     {
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+        static extern bool WritePrivateProfileString(string section,string key,string value,string file);
         public readonly string DirectoryPath;
         public Settings Settings;
         public Catalog Catalog;
@@ -89,6 +92,9 @@ namespace Sdgo.Shop
                 Model.Atomic(Path.Combine(ModDirectory,"catalog.ini"),File.ReadAllBytes(candidate));
                 Model.Atomic(Path.Combine(ModDirectory,"runtime-display.ini"),File.ReadAllBytes(Path.Combine(run,"runtime-display.ini")));
                 SaveDraft();
+                string manifest=Path.Combine(ModDirectory,"mod.ini");
+                if(File.Exists(manifest)&&!WritePrivateProfileString("mod","enabled","1",manifest))
+                    throw new IOException("商品已配置，但无法启用后续启动时的自动应用模块。");
                 if(displayDir!=null) Model.Atomic(Path.Combine(displayDir,"display.ini"),File.ReadAllBytes(Path.Combine(run,"runtime-display.ini")));
             }
             catch(Exception e) {throw new InvalidOperationException("服务器商品已应用，但本地配置/标签保存未完成。请保留并恢复记录目录："+run+"\r\n"+e.Message);}
