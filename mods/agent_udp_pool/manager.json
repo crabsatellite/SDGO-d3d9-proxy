@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "agent_udp_pool",
+  "title": "Agent UDP 端口池",
+  "category": "network",
+  "hosts": [
+    "agent"
+  ],
+  "description": "为原生 Agent 复用一组 UDP 端口。",
+  "settings": [
+    {
+      "id": "first_port",
+      "key": "FirstPort",
+      "label": "端口池起始端口",
+      "type": "integer",
+      "default": 10001,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1024,
+      "maximum": 65535
+    },
+    {
+      "id": "port_count",
+      "key": "PortCount",
+      "label": "端口池容量",
+      "type": "integer",
+      "default": 4,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required",
+      "minimum": 1,
+      "maximum": 31
+    }
+  ],
+  "presentation": "configurable",
+  "provider": "frp",
+  "mechanism": "在已验证的 Agent UDP 绑定调用使用有限的连续端口池，由服主为每个端口配置相应隧道。它不修改 Sakura 账号或自动分配外部隧道。"
+}

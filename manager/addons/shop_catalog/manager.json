@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "shop_catalog",
+  "title": "服主商城目录",
+  "category": "gameplay",
+  "hosts": [
+    "world"
+  ],
+  "provider": "shop",
+  "description": "服主商城目录，由配套配置提供内容。",
+  "settings": [
+    {
+      "id": "hostini",
+      "key": "HostIni",
+      "label": "原生宿主 INI（留空使用宿主默认）",
+      "type": "string",
+      "default": "",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "configurable"
+}

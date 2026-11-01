@@ -93,9 +93,10 @@ def read_exports(directory):
     return tables
 
 
-def read_database(environment_name):
+def read_database(environment_name=None, *, connection_string=None):
     """Fixed SELECT statements only; credentials are not CLI arguments or output."""
-    connection_string = os.environ.get(environment_name)
+    if connection_string is None:
+        connection_string = os.environ.get(environment_name or '')
     if not connection_string:
         raise ValueError("connection environment variable is empty")
     try:

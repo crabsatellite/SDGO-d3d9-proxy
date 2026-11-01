@@ -32,66 +32,18 @@
 同样三分钟、四名真人、十倍＋双倍：任务示例为 4,871 GB/13 MB，对战胜利示例为
 21,296 GB/90 MB；同一对战同时为 MVP 则为 26,620 GB/250 MB。具体条件和全部封顶值见完整规则。
 
-## 服主首次安装
+## 统一 Manager 中安装和管理
 
-使用完整框架包里的 `rewards/`，或独立的 Battle Rewards 工具包；以下命令在该目录执行。
-需要 Python 3.10+、Windows PowerShell 5.1 和服主已有的 SQL Server ODBC 连接能力：
+打开 **SDGO Mod Manager.exe**，进入“战斗奖励”。不再使用独立奖励网页或启动脚本，也无需安装 Python。
 
-```powershell
-python -m pip install -r requirements-rewards.txt
-```
+1. 在目录设置中选择原有奖励配置目录、原生服务器配置文件、要更新的对战服务器，以及已解压的框架/奖励包。
+2. 点击“检查安装 / 更新”，先处理阻断项。自行结束相关对局并关闭要更新的那个服务器后，应用刚才检查的计划。
+3. 安装保留符号、配置和恢复收据，只增加本功能的版本化钱包对象，不修改原生钱包过程或玩家余额。
+4. 从同一面板启动 Manager 拥有的钱包服务，再按原方式启动对战服务器。倍率、规则和预览都在本面板管理。
 
-选用包含 `[DB Game]` 和 `[DB StoreBilling]` 两段的原生服务器 INI（例如 WorldServer.ini）。
-凭据只在服主本机读取，不发给玩家，也不写入命令行或导出包。先自行结束相关对局并关闭要更新的
-那个 BattleServer。其他服务器、客户端、存档和账号不需要停止或重置。
-
-先生成只读计划：
-
-```powershell
-python tools/install_battle_rewards.py --package-root . --battle-dir "D:\SDGO\Server\BattleServer1" --workspace "D:\SDGO-Owner\Rewards" --server-ini "D:\SDGO\Server\WorldServer\WorldServer.ini"
-```
-
-检查计划没有阻断项后，使用相同参数加 `--apply`：
-
-```powershell
-python tools/install_battle_rewards.py --package-root . --battle-dir "D:\SDGO\Server\BattleServer1" --workspace "D:\SDGO-Owner\Rewards" --server-ini "D:\SDGO\Server\WorldServer\WorldServer.ini" --apply
-```
-
-安装器会更新随包最新的加载器、core 与本 Mod，备份改动，合并所需符号而保留其他定义，并读取
-原生 Boss 身份表。数据库安装只增加本功能的版本化回执表/过程，不给任何账号试发货币，不改原生
-奖励表或 `sp_PocketGC_IO`。配置写成 Windows INI 支持的 UTF-16LE，支持中文和空格路径。
-发生失败时保留真实写入状态和恢复收据，并尽力保持 Mod 关闭。
-
-每个参与结算的 BattleServer 都需安装一次，共用同一 workspace；实例身份会自动区分。
-全局 `[categories] gameplay=0`、`[features] battle-rewards=0` 或 `[mods] battle_rewards=0`
-仍会关闭功能，安装器不会强行改动你对其他功能的开关。处理计划中的相关提示后再启用。
-
-## 启动奖励工作器和辅助入口
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Start-Battle-Rewards.ps1 -Workspace "D:\SDGO-Owner\Rewards" -StoreServerIni "D:\SDGO\Server\WorldServer\WorldServer.ini"
-```
-
-入口先发布策略，隐藏启动 MB 工作器，然后显示本机辅助页面的实际 URL。打开浏览器页面后，
-按原来的方式启动 BattleServer。保持该服主进程运行；关闭浏览器标签不会停止工作器，结束入口
-进程则按其所有权记录关闭新启动的工作器。
-
-页面显示“已连接”需要：服务已加载当前策略、结算 Hook 与原生网络就绪、MB 工作器健康，且心跳
-没有过期。仅保存配置不会伪造连接状态。改倍率后查看所有相关实例是否已加载同一版本。
-
-原生 GB 结果字段最大为 65,535。页面报告当前整套策略的精确安全倍率上限：默认配置、最多十二名
-真人和双倍时段下，基础倍率上限为 `10.440894`。超过范围会明确拒绝并显示未就绪，不会溢出、绕回
-或静默截断。可在安全范围内调倍率，也可调整完整一倍数值后重新计算范围。
-
-需要与现有辅助模块共用端口时，入口可装配**已安装助手的服务器工厂**：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Start-Battle-Rewards.ps1 -Workspace "D:\SDGO-Owner\Rewards" -StoreServerIni "D:\SDGO\Server\WorldServer\WorldServer.ini" -Port 8765 -AssistantRoot "D:\SDGO-Assistant" -AssistantWorkspace "D:\SDGO-Owner\Assistant" -AssistantClient "D:\SDGO-Client" -AssistantSnapshot "D:\SDGO-Owner\operator-snapshot.json"
-```
-
-这会启动同端口的共享实例并保留现有模块路由，不会给已经运行的 Python 进程动态打补丁或抢占端口。
-已有同端口实例需由服主按自己的服务管理方式切换；入口不会停止任何旧助手或游戏。
-未配置现有助手时，独立奖励页面仍可工作。
+更换目录或服务器前停止本 Manager 的工作器；不会停止旧入口登记的外部工作器，旧部署需先迁移。
+页面只有在当前策略、原生结算和钱包心跳均确认时才显示连接。原生 GB 字段上限为 65,535；
+当前策略的安全倍率上限由运行时报告，超范围会拒绝，不静默截断。完整使用见[统一 Manager](mod-manager.zh-CN.md)。
 
 ## 入账、断线和恢复
 
@@ -103,9 +55,7 @@ MB 先进入持久队列，调用原生 `sp_PocketGC_IO` 并以本局/账号/计
 由下次正常登录/商店现金查询刷新。工作器中断时，辅助页面会显示失联；修复并启动相同 workspace 后
 继续处理原队列，不要删除 runtime 中的待处理作业或数据库回执。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Stop-Battle-Rewards.ps1 -Workspace "D:\SDGO-Owner\Rewards"
-```
+在 Manager 的奖励面板点击“停止本 Manager 的钱包服务”。
 
 停止入口校验 PID、创建时间、完整命令行和路径，只处理它自己记录的工作器；不会按进程名批量关闭。
 

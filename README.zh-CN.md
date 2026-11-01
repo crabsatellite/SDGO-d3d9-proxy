@@ -3,9 +3,13 @@
 为 SD敢达 Online 客户端和私服提供基础修复与可选扩展。所有 Mod 共用版本校验、加载、配置和更新框架。
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
+**统一入口：[SDGO Mod Manager](docs/mod-manager.zh-CN.md)。** 日常界面支持玩家和服主管理客户端、服务器、
+商城、副官、扭蛋机、奖励与联机；自动 Bug 修复收在归档，内部代号和诊断参数在开发视图展开。
+每个功能可复制 AI 配置说明或 GitHub Bug 报告指令；[修复 PR 必须披露实际使用的模型](docs/contributing.zh-CN.md)。
+
 **先安装基础修复，再按需要选择扩展。** Beta 是功能的发布标记，与分类独立。
 
-[安装与配置](docs/setup.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-d3d9-proxy/releases/latest) · [开发接口](docs/framework.md)
+[安装与配置](docs/setup.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest) · [开发接口](docs/framework.md)
 
 ## 基础修复
 

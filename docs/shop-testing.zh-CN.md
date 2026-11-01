@@ -2,7 +2,7 @@
 
 ## 打开管理窗口
 
-双击桌面「SDGO 商城管理」，或 `SDGO-server/shop-catalog/SdgoShopManager.exe`。
+双击桌面「SDGO 商城管理」，或 `SDGO Mod Manager.exe`。
 本机服务端和客户端会自动选中；点击「连接 / 刷新」可读回本服物品和商品状态。
 当前只显示本 catalog 管理的商品，原版商品不在这个编辑列表里。
 

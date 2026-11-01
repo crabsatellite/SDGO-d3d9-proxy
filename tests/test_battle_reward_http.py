@@ -19,7 +19,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 from owner.rewards import model
 from owner.rewards.runtime_control import RuntimeControl, compile_ini
 from owner.rewards.workspace import Workspace
-from assistant_modules.rewards import attach
+from manager.workspace import Workspace as ManagerWorkspace
+from manager.providers import attach as attach_providers
+from manager.server import make_server
 
 
 NOW = datetime(2026, 11, 1, 3, 4, 5, tzinfo=timezone.utc)
@@ -164,34 +166,13 @@ class HttpRuntimeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.control = RuntimeControl(self.temp.name, clock=lambda: NOW)
         self.workspace = Workspace(self.temp.name, self.control)
-
-        class Existing(BaseHTTPRequestHandler):
-            def log_message(self, *_):
-                pass
-
-            def json_response(self, status, value):
-                body = json.dumps(value).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                if self.path == "/api/modules":
-                    return self.json_response(200, {"modules": [
-                        {"id": "existing"},
-                        {"id": "rewards", "name": "old"},
-                    ]})
-                return self.json_response(200, {"existing": True})
-
-            def do_POST(self):
-                return self.json_response(200, {"existing_post": True})
-
-        self.server = attach(ThreadingHTTPServer(("127.0.0.1", 0), Existing), self.workspace)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        manager=ManagerWorkspace(Path(self.temp.name)/'manager',ROOT/'mods')
+        attach_providers(manager)
+        manager.providers['rewards'].engine=self.workspace
+        self.server=make_server(manager)
+        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True)
         self.thread.start()
-        self.origin = f"http://127.0.0.1:{self.server.server_port}"
+        self.origin=f"http://127.0.0.1:{self.server.server_port}"
 
     def tearDown(self):
         self.server.shutdown()
@@ -200,29 +181,30 @@ class HttpRuntimeTests(unittest.TestCase):
         self.temp.cleanup()
 
     def read(self, path):
-        with urlopen(self.origin + path, timeout=3) as response:
+        with urlopen(self.origin + ('/api/providers/rewards'+path if path.startswith('/api/rewards') else path), timeout=3) as response:
             return json.load(response)
 
     def post_multiplier(self, state, multiplier, **headers):
         values = {
             "Content-Type": "application/json",
             "Origin": self.origin,
-            "X-Assistant-Token": state["session_token"],
+            "X-ModManager-Token": state["session_token"],
             "X-Reward-Revision": state["revision"],
         }
         values.update(headers)
         return urlopen(Request(
-            self.origin + "/api/rewards/multiplier",
+            self.origin + "/api/providers/rewards/api/rewards/multiplier",
             data=json.dumps({"base_multiplier": multiplier}).encode(),
             headers=values,
         ), timeout=3)
 
-    def test_shared_port_preserves_routes_and_replaces_duplicate_module(self):
-        modules = self.read("/api/modules")["modules"]
-        self.assertEqual([item["id"] for item in modules], ["existing", "rewards"])
-        self.assertEqual(self.read("/existing"), {"existing": True})
-        with urlopen(Request(self.origin + "/existing-post", data=b"{}"), timeout=3) as response:
-            self.assertEqual(json.load(response), {"existing_post": True})
+    def test_unified_registry_has_one_reward_panel_and_no_legacy_routes(self):
+        modules=self.read('/api/state')['panels']
+        self.assertEqual(sum(item['id']=='rewards' for item in modules),1)
+        with self.assertRaises(HTTPError) as old:
+            self.read('/existing')
+        self.assertEqual(old.exception.code,404)
+        old.exception.close()
 
     def test_save_publishes_new_revision_and_waits_for_native_reload(self):
         initial = self.read("/api/rewards")
@@ -259,7 +241,7 @@ class HttpRuntimeTests(unittest.TestCase):
         self.assertEqual(foreign.exception.code, 403)
         foreign.exception.close()
         with self.assertRaises(HTTPError) as wrong:
-            self.post_multiplier(state, "20", **{"X-Assistant-Token": "wrong"})
+            self.post_multiplier(state, "20", **{"X-ModManager-Token": "wrong"})
         self.assertEqual(wrong.exception.code, 403)
         wrong.exception.close()
         with self.assertRaises(HTTPError) as bad_host:

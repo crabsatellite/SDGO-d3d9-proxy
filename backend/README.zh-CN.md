@@ -23,6 +23,6 @@
 ## 与长房名一起使用
 
 生成的等级池也可用于 `朋友练习局，慢慢打欢迎新手 !ai e2 a1 lv4 !rand` 这类完整房名。
-目录功能负责机体池；[长房名三端 Mod](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-titles.zh-CN.md)负责传递全文，
+目录功能负责机体池；[长房名三端 Mod](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-titles.zh-CN.md)负责传递全文，
 更新后的 AI / 随机机体 Mod 负责读取各自的指令。各功能仍须分别安装、启用和配置，
-目录生成本身不会放宽原生 20 字节房名限制。详见[组合指令](https://github.com/crabsatellite/SDGO-d3d9-proxy/blob/master/docs/room-commands.zh-CN.md)。
+目录生成本身不会放宽原生 20 字节房名限制。详见[组合指令](https://github.com/crabsatellite/SDGO-Mod-Framework/blob/master/docs/room-commands.zh-CN.md)。

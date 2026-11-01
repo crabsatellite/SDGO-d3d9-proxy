@@ -62,7 +62,7 @@ try {
     Check-Package $operatorZip ($baseMods + @('operator_catalog'))
     $operatorArchive = [IO.Compression.ZipFile]::OpenRead($operatorZip)
     try {
-        foreach ($required in @('tools/Start-Assistant.ps1','tools/Initialize-OperatorDefaults.py','tools/assistant_modules/operators/presets.py','tools/assistant_modules/operators/ui.html','assistant_module/operator_catalog/server/free.sql','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
+        foreach ($required in @('SDGO Mod Manager.exe','client/sdgo/mods/operator_catalog/manager.json','client/sdgo/mods/operator_catalog/operator_catalog.dll')) {
             if (-not $operatorArchive.GetEntry($required)) { throw "Operator feature package lacks $required" }
         }
         foreach ($forbidden in @('tools/assistant_modules/rewards/ui.html','frp/install_frp.ps1','rewards/tools/install_battle_rewards.py')) {
@@ -77,7 +77,7 @@ try {
     Check-Package $rewardZip ($baseMods + @('battle_rewards'))
     $rewardArchive = [IO.Compression.ZipFile]::OpenRead($rewardZip)
     try {
-        foreach ($required in @('rewards/tools/install_battle_rewards.py','rewards/tools/Start-Battle-Rewards.ps1','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
+        foreach ($required in @('SDGO Mod Manager.exe','rewards/tools/install_battle_rewards.py','rewards/owner/rewards/sql/battle_reward_wallet.sql','rewards/SHA256.json')) {
             if (-not $rewardArchive.GetEntry($required)) { throw "Selected reward package lacks $required" }
         }
         if ($rewardArchive.GetEntry('frp/install_frp.ps1')) { throw 'Reward-only package unexpectedly contains the FRP toolkit' }
@@ -102,18 +102,17 @@ try {
     }
     $fullArchive = [IO.Compression.ZipFile]::OpenRead($fullZip)
     try {
-        foreach ($required in @('shop/SdgoShopManager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
+        foreach ($required in @('SDGO Mod Manager.exe','server/sdgo/mods/shop_catalog/shop_catalog_apply.exe')) {
             if (-not $fullArchive.GetEntry($required)) { throw "Full package lost shop owner component: $required" }
         }
         if (-not $fullArchive.GetEntry('frp/install_common.ps1') -or -not $fullArchive.GetEntry('frp/install_frp.ps1')) {
             throw 'Full package lost the complete incremental FRP toolkit'
         }
-        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1')) {
+        if (-not $fullArchive.GetEntry('rewards/tools/install_battle_rewards.py') -or -not $fullArchive.GetEntry('SDGO Mod Manager.exe')) {
             throw 'Full package lost the complete reward owner toolkit'
         }
-        if (-not $fullArchive.GetEntry('tools/Start-Assistant.ps1') -or -not $fullArchive.GetEntry('assistant_module/operator_catalog/server/schema.sql')) {
-            throw 'Full package lost the operator owner assistant or SQL adapter'
-        }
+        if ($fullArchive.GetEntry('rewards/tools/reward_assistant.py') -or $fullArchive.GetEntry('rewards/tools/Start-Battle-Rewards.ps1') -or $fullArchive.GetEntry('rewards/tools/assistant_modules/rewards/ui.html')) { throw 'Retired reward UI leaked into the unified package' }
+        if ($fullArchive.GetEntry('tools/Start-Assistant.ps1') -or $fullArchive.GetEntry('shop/SdgoShopManager.exe')) { throw 'Retired per-feature entry entered the package' }
     } finally { $fullArchive.Dispose() }
 
     $baseFolder = Join-Path $work 'base-unpacked'; $customFolder = Join-Path $work 'custom-unpacked'
@@ -194,7 +193,7 @@ try {
     }
     if ([IO.File]::ReadAllText((Join-Path $world 'sdgo\mods\shop_catalog\mod.ini')) -notmatch '(?m)^enabled=0\s*$') { throw 'An unconfigured shop catalog must remain disabled' }
     $rankFiles = @(Get-ChildItem -LiteralPath (Join-Path $world 'sdgo\mods\rank_progression_fix') -File | ForEach-Object { $_.Name } | Sort-Object)
-    if (($rankFiles -join ',') -ne 'mod.ini,rank_progression_fix.dll') { throw 'Rank repair is not a clean DLL Mod payload' }
+    if (($rankFiles -join ',') -ne 'manager.json,mod.ini,rank_progression_fix.dll') { throw 'Rank repair is missing its unified Manager registration' }
     Write-Host 'BASE/FULL/FEATURE PACKAGES, CONTENTS AND PACKAGED INSTALLERS PASSED'
 } finally {
     # Only remove the exact files this fixture introduced in the staged build.

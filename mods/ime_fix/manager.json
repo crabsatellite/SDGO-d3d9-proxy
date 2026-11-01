@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "ime_fix",
+  "title": "输入法提交修复",
+  "category": "fixes",
+  "hosts": [
+    "client"
+  ],
+  "description": "正确提交中文和其他输入法文字。",
+  "settings": [
+    {
+      "id": "trace",
+      "key": "Trace",
+      "label": "诊断日志",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "presentation": "automatic_fix",
+  "mechanism": "框架只在已核对的输入法提交处理点修正长度计算，防止宽字符和字节长度混淆。"
+}
