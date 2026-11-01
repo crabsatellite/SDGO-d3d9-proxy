@@ -39,10 +39,11 @@ records before accepting the next round, preserves newly populated selections
 and rejects overwriting genuinely live loadouts. This prevents a stale round
 from causing `ERR_BATTLE_START_FAIL` on re-entry.
 
-Close the client, select it in Mod Manager and import the supplied
-current `SDGO-RoomRandomClient-*-beta.zip`, then use the normal launcher. No new settings
-are needed. Distribute this overlay to every participant. It contains no game files
-or server credentials, and its symbol fragment merges with other installed Mods.
+Close the client and run its existing `update.bat` / `update-client.ps1`. Player
+updates come from the client repository's `main` through Git/Codeup; the host
+publishes the matching server runtime to the server repository. Then use the
+normal launcher. No extra client settings or separate patch archive is needed.
+Mod Manager retains normal feature enablement and server-owner configuration.
 
 The 3D path does not use the legacy profile room pointer. It resolves the current
 3D manager and calls the native room/slot accessors; mission and ordinary room
