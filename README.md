@@ -59,7 +59,9 @@ and random-unit gameplay belong in this category.
 | Daily double rewards (Beta) | Double normal G points, pilot EXP and unit EXP daily at 18:00–22:00 in configurable server-local time | `daily_rewards` | battle servers | [Guide](docs/daily-rewards.md) |
 <!-- /mod-category:gameplay -->
 
-In the hangar, use **整理机库** (sort) or **重复兑换…** (duplicate exchange), or press **F8**.
+On the in-game **unit management** page, use **一键整理** (sort) or **重复兑换** (duplicate exchange)
+beside the native lock/delete buttons. Reward selection, paged previews, both confirmations
+and stopping stay inside that page. Preferences remain in the unified Mod Manager.
 Identical untrained copies default to two kept. Exchange excludes trained units;
 locked, active, battleship-assigned, rental and unknown-state units are protected.
 Successful native operations

@@ -7,8 +7,8 @@
     "client"
   ],
   "presentation": "configurable",
-  "description": "按服主规则整理机库和处理重复机体。",
-  "mechanism": "客户端使用原生机库记录及服务器回执处理整理与回收，保留机体份数由本地偏好选择，奖励规则仍由服务器决定。",
+  "description": "在游戏的机体管理页整理机库、预览并确认兑换重复机体。此处只调整偏好。",
+  "mechanism": "游戏原生机体管理页提供整理与重复兑换，预览和两次确认均在页内完成；客户端用原生请求和服务器回执逐笔核对，不需要 Manager 常驻。保留份数由本地偏好选择，奖励由服务器决定。",
   "settings": [
     {
       "id": "keepcopies",
@@ -20,8 +20,8 @@
       "section": "settings",
       "audience": "user",
       "activation": "restart_required",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 1,
+      "maximum": 20
     },
     {
       "id": "sortafterexchange",
@@ -44,8 +44,8 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 50,
+      "maximum": 10000
     },
     {
       "id": "replytimeoutms",
@@ -57,8 +57,8 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 1000,
+      "maximum": 60000
     },
     {
       "id": "maxslots",
@@ -70,8 +70,8 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 1,
+      "maximum": 65535
     },
     {
       "id": "rulesfile",

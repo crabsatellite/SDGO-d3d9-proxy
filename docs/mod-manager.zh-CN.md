@@ -2,8 +2,10 @@
 
 [English](mod-manager.md) · [返回功能目录](../README.zh-CN.md)
 
-打开包里的 **SDGO Mod Manager.exe**。所有功能共用一个本机界面，普通使用不需要安装 Python，
+打开包里的 **SDGO Mod Manager.exe**。所有管理功能共用一个本机界面，普通使用不需要安装 Python，
 也不再分别启动商城 EXE、奖励网页、副官助手或扭蛋机编辑器。
+
+游戏中的操作仍在对应游戏页面完成，例如机库整理和重复兑换位于「机体管理」页；Manager 只调整其偏好与安装状态。
 
 ## 日常管理
 

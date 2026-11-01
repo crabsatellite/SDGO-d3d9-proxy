@@ -8,6 +8,7 @@
 #include <string>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/hangar_model.h"
+#include "native_ui.h"
 
 namespace {
 using namespace sdgo::hangar;
@@ -16,10 +17,13 @@ using NativeGet=void(__thiscall*)(void*,void*,uint16_t);
 using NativeSync=void(__thiscall*)(void*,const uint8_t*);
 using SessionFn=uint8_t*(__cdecl*)();
 using NativeSend=int(__thiscall*)(void*,int,const uint8_t*,int,int);
+using ButtonFn=void(__thiscall*)(void*,void*);
 using PeekFn=BOOL(WINAPI*)(LPMSG,HWND,UINT,UINT,UINT);
 const SdgoApi* g_api=nullptr;
 SdgoMod* g_mod=nullptr;
-NativeVoid g_page=nullptr,g_view=nullptr,g_redraw=nullptr,g_clear=nullptr;
+NativeVoid g_page=nullptr,g_view=nullptr,g_redraw=nullptr,g_clear=nullptr,g_init=nullptr;
+ButtonFn g_button=nullptr;
+ui::PageUi g_ui;
 NativeGet g_brief=nullptr,g_full=nullptr;
 NativeSync g_sync=nullptr;
 SessionFn g_session=nullptr,g_app=nullptr;
@@ -45,11 +49,6 @@ bool g_detailObserved=false;
 size_t g_scanIndex=0;
 std::vector<uint64_t> g_scanIds;
 Snapshot g_scanBefore;
-HWND g_game=nullptr,g_toolbar=nullptr,g_popup=nullptr,g_status=nullptr,g_list=nullptr,g_confirm=nullptr;
-HFONT g_font=nullptr;
-HMODULE g_module=nullptr;
-enum {Open=100,QuickSort=101,Sort=102,GB=103,Item=104,Confirm=105,Cancel=106,Redraw=107};
-
 template<class T>T Read(const void* p,size_t offset=0) {T result;memcpy(&result,static_cast<const uint8_t*>(p)+offset,sizeof(T));return result;}
 std::wstring Wide(const std::string& s) {
     if(s.empty())return {};
@@ -58,13 +57,13 @@ std::wstring Wide(const std::string& s) {
     std::wstring w(static_cast<size_t>(n),0);
     MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),w.data(),n);return w;
 }
-void Status(const std::wstring& s) {if(g_status)SetWindowTextW(g_status,s.c_str());}
+void Status(const std::wstring& s) {g_ui.Status(s);}
 bool Busy(){return g_scanning || g_mutating;}
 void Stop(const wchar_t* text) {
     g_scanning=false;g_detailPending=0;g_hasPreview=false;
     if(g_mutating)g_runner.Disconnect();
     g_mutating=false;g_needsRelog=true;
-    if(g_confirm)EnableWindow(g_confirm,FALSE);
+    g_ui.State(Busy(),false);
     Status(text);
     g_api->Log(g_mod,SDGO_LOG_WARN,"operation paused; no automatic retry");
 }
@@ -125,7 +124,7 @@ bool SendUnsafe(const uint8_t* bytes,int size) {
 bool Send(const uint8_t* bytes,int size) {
     __try{return SendUnsafe(bytes,size);}__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
-void RedrawUnsafe() {if(VisibleUnsafe()){g_view(g_grid);g_redraw(g_grid);}}
+void RedrawUnsafe() {if(VisibleUnsafe()){g_ui.BeforeNativeRefresh();g_view(g_grid);g_redraw(g_grid);g_ui.AfterNativeRefresh();}}
 void RedrawNow() {__try{RedrawUnsafe();}__except(EXCEPTION_EXECUTE_HANDLER){}}
 std::wstring Label(const Unit& u) {
     auto r=g_rules.find(u.type);
@@ -133,14 +132,14 @@ std::wstring Label(const Unit& u) {
     const auto& v=r->second;
     std::wstring g=v.rank==4?L"S":v.rank==3?L"A":v.rank==2?L"B":L"C";
     if(v.subrank==3)g+=L"S";else if(v.subrank==4)g+=L"R";else if(v.subrank==5)g+=L"U";
-    return L"["+g+L"] "+v.name+L"  槽位 "+std::to_wstring(u.slot);
+    return L"槽位 "+std::to_wstring(u.slot)+L" ["+g+L"] "+v.name;
 }
 void Preview(Plan p) {
     g_preview=std::move(p);g_hasPreview=true;
-    SendMessageW(g_list,LB_RESETCONTENT,0,0);
+    std::vector<std::wstring> rows;
     for(const auto& a:g_preview.actions)if(a.kind!=Kind::Swap){
         const auto* u=ById(g_preview.before,a.first);
-        const auto text=Label(*u);SendMessageW(g_list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(text.c_str()));
+        rows.push_back(Label(*u));
     }
     std::wstring s=L"将兑换 "+std::to_wstring(g_preview.removed)+L" 台；每种相同状态保留 "+std::to_wstring(g_keep)+L" 台。\r\n";
     if(g_scanReward==Kind::GB)s+=L"预计 "+std::to_wstring(g_preview.expectedGB)+L" GB";
@@ -150,7 +149,7 @@ void Preview(Plan p) {
         s+=name+L" × "+std::to_wstring(item.second)+L"  ";
     }
     s+=L"（实际奖励按服务器原生配置）。\r\n锁定、出击中、舰队、租赁、已培养及不同状态机体不兑换。";
-    Status(s);EnableWindow(g_confirm,g_preview.removed?TRUE:FALSE);
+    g_ui.Rows(std::move(rows));Status(s);g_ui.State(false,g_preview.removed!=0);
 }
 void BeginScan(Kind reward) {
     if(Busy())return;
@@ -163,11 +162,11 @@ void BeginScan(Kind reward) {
         if(count[u.type]>g_keep && r!=g_rules.end() && r->second.subrank!=1 && !Protected(u,s.activeSlot) && u.level<=1)
             g_scanIds.push_back(u.uid);
     }
-    EnableWindow(g_confirm,FALSE);SendMessageW(g_list,LB_RESETCONTENT,0,0);g_scanning=true;
+    g_ui.Rows({});g_scanning=true;g_ui.State(true,false);
     Status(L"正在逐台向服务器核对重复机体；此步骤不会兑换或删除机体。");
 }
 void StartPlan(Plan p,const Snapshot& s) {
-    g_hasPreview=false;EnableWindow(g_confirm,FALSE);
+    g_hasPreview=false;g_ui.State(true,false);
     try {g_runner.Start(std::move(p),s);g_mutating=true;g_nextSend=0;}
     catch(const std::exception&){Status(L"预览之后机库已变化，请重新预览。");}
 }
@@ -181,86 +180,77 @@ void BeginSort() {
     }catch(const std::exception&){Status(L"无法生成安全的排序方案，尚未发送请求。");}
 }
 
-LRESULT CALLBACK PanelProc(HWND,UINT,WPARAM,LPARAM);
-HWND Control(HWND parent,const wchar_t* cls,const wchar_t* title,DWORD style,int id,int x,int y,int w,int h) {
-    auto hwnd=CreateWindowExW(0,cls,title,WS_CHILD|WS_VISIBLE|style,x,y,w,h,parent,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),g_module,nullptr);
-    if(hwnd)SendMessageW(hwnd,WM_SETFONT,reinterpret_cast<WPARAM>(g_font),TRUE);
-    return hwnd;
+void UiRefreshUnsafe() {g_ui.AfterNativeRefresh();}
+void UiRefresh() {__try {UiRefreshUnsafe();} __except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();}}
+void BeforeRefreshUnsafe() {g_ui.BeforeNativeRefresh();}
+void BeforeRefresh() {__try {BeforeRefreshUnsafe();} __except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();}}
+void CloseUi() {__try {g_ui.Close();} __except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();}}
+bool AttachUi(void* self) {__try {return g_ui.Attach(self);} __except(EXCEPTION_EXECUTE_HANDLER){g_ui.Detach();return false;}}
+void __fastcall Init(void* self,void*) {
+    g_ui.Detach();g_grid=nullptr;
+    g_hasPreview=false;g_scanning=false;g_detailPending=0;
+    if(g_mutating){g_runner.Disconnect();g_mutating=false;g_needsRelog=true;}
+    g_init(self);
+    g_grid=static_cast<uint8_t*>(self);g_gridVtable=Read<void*>(self);g_thread=GetCurrentThreadId();
+    try {
+        if(!AttachUi(self))g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI unavailable; no external UI fallback");
+    }catch(const std::exception&){g_ui.Detach();g_api->Log(g_mod,SDGO_LOG_ERROR,"native unit-management UI initialization failed");}
 }
-void EnsureManagerWindow() {
-    if(!g_popup) {
-        g_popup=CreateWindowExW(WS_EX_TOOLWINDOW,L"SDGO.HangarManager",L"机库管理",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
-                               CW_USEDEFAULT,CW_USEDEFAULT,760,520,g_game,nullptr,g_module,nullptr);
-        g_status=Control(g_popup,L"STATIC",L"排序通过原生换槽请求执行；重复兑换需先预览确认。",SS_LEFT,0,16,16,710,85);
-        g_list=Control(g_popup,L"LISTBOX",L"",WS_BORDER|WS_VSCROLL|LBS_NOINTEGRALHEIGHT,0,16,110,710,265);
-        Control(g_popup,L"BUTTON",L"一键整理",BS_PUSHBUTTON,Sort,16,395,120,32);
-        Control(g_popup,L"BUTTON",L"重复换 GB",BS_PUSHBUTTON,GB,146,395,140,32);
-        Control(g_popup,L"BUTTON",L"重复换经验胶囊",BS_PUSHBUTTON,Item,296,395,170,32);
-        g_confirm=Control(g_popup,L"BUTTON",L"确认兑换",BS_PUSHBUTTON,Confirm,476,395,120,32);
-        Control(g_popup,L"BUTTON",L"取消 / 停止",BS_PUSHBUTTON,Cancel,606,395,120,32);
-        Control(g_popup,L"BUTTON",L"刷新显示",BS_PUSHBUTTON,Redraw,16,439,120,28);
-        Control(g_popup,L"STATIC",L"只保留已确认结果；超时不会自动重试。状态不明时请重新登录。",SS_LEFT,0,150,443,580,28);
-        EnableWindow(g_confirm,FALSE);
+void HandleButton(void* self,void* control) {
+    if(!Visible() || !g_ui.Owns(self))return;
+    const auto action=g_ui.Click(control);
+    if(action==ui::Action::None) {
+        if(!g_ui.Exchange() && !Busy())g_button(self,control);
+        return;
     }
-}
-void ShowManager() {
-    EnsureManagerWindow();ShowWindow(g_popup,SW_SHOW);SetForegroundWindow(g_popup);
-}
-LRESULT CALLBACK PanelProc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
-    if(message==WM_COMMAND) {
-        const int id=LOWORD(wp);
-        if(id==Open){ShowManager();return 0;}
-        if(id==QuickSort){ShowManager();BeginSort();return 0;}
-        if(id==Sort){BeginSort();return 0;}
-        if(id==GB || id==Item){BeginScan(id==GB?Kind::GB:Kind::Item);return 0;}
-        if(id==Redraw){if(!Busy())RedrawNow();return 0;}
-        if(id==Cancel){
-            if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
-            else if(g_mutating){g_runner.Cancel();Status(L"停止追加请求；等待最后一笔已发送请求的结果。");}
-            else{g_hasPreview=false;EnableWindow(g_confirm,FALSE);ShowWindow(g_popup,SW_HIDE);}
-            return 0;
+    if(action==ui::Action::Cancel) {
+        if(g_scanning){g_scanning=false;g_detailPending=0;Status(L"预览已取消，没有发送兑换请求。");}
+        else if(g_mutating){g_runner.Cancel();Status(L"停止追加请求；等待最后一笔已发送请求的结果。");}
+        else {g_hasPreview=false;g_ui.Close();RedrawNow();}
+    }else if(action==ui::Action::Previous)g_ui.Page(-1);
+    else if(action==ui::Action::Next)g_ui.Page(1);
+    else if(!Busy()) {
+        if(action==ui::Action::Sort){g_ui.Rows({});g_ui.Open();BeginSort();}
+        if(action==ui::Action::Open) {
+            g_hasPreview=false;g_ui.Rows({});g_ui.State(false,false);
+            Status(L"重复机体兑换：先选择奖励并预览。\n每种相同状态至少保留 "+std::to_wstring(g_keep)+L" 台。\n锁定、出击、舰队、租赁、已培养及未知状态机体不兑换。");
+            g_ui.Open();
         }
-        if(id==Confirm && g_hasPreview && !Busy()) {
+        if(action==ui::Action::GB || action==ui::Action::Item) {g_ui.Arm(false);BeginScan(action==ui::Action::GB?Kind::GB:Kind::Item);}
+        if(action==ui::Action::Confirm && g_hasPreview) {
             Snapshot s;
-            if(!GetSnapshot(s) || !SameLayout(g_preview.before,s)){Status(L"机库已变化，请重新预览。");g_hasPreview=false;EnableWindow(g_confirm,FALSE);return 0;}
-            std::wstring text=L"确认兑换列表中的 "+std::to_wstring(g_preview.removed)+L" 台重复机体？\r\n";
-            text+=L"每种相同状态至少保留 "+std::to_wstring(g_keep)+L" 台；奖励由服务器发放。\r\n兑换无法撤销，请核对列表。";
-            if(MessageBoxW(g_popup,text.c_str(),L"确认重复机体兑换",MB_ICONWARNING|MB_YESNO|MB_DEFBUTTON2)==IDYES)StartPlan(g_preview,s);
-            return 0;
+            if(!GetSnapshot(s) || !SameLayout(g_preview.before,s)) {g_hasPreview=false;Status(L"机库已变化，请重新预览。");}
+            else if(!g_ui.Armed())g_ui.Arm(true);
+            else StartPlan(g_preview,s);
         }
     }
-    if(message==WM_CLOSE){
-        if(Busy()){g_scanning=false;g_detailPending=0;g_runner.Cancel();Status(L"正在停止，等待已发送请求完成。");}
-        else ShowWindow(hwnd,SW_HIDE);
-        return 0;
-    }
-    return DefWindowProcW(hwnd,message,wp,lp);
+    g_ui.State(Busy(),g_hasPreview && g_preview.removed!=0);
 }
-BOOL CALLBACK FindGame(HWND hwnd,LPARAM) {
-    DWORD pid=0;GetWindowThreadProcessId(hwnd,&pid);if(pid!=GetCurrentProcessId())return TRUE;
-    wchar_t cls[80]={};GetClassNameW(hwnd,cls,80);
-    if(wcscmp(cls,L"_GONLINE_")!=0 || !IsWindowVisible(hwnd))return TRUE;
-    g_game=hwnd;return FALSE;
+void __fastcall ButtonClicked(void* self,void*,void* control) {
+    // Unrelated native dialogs retain their original event handling.
+    if(!g_ui.Owns(self)){g_button(self,control);return;}
+    try {HandleButton(self,control);}catch(const std::exception&){Stop(L"界面或机库发生变化，请重新登录核对。");}
 }
-void EnsureToolbar() {
-    if(!IsWindow(g_game)){g_game=nullptr;EnumWindows(FindGame,0);}
-    if(!g_game)return;
-    if(!g_toolbar) {
-        g_toolbar=CreateWindowExW(0,L"SDGO.HangarManager",L"",WS_CHILD,0,0,260,34,g_game,nullptr,g_module,nullptr);
-        Control(g_toolbar,L"BUTTON",L"整理机库",BS_PUSHBUTTON,QuickSort,0,0,120,32);
-        Control(g_toolbar,L"BUTTON",L"重复兑换…",BS_PUSHBUTTON,Open,126,0,130,32);
-    }
-    RECT r{};GetClientRect(g_game,&r);
-    SetWindowPos(g_toolbar,HWND_TOP,std::max(0,static_cast<int>(r.right)-276),44,260,34,SWP_NOACTIVATE);
-    ShowWindow(g_toolbar,Visible()?SW_SHOWNA:SW_HIDE);
+void __fastcall ViewList(void* self,void*) {
+    if(g_ui.Owns(self))BeforeRefresh();
+    g_view(self);
+    if(g_ui.Owns(self))UiRefresh();
+}
+void __fastcall Redraw(void* self,void*) {
+    if(g_ui.Owns(self))BeforeRefresh();
+    g_redraw(self);
+    if(g_ui.Owns(self))UiRefresh();
 }
 void Pump() {
     const auto now=GetTickCount64();
     if(g_pumping || now<g_nextTick || (g_thread && GetCurrentThreadId()!=g_thread))return;
     g_pumping=true;g_nextTick=now+75;
     try {
-        EnsureToolbar();
-        if(Visible() && GetForegroundWindow()==g_game && (GetAsyncKeyState(VK_F8)&1))ShowManager();
+        if(!Visible()) {
+            // Closing the page invalidates previews and the second confirmation.
+            g_hasPreview=false;
+            if(g_ui.Ready())CloseUi();
+        } else UiRefresh();
         if(Busy()) {
             Snapshot s;
             if(!GetSnapshot(s)){Stop(L"已停止：已离开机库或连接发生变化。请重新登录核对最后一笔状态。");g_pumping=false;return;}
@@ -303,20 +293,23 @@ void Pump() {
             }
         }
     }catch(const std::exception&){Stop(L"已暂停：机库数据未通过校验，请重新登录后重试。");}
+    g_ui.State(Busy(),g_hasPreview && g_preview.removed!=0);
     g_pumping=false;
 }
 BOOL WINAPI Peek(LPMSG msg,HWND hwnd,UINT lo,UINT hi,UINT remove) {
     const auto result=g_peek(msg,hwnd,lo,hi,remove);Pump();return result;
 }
 void __fastcall Page(void* self,void*) {
+    if(g_ui.Owns(self))BeforeRefresh();
     g_page(self);g_grid=static_cast<uint8_t*>(self);g_gridVtable=Read<void*>(self);g_thread=GetCurrentThreadId();
+    if(g_ui.Owns(self))UiRefresh();
 }
 void __fastcall Clear(void* self,void*) {
     ++g_epoch;g_hasPreview=false;g_scanning=false;g_detailPending=0;
     if(g_mutating){g_runner.Disconnect();g_mutating=false;Status(L"连接或机库缓存已重建，请重新预览。");}
     g_clear(self);
     g_needsRelog=false;
-    if(g_confirm)EnableWindow(g_confirm,FALSE);
+    g_ui.State(Busy(),false);
 }
 void __fastcall Sync(void* self,void*,const uint8_t* data) {
     g_sync(self,data);
@@ -352,14 +345,15 @@ SDGO_MOD_ENTRY {
     std::string relative=rules;
     if(relative.empty() || relative.find(':')!=std::string::npos || relative.find("..")!=std::string::npos || relative[0]=='/' || relative[0]=='\\')return 0;
     try {if(!LoadRules(std::wstring(api->ModDirectory(mod))+L"\\"+Wide(relative)))return 0;}catch(const std::exception&){return 0;}
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&g_api),&g_module);
-    g_font=CreateFontW(-16,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
-    WNDCLASSW wc{};wc.hInstance=g_module;wc.lpfnWndProc=PanelProc;wc.hCursor=LoadCursorW(nullptr,MAKEINTRESOURCEW(32512));wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);wc.lpszClassName=L"SDGO.HangarManager";
-    if(!RegisterClassW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)return 0;
-    if(!api->HookCode(mod,"hangar.page_frame",reinterpret_cast<void*>(&Page),reinterpret_cast<void**>(&g_page)) ||
+    if(!g_ui.Bind(api,mod))return 0;
+    if(!api->HookCode(mod,"hangar.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
+       !api->HookCode(mod,"hangar.button_clicked",reinterpret_cast<void*>(&ButtonClicked),reinterpret_cast<void**>(&g_button)) ||
+       !api->HookCode(mod,"hangar.view_list",reinterpret_cast<void*>(&ViewList),reinterpret_cast<void**>(&g_view)) ||
+       !api->HookCode(mod,"hangar.redraw",reinterpret_cast<void*>(&Redraw),reinterpret_cast<void**>(&g_redraw)) ||
+       !api->HookCode(mod,"hangar.page_frame",reinterpret_cast<void*>(&Page),reinterpret_cast<void**>(&g_page)) ||
        !api->HookCode(mod,"hangar.clear",reinterpret_cast<void*>(&Clear),reinterpret_cast<void**>(&g_clear)) ||
        !api->HookCode(mod,"hangar.sync_full",reinterpret_cast<void*>(&Sync),reinterpret_cast<void**>(&g_sync)) ||
        !api->HookImport(mod,"user32.dll","PeekMessageW",reinterpret_cast<void*>(&Peek),reinterpret_cast<void**>(&g_peek)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: native authenticated hangar actions, %u unit rules; no SQL credentials",static_cast<unsigned>(g_rules.size()));
+    api->Log(mod,SDGO_LOG_INFO,"ready: in-game unit-management page, native authenticated hangar actions, %u unit rules; no SQL credentials",static_cast<unsigned>(g_rules.size()));
     return 1;
 }

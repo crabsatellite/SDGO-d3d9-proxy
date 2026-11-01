@@ -1,11 +1,14 @@
 """Manager contracts, real HTTP mode gates and lossless on-disk edits."""
 import configparser
+import base64
+import io
 import http.client
 import json
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+import zipfile
 from manager.workspace import Workspace
 from manager.server import make_server
 from manager.providers import attach
@@ -169,6 +172,28 @@ class ManagerTests(unittest.TestCase):
         value=storage.patch_ini(raw,[('settings','Trace','1')])
         self.assertTrue(value.startswith(b'\xff\xfe'));self.assertIn('中文',value[2:].decode('utf-16-le'))
         with self.assertRaises(ValueError):storage.patch_ini(b'[settings]\nTrace=0\nTrace=1\n',[('settings','Trace','0')])
+
+    def test_hangar_overlay_imports_rules_registration_and_native_symbols(self):
+        host=self.workspace.settings['hosts'][0]['id'];buffer=io.BytesIO()
+        with zipfile.ZipFile(buffer,'w') as archive:
+            for name in ('mod.ini','manager.json','units.tsv'):
+                archive.writestr('client/sdgo/mods/hangar_manager/'+name,(ROOT/'mods/hangar_manager'/name).read_bytes())
+            archive.writestr('client/sdgo/mods/hangar_manager/hangar_manager.dll',b'synthetic DLL')
+            archive.writestr('symbols.fragment.ini','[host]\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n[hangar.init]\nkind=code\nrva=0x202EA0\nexpect=55 8B EC\n')
+        status,result=self.call('POST','/api/import',{'host':host,'package':base64.b64encode(buffer.getvalue()).decode()})
+        self.assertEqual(status,200);self.assertEqual(result['installed_files'],5)
+        root=self.client/'sdgo/mods/hangar_manager'
+        self.assertEqual((root/'units.tsv').read_bytes(),(ROOT/'mods/hangar_manager/units.tsv').read_bytes())
+        self.assertTrue((root/'manager.json').is_file());self.assertTrue((self.mod/'mod.ini').is_file())
+        self.assertIn('[hangar.init]',(self.client/'sdgo/symbols/GOnline-54BE1568-00C97000.ini').read_text())
+
+    def test_hangar_overlay_rejects_scripts_before_writing_any_files(self):
+        buffer=io.BytesIO()
+        with zipfile.ZipFile(buffer,'w') as archive:
+            archive.writestr('client/sdgo/mods/hangar_manager/units.tsv','synthetic rules')
+            archive.writestr('client/sdgo/mods/hangar_manager/run.ps1','throw "never execute"')
+        status,_=self.call('POST','/api/import',{'host':self.workspace.settings['hosts'][0]['id'],'package':base64.b64encode(buffer.getvalue()).decode()})
+        self.assertNotEqual(status,200);self.assertFalse((self.client/'sdgo/mods/hangar_manager').exists())
 
 
 if __name__=='__main__':unittest.main()

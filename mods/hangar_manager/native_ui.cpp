@@ -1,0 +1,180 @@
+#include "native_ui.h"
+#include <windows.h>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <stdexcept>
+
+namespace sdgo::hangar::ui {
+namespace {
+constexpr size_t kRows=9,kSummaryLines=5;
+template<class T>T Read(const void* p,size_t offset=0) {T v;memcpy(&v,static_cast<const uint8_t*>(p)+offset,sizeof(v));return v;}
+template<class T>void Write(void* p,size_t offset,T v) {memcpy(static_cast<uint8_t*>(p)+offset,&v,sizeof(v));}
+NativeString View(const std::wstring& text) {
+    NativeString v;v.length=static_cast<uint32_t>(text.size());
+    if(text.size()<8)memcpy(v.data.small,text.c_str(),(text.size()+1)*sizeof(wchar_t));
+    else {v.data.pointer=text.c_str();v.capacity=v.length;}
+    return v;
+}
+bool Button(void* p,void* vtable) {return p && Read<void*>(p)==vtable;}
+bool IdentityMatches(void* service,void* serviceVtable,void* dialog,void* dialogVtable) {
+    __try {return Read<void*>(service)==serviceVtable && Read<void*>(service,0x44)==dialog && Read<void*>(dialog)==dialogVtable;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+std::vector<std::wstring> Lines(const std::wstring& text,size_t width) {
+    std::vector<std::wstring> lines;std::wstring line;
+    for(wchar_t c:text) {
+        if(c==L'\r')continue;
+        if(c==L'\n' || line.size()==width) {lines.push_back(line);line.clear();}
+        if(c!=L'\n')line+=c;
+    }
+    if(!line.empty())lines.push_back(line);
+    return lines;
+}
+}
+bool PageUi::Bind(const SdgoApi* api,SdgoMod* mod) {
+    bindings_.add=reinterpret_cast<Bindings::Add>(api->Symbol(mod,"hangar.ui_add_button"));
+    bindings_.find=reinterpret_cast<Bindings::Find>(api->Symbol(mod,"hangar.ui_find_control"));
+    bindings_.text=reinterpret_cast<Bindings::Text>(api->Symbol(mod,"hangar.ui_text_item"));
+    bindings_.buttonVtable=api->Symbol(mod,"hangar.ui_button_vtable");
+    return bindings_.add && bindings_.find && bindings_.text && bindings_.buttonVtable;
+}
+void PageUi::Detach() {
+    // Native init may already have freed the previous dialog, including all its
+    // children. Drop references without attempting to restore old visibility.
+    service_=dialog_=serviceVtable_=dialogVtable_=nullptr;controls_.clear();hidden_.clear();rows_.clear();
+    page_=0;exchange_=busy_=confirm_=armed_=false;
+}
+bool PageUi::Attach(void* service,const Bindings& bindings) {bindings_=bindings;return Attach(service);}
+bool PageUi::Add(const wchar_t* name,const wchar_t* label,Action action,int x,int y,int w,int h,bool body) {
+    const std::wstring key=name;const auto native=View(key);
+    bindings_.add(dialog_,&native,x,y,w,h,0);
+    auto* child=bindings_.find(dialog_,&native,4);
+    if(!Button(child,bindings_.buttonVtable) || Read<void*>(child,0x15C)!=dialog_)return false;
+    controls_.push_back({child,action,w,body,{}});
+    Text(controls_.back(),label,0xFF8ED9FF);
+    Write<uint8_t>(child,0x162,body?0:1);
+    return true;
+}
+bool PageUi::Attach(void* service) {
+    if(Owns(service))return true;
+    Detach();
+    if(!service || !bindings_.add || !bindings_.find || !bindings_.text || !bindings_.buttonVtable)return false;
+    auto* dialog=Read<void*>(service,0x44);
+    auto* source=Read<void*>(service,0x4C); // native UnitDeleteBtn
+    if(!dialog || !Button(source,bindings_.buttonVtable) || Read<void*>(source,0x15C)!=dialog)return false;
+    const int w=Read<int>(dialog,0x154),h=Read<int>(dialog,0x158);
+    const float sx=Read<float>(source,0x148),sy=Read<float>(source,0x14C);
+    if(!std::isfinite(sx) || !std::isfinite(sy) || sx<0 || sy<0 || sx>2048 || sy>128 || w<520 || w>2048 || h<600 || h>2048)return false;
+    const int x=static_cast<int>(sx)+Read<int>(source,0x154)+8;
+    if(x+210>w)return false; // do not overlap existing native controls
+    auto** begin=Read<uint8_t**>(source,0x190);auto** end=Read<uint8_t**>(source,0x194);
+    if(!begin || reinterpret_cast<uintptr_t>(end)<reinterpret_cast<uintptr_t>(begin) ||
+       reinterpret_cast<uintptr_t>(end)-reinterpret_cast<uintptr_t>(begin)>64*sizeof(void*) || begin==end || !*begin)return false;
+    font_=Read<uint32_t>(*begin,0x6C);
+    service_=service;dialog_=dialog;width_=w;height_=h;
+    serviceVtable_=Read<void*>(service);dialogVtable_=Read<void*>(dialog);
+    bool ok=Add(L"ModHangarSort",L"[一键整理]",Action::Sort,x,static_cast<int>(sy),92,24,false) &&
+        Add(L"ModHangarOpen",L"[重复兑换]",Action::Open,x+100,static_cast<int>(sy),110,24,false);
+    for(size_t i=0;ok && i<kSummaryLines;++i) {
+        const auto name=L"ModHangarStatus"+std::to_wstring(i);
+        ok=Add(name.c_str(),L"",Action::None,12,44+static_cast<int>(i)*22,w-24,22,true);
+    }
+    for(size_t i=0;ok && i<kRows;++i) {
+        const auto name=L"ModHangarRow"+std::to_wstring(i);
+        ok=Add(name.c_str(),L"",Action::None,12,174+static_cast<int>(i)*28,w-24,26,true);
+    }
+    const int bottom=h-84;
+    ok=ok && Add(L"ModHangarPrevious",L"[上一页]",Action::Previous,12,bottom-38,96,26,true) &&
+        Add(L"ModHangarNext",L"[下一页]",Action::Next,116,bottom-38,96,26,true) &&
+        Add(L"ModHangarPage",L"",Action::None,230,bottom-38,w-244,26,true) &&
+        Add(L"ModHangarGB",L"[预览换 GB]",Action::GB,12,bottom,150,26,true) &&
+        Add(L"ModHangarItem",L"[预览换经验胶囊]",Action::Item,174,bottom,200,26,true) &&
+        Add(L"ModHangarConfirm",L"[确认兑换]",Action::Confirm,12,bottom+36,274,28,true) &&
+        Add(L"ModHangarCancel",L"[返回机库]",Action::Cancel,310,bottom+36,180,28,true);
+    if(!ok) {
+        for(auto& control:controls_)Write<uint8_t>(control.pointer,0x162,0);
+        Detach();return false;
+    }
+    status_=L"先选择奖励并预览；预览不会兑换机体。";Render();return true;
+}
+void PageUi::Text(Control& control,const std::wstring& value,uint32_t color) {
+    if(control.text==value && !control.text.empty())return;
+    const auto native=View(value);
+    bindings_.text(control.pointer,0,&native,2,3,control.width-4,14,color,0xFF000000,0,font_,1);
+    control.text=value;
+}
+bool PageUi::Connected() {
+    if(!Ready())return false;
+    if(!IdentityMatches(service_,serviceVtable_,dialog_,dialogVtable_)) {Detach();return false;}
+    return true;
+}
+void PageUi::HideOriginal() {
+    if(!Connected() || !exchange_)return;
+    auto* head=Read<uint8_t*>(dialog_,0x23C);
+    if(!head)throw std::runtime_error("missing native child list");
+    auto* node=Read<uint8_t*>(head);size_t count=0;
+    while(node!=head) {
+        if(!node || ++count>2048)throw std::runtime_error("invalid native child list");
+        auto* child=Read<void*>(node,8);
+        if(!child)throw std::runtime_error("missing native child");
+        const bool ours=std::any_of(controls_.begin(),controls_.end(),[child](const Control& c){return c.pointer==child;});
+        if(!ours) {
+            const auto old=std::find_if(hidden_.begin(),hidden_.end(),[child](const Hidden& h){return h.pointer==child;});
+            if(old==hidden_.end())hidden_.push_back({child,Read<uint8_t>(child,0x162)});
+            Write<uint8_t>(child,0x162,0);
+        }
+        node=Read<uint8_t*>(node);
+    }
+}
+void PageUi::RestoreOriginal() {
+    if(!Connected())return;
+    for(const auto& h:hidden_)Write<uint8_t>(h.pointer,0x162,h.visible);
+    hidden_.clear();
+}
+void PageUi::BeforeNativeRefresh() {if(Ready() && exchange_)RestoreOriginal();}
+void PageUi::AfterNativeRefresh() {if(Ready()){HideOriginal();Render();}}
+void PageUi::Open() {if(Ready()){exchange_=true;armed_=false;page_=0;HideOriginal();Render();}}
+void PageUi::Close() {if(Ready()){RestoreOriginal();exchange_=false;armed_=false;confirm_=false;rows_.clear();Render();}}
+void PageUi::Arm(bool value) {armed_=value;Render();}
+void PageUi::Status(const std::wstring& value) {status_=value;Render();}
+void PageUi::Rows(std::vector<std::wstring> value) {rows_=std::move(value);page_=0;armed_=false;Render();}
+void PageUi::State(bool busy,bool confirm) {if(busy_==busy && confirm_==confirm)return;busy_=busy;confirm_=confirm;if(!confirm)armed_=false;Render();}
+void PageUi::Page(int delta) {
+    const size_t pages=std::max<size_t>(1,(rows_.size()+kRows-1)/kRows);
+    if(delta<0 && page_)--page_;else if(delta>0 && page_+1<pages)++page_;
+    Render();
+}
+Action PageUi::Click(void* pointer) const {
+    for(const auto& c:controls_)if(c.pointer==pointer && Read<uint8_t>(pointer,0x162) && Read<uint8_t>(pointer,0x167))return c.action;
+    return Action::None;
+}
+void PageUi::Render() {
+    if(!Connected())return;
+    const auto summary=Lines(armed_?L"再次确认将兑换清单中的机体，无法撤销。\n请核对奖励、保留份数与全部清单。\n"+status_:status_,static_cast<size_t>((width_-24)/14));
+    const size_t pages=std::max<size_t>(1,(rows_.size()+kRows-1)/kRows);
+    size_t line=0,row=0;
+    for(auto& c:controls_) {
+        bool visible=c.body?exchange_:!exchange_;
+        bool enabled=c.action!=Action::None && !busy_;
+        if(c.action==Action::Confirm)enabled=!busy_ && confirm_;
+        if(c.action==Action::Cancel)enabled=true;
+        if(c.action==Action::Previous)enabled=page_>0;
+        if(c.action==Action::Next)enabled=page_+1<pages;
+        if(c.body && c.action==Action::None) {
+            if(line<kSummaryLines) {Text(c,line<summary.size()?summary[line]:L"",0xFFE3EEF6);++line;}
+            else if(row<kRows) {
+                const size_t index=page_*kRows+row++;
+                std::wstring value=index<rows_.size()?std::to_wstring(index+1)+L". "+rows_[index]:L"";
+                const size_t max=static_cast<size_t>((width_-28)/14);
+                if(value.size()>max)value=value.substr(0,max-1)+L"…";
+                Text(c,value,0xFFE3EEF6);
+            }else Text(c,L"清单 "+std::to_wstring(page_+1)+L" / "+std::to_wstring(pages)+L" 页，共 "+std::to_wstring(rows_.size())+L" 台",0xFFE3EEF6);
+        }
+        if(c.action==Action::Confirm)Text(c,armed_?L"[再次确认，开始兑换]":L"[确认兑换]",0xFFFFCF7E);
+        if(c.action==Action::Cancel)Text(c,busy_?L"[停止后续请求]":L"[返回机库]",0xFF8ED9FF);
+        Write<uint8_t>(c.pointer,0x162,visible?1:0);
+        Write<uint8_t>(c.pointer,0x167,enabled?1:0);
+    }
+}
+}
