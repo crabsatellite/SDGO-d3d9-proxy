@@ -82,6 +82,7 @@ $updates=[ordered]@{
     'core.dll'='core.dll'
     'mods\room_random\room_random.dll'='mods\room_random\room_random.dll'
     'mods\room_random\mod.ini'='mods\room_random\mod.ini'
+    'mods\room_random\manager.json'='mods\room_random\manager.json'
 }
 foreach($id in @('pvp_ai','coop_ai')){
     $relative="mods\$id\$id.dll"
