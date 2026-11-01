@@ -22,14 +22,19 @@ Mod 通过 core 的 named symbol 和 `HookCode` 挂接
 5. 该条目仍为 `Price=99`；
 6. 币种只允许已正确的 `Type=2`，或已知错误的 `Type=0`。
 
-只有六项全部成立且币种为 0 时，才把该显示副本的 `Type` 一个字节改成 2。
-它不修改 `0099.gdt`、catalog overlay、服务器数据库、价格、奖池、扣款或退款逻辑。
+确认框并不读取该向量：它在 `0x00795BF0` 重新枚举 GridData type `0x3C`，
+从注册记录的 `+9` 选择币种和钱包，`+15` 读取价格。只修显示副本无法修复确认框。
+
+因此还要求列表记录的 Grid ID 为 `145093`，原生 `grid.find` 返回该 type `0x3C` 记录，
+且注册记录全部 179 字节与列表副本完全一致、两处内存可写。
+全部成立且币种为 0 时，才把显示副本和客户端内存注册记录各一个 `Type` 字节改成 2。
+它不修改磁盘 `0099.gdt`、catalog overlay、服务器数据库、价格、奖池、玩家钱包数值、扣款或退款逻辑。
 错误价格、未知枚举、重复 9301、损坏的 vector 或其他布局都会 fail closed，保留原数据。
 
 ## 文件
 
 - `capsule_currency_fix.cpp`：原生 HookCode 入口和内存保护检查。
-- `capsule_currency_logic.*`：可单元测试的严格向量检查与单字节修复。
+- `capsule_currency_logic.*`：可单元测试的严格向量检查；旧显示副本 helper 仅供回归，原生入口另外核对注册记录。
 - `capsule_currency_fix_test.cpp`：覆盖补丁、幂等、错误价格、未知枚举、重复条目、
   缺失条目和错误页形状。
 - `verify_source_fixture.py`：只读解密并核对当前底包 `0099.gdt` 的 SHA-256、
@@ -53,3 +58,10 @@ python mods\capsule_currency_fix\verify_source_fixture.py `
 单元 fixture 可由父级 CMake 目标把 `capsule_currency_logic.cpp` 与
 `capsule_currency_fix_test.cpp` 一起编译。测试成功只证明记录检查和修改范围；
 它不证明游戏内 Hook 已加载，也不证明真实账号扣款。游戏内进入活动扭蛋页和实际抽取由用户手动验收。
+
+2026-11-01 的实际截图回报确认了部署缺口：主客户端没有该 Mod；共享扭蛋目录并不代表基础修复已安装。
+新增实际 DLL 回放使用本机已部署表的 94 条解码记录和模拟原生注册API/列表对象，覆盖96个填充槽、
+100000 GP 收藏机、注册记录同步、幂等、查找返回不同记录拒绝，另外检查 Manager 导入和归档。
+它实际执行 DLL detour，但不执行游戏原生确认控件，确认框读取路径来自静态证据，画面仍由用户验收。
+完整安装及真人验证步骤见[修复说明](../../docs/capsule-currency-fix.zh-CN.md)。仅游戏内实际加载并输出纠正结果后，
+才能进入画面验收；原 fixture 的通过不再当作用户环境已修复的结论。

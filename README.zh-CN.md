@@ -16,7 +16,7 @@ Beta、Experimental 表示发布阶段。
 | 功能 | 简介 | 文档 |
 |---|---|---|
 | 输入法提交修复 <!-- catalog: `ime_fix` --> | 输入兼容性 | [使用说明](docs/ime-fix.zh-CN.md) |
-| 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 币种显示兼容性 | [使用说明](docs/capsule-currency-fix.md) |
+| 活动扭蛋币种显示 <!-- catalog: `capsule_currency_fix` --> | 纠正已确认的 9301 列表和购买预览币种；需确认补丁已安装并重启加载 | [使用说明](docs/capsule-currency-fix.zh-CN.md) |
 | 输入法卡死修复 <!-- catalog: `findwindow_fix` --> | 输入法兼容性 | [使用说明](docs/findwindow-fix.zh-CN.md) |
 | 启动崩溃修复 <!-- catalog: `startup_crash_fix` --> | 客户端启动兼容性 | [使用说明](docs/startup-crash-fix.zh-CN.md) |
 | Agent 中继日志修复 <!-- catalog: `agent_relay_log_fix` --> | 中继日志兼容性 | [使用说明](docs/agent-relay-log-fix.zh-CN.md) |

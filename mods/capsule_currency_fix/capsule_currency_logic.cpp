@@ -15,9 +15,13 @@ namespace capsule_currency_fix
         }
     }
 
-    FixResult FixActivityMachineVector(std::uint8_t* begin, std::uint8_t* end,
-                                       std::uint8_t* capacity, std::uint32_t pageCount)
+    FixResult InspectActivityMachineVector(std::uint8_t* begin, std::uint8_t* end,
+                                          std::uint8_t* capacity, std::uint32_t pageCount,
+                                          std::uint8_t** output)
     {
+        if (!output)
+            return FixResult::InvalidArguments;
+        *output = nullptr;
         if (!begin || !end || !capacity)
             return FixResult::InvalidArguments;
 
@@ -56,12 +60,27 @@ namespace capsule_currency_fix
         if (ReadU32(target + kPriceOffset) != kTargetPrice)
             return FixResult::UnexpectedPrice;
 
-        const std::uint8_t currencyType = target[kCurrencyTypeOffset];
-        if (currencyType == kTokenCurrencyType)
+        // The native table stores a little-endian uint32, although the UI
+        // branches read its low byte. Reject malformed nonzero upper bytes.
+        const std::uint32_t currencyType = ReadU32(target + kCurrencyTypeOffset);
+        if (currencyType == kTokenCurrencyType) {
+            *output = target;
             return FixResult::AlreadyCorrect;
+        }
         if (currencyType != kGpCurrencyType)
             return FixResult::UnexpectedCurrency;
 
+        *output = target;
+        return FixResult::NeedsCorrection;
+    }
+
+    FixResult FixActivityMachineVector(std::uint8_t* begin, std::uint8_t* end,
+                                       std::uint8_t* capacity, std::uint32_t pageCount)
+    {
+        std::uint8_t* target = nullptr;
+        const auto result = InspectActivityMachineVector(begin, end, capacity, pageCount, &target);
+        if (result != FixResult::NeedsCorrection)
+            return result;
         target[kCurrencyTypeOffset] = kTokenCurrencyType;
         return FixResult::Patched;
     }
@@ -71,6 +90,8 @@ namespace capsule_currency_fix
         switch (result) {
         case FixResult::Patched:
             return "patched";
+        case FixResult::NeedsCorrection:
+            return "needs-correction";
         case FixResult::AlreadyCorrect:
             return "already-correct";
         case FixResult::TargetMissing:
@@ -85,6 +106,8 @@ namespace capsule_currency_fix
             return "unexpected-price";
         case FixResult::UnexpectedCurrency:
             return "unexpected-currency";
+        case FixResult::RegistryMismatch:
+            return "registry-mismatch";
         }
         return "unknown";
     }

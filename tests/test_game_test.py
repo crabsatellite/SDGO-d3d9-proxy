@@ -302,6 +302,8 @@ rva=state
             "status": status,
             "timed_out": False,
             "error": None,
+            "network_verified": {"verified":True,"pid":pid,"remote_ipv4":metadata['plan']['target_host'],
+                                 "remote_port":metadata['plan']['login_port']},
         }
         game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
 
@@ -314,7 +316,8 @@ rva=state
         self.assertEqual((client / "BGM" / "theme.ogg").read_bytes(), b"music")
         self.assertFalse((client / "old.log").exists())
         self.assertEqual((client / "d3d9.dll").read_bytes(), b"normal-loader")
-        self.assertEqual((client / "sdgo" / "core.dll").read_bytes(), b"normal-core")
+        self.assertEqual((client / "sdgo" / "core.dll").read_bytes(), b"stage-core")
+        self.assertEqual((self.template / "sdgo" / "core.dll").read_bytes(), b"normal-core")
         self.assertEqual(
             (client / "sdgo" / "mods" / "match_ai" / "match_ai.dll").read_bytes(),
             b"normal-match-ai",
@@ -395,6 +398,107 @@ rva=state
             self.assertNotIn(username, run_ini)
             self.assertNotIn(password, run_ini)
             self.assertIn("account_path=private/account.ini", run_ini)
+
+    def test_bootstrap_only_plan_does_not_claim_battle_cases(self):
+        run_dir = self.prepare('bootstrap-only', bootstrap_only=True)
+        meta = self.metadata(run_dir)
+        self.assertEqual(meta['suite'], 'account-bootstrap')
+        self.assertTrue(meta['plan']['bootstrap_only'])
+        job = game_test.read_ini(Path(meta['client']['root'])/'sdgo/gametest/run.ini')
+        self.assertEqual(job['run']['required_cases'], ','.join(game_test.FLOW_CASES[:3]))
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'], meta['plan'])
+
+    def test_deck_setup_keeps_private_units_and_cannot_downgrade_its_scope(self):
+        with self.account_profile.open('a',encoding='utf-8') as stream:
+            stream.write('\n[deck]\nunit_uid0=101\nunit_uid1=102\nunit_uid2=103\nunit_uid3=104\n')
+        run_dir=self.prepare('deck-only',deck_only=True)
+        meta=self.metadata(run_dir)
+        self.assertEqual(meta['suite'],'battleship-deck')
+        job=game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')
+        self.assertEqual(job['run']['required_cases'],','.join(game_test.FLOW_CASES[:3]+('flow.battleship','setup.deck')))
+        self.assertNotIn('unit_uid',json.dumps(meta))
+        self.assertNotIn('unit_uid',str(dict(job['run'])))
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'],meta['plan'])
+        meta['plan'].pop('deck_only')
+        (run_dir/'run.json').write_text(json.dumps(meta),encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):game_test.validate_metadata(run_dir)
+
+    def test_deck_setup_requires_distinct_real_uid_configuration(self):
+        for values in (['1','2','3','3'],['1','2','3','0'],['1','2','3',str(2**64)],['1','2','3','-4'],['1','2','3','4x']):
+            profile=game_test.ini_parser();profile['deck']={f'unit_uid{i}':v for i,v in enumerate(values)}
+            with self.subTest(values=values),self.assertRaises(game_test.GameTestError):game_test.validate_deck_profile(profile)
+        with self.assertRaises(game_test.GameTestError):game_test.required_flow_cases('1',bootstrap_only=True,deck_only=True)
+
+    def test_direct_network_disables_only_the_copied_route_override(self):
+        route=self.template/'sdgo/mods/net_route'
+        route.mkdir()
+        source=b'[mod]\nid=net_route\nenabled=1\n'
+        (route/'mod.ini').write_bytes(source)
+        (route/'config.ini').write_text('[settings]\nLoginIPv4=127.0.0.1\nLoginPort=5001\n')
+        run_dir=self.prepare('direct-network')
+        copied=run_dir/'client/sdgo/mods/net_route/mod.ini'
+        self.assertEqual(game_test.read_ini(copied)['mod']['enabled'],'0')
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/sdgo.ini')['mods']['net_route'],'0')
+        self.assertEqual((route/'mod.ini').read_bytes(),source)
+        self.assertEqual(self.metadata(run_dir)['plan']['network_policy'],'direct')
+
+    def test_preserve_network_routes_requires_an_explicit_plan(self):
+        route=self.template/'sdgo/mods/net_route';route.mkdir()
+        (route/'mod.ini').write_text('[mod]\nid=net_route\nenabled=1\n')
+        run_dir=self.prepare('preserve-routes',network_policy='preserve')
+        self.assertEqual(game_test.read_ini(run_dir/'client/sdgo/mods/net_route/mod.ini')['mod']['enabled'],'1')
+        self.assertEqual(self.metadata(run_dir)['plan']['network_policy'],'preserve')
+
+    def test_wrong_tcp_endpoint_never_opens_the_native_login_gate(self):
+        run_dir=self.prepare('wrong-physical-peer')
+        metadata=self.metadata(run_dir)
+        with mock.patch.object(game_test,'owned_tcp_peers',return_value=[
+                {'remote_ipv4':'127.0.0.2','remote_port':5001},
+                {'remote_ipv4':'127.0.0.1','remote_port':65011}]):
+            self.assertIsNone(game_test.verify_direct_peer(metadata,1234))
+        self.assertFalse((run_dir/'client/sdgo/gametest/network-verified.ini').exists())
+
+    def test_native_pass_without_actual_tcp_peer_evidence_fails(self):
+        run_dir=self.prepare('missing-physical-peer')
+        self.set_execution(run_dir)
+        metadata=self.metadata(run_dir);metadata['execution'].pop('network_verified')
+        game_test.atomic_write(run_dir/'run.json',json.dumps(metadata))
+        self.write_events(run_dir,game_test.FLOW_CASES,include_end=True)
+        report=game_test.build_report(run_dir)
+        self.assertEqual(report['status'],'fail')
+        self.assertIn('actual native login TCP peer',' '.join(report['layers']['launch']['errors']))
+
+    @unittest.skipUnless(game_test.os.name=='nt','Windows process-owned TCP table')
+    def test_actual_windows_tcp_table_finds_only_the_owned_loopback_connection(self):
+        with game_test.socket.socket() as server, game_test.socket.socket() as client:
+            server.bind(('127.0.0.1',0));server.listen()
+            client.connect(server.getsockname())
+            peer,_=server.accept()
+            with peer:
+                connections=game_test.owned_tcp_peers(game_test.os.getpid())
+                self.assertTrue(any(p['remote_ipv4']=='127.0.0.1' and p['remote_port']==server.getsockname()[1]
+                                    for p in connections))
+
+    def test_public_metadata_cannot_downgrade_battle_run_to_bootstrap(self):
+        run_dir = self.prepare('cannot-downgrade-battle')
+        meta = self.metadata(run_dir)
+        meta['plan']['bootstrap_only'] = True
+        game_test.atomic_write(run_dir/'run.json', json.dumps(meta))
+        with self.assertRaisesRegex(game_test.GameTestError, 'cannot change.*scope'):
+            game_test.validate_metadata(run_dir)
+
+    def test_existing_digest_profile_is_private_and_cannot_register(self):
+        digest = '0123456789abcdef0123456789abcdef'
+        imported = self.root/'existing-account.ini'
+        imported.write_text('[account]\nusername=gm_fixture\npassword='+digest+
+                            '\npassword_format=md5\n[registration]\nstate=existing_account\n')
+        run_dir = self.prepare('existing-credential', account_profile=imported, bootstrap_only=True)
+        self.assertEqual(self.private_account(run_dir)['account']['password'], digest)
+        public = (run_dir/'run.json').read_text() + (run_dir/'client/sdgo/gametest/run.ini').read_text()
+        self.assertNotIn(digest, public)
+        self.assertNotIn('gm_fixture', public)
+        with self.assertRaisesRegex(game_test.GameTestError, 'cannot use registration retries'):
+            self.prepare('existing-cannot-register', account_profile=imported, retry_count=2)
 
     def test_same_persistent_account_blocks_concurrent_runs_across_run_directories(self):
         first = self.prepare("account-lock-first")
@@ -584,8 +688,9 @@ state=pending_first_login
         self.assertEqual(game_test.required_flow_cases("3"), game_test.FLOW_CASES)
         multi = game_test.required_flow_cases("1,3,6")
         self.assertEqual(multi[:3], game_test.FLOW_CASES[:3])
+        self.assertEqual(multi[3],'flow.battleship')
         self.assertEqual(
-            multi[3:],
+            multi[4:],
             tuple(
                 f"pvp.mode{mode}.{step}"
                 for mode in (1, 3, 6)
@@ -710,7 +815,8 @@ state=pending_first_login
 
         with mock.patch.object(game_test.subprocess, "Popen", side_effect=launch), mock.patch.object(
             game_test, "NamedStartupEvent", FakeStartupEvent
-        ), mock.patch.object(game_test, "has_run_end", side_effect=finish_immediately):
+        ), mock.patch.object(game_test, "has_run_end", side_effect=finish_immediately), mock.patch.object(
+            game_test,'owned_tcp_peers',return_value=[{'remote_ipv4':'127.0.0.1','remote_port':5001}]):
             report = game_test.run_prepared(run_dir, timeout=1, launch_timeout=0)
 
         self.assertEqual(
@@ -1063,6 +1169,43 @@ class RecordingLifecycleTests(unittest.TestCase):
             self.assertEqual(result['test_status'], 'pass')
             self.assertEqual(result['recording_status'], 'failed')
             self.assertEqual(result['clips'], [])
+
+
+class ExistingCredentialProfileTests(unittest.TestCase):
+    def profile(self, *, state='existing_account', username='gm_fixture', password='0123456789abcdef0123456789abcdef', password_format='md5'):
+        p = configparser.ConfigParser(interpolation=None)
+        p['account'] = {'username':username,'password':password,'password_format':password_format}
+        p['registration'] = {'state':state}
+        return p
+
+    def test_explicit_existing_import_accepts_native_md5_credential_without_registration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'existing.ini'
+            game_test.write_ini(path,self.profile())
+            profile=game_test.load_account_profile(path)
+            self.assertEqual(profile['account']['password_format'],'md5')
+            self.assertEqual(profile['registration']['state'],'existing_account')
+
+    def test_imported_hash_rejects_invalid_shape_and_unknown_format(self):
+        for password,fmt in [('short','md5'),('z'*32,'md5'),('a'*32,'unknown')]:
+            with self.subTest(password=password,fmt=fmt):
+                p=self.profile(password=password,password_format=fmt)
+                with self.assertRaises(game_test.GameTestError):
+                    game_test.validate_account_credentials(p,p['account']['username'],password)
+
+    def test_hash_import_cannot_masquerade_as_first_registration(self):
+        for state in ('pending_first_login','registered','auth_accepted'):
+            with self.subTest(state=state):
+                p=self.profile(state=state)
+                with self.assertRaises(game_test.GameTestError):
+                    game_test.validate_account_credentials(p,p['account']['username'],p['account']['password'])
+
+    def test_existing_plain_password_uses_native_account_limits(self):
+        p=self.profile(username='existing',password='short1',password_format='plain')
+        game_test.validate_account_credentials(p,'existing','short1')
+        for username,password in [('x'*15,'short1'),('existing','bad\nvalue'),('existing','')]:
+            with self.assertRaises(game_test.GameTestError):
+                game_test.validate_account_credentials(p,username,password)
 
 
 if __name__ == "__main__":
