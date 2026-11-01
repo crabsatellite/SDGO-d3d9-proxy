@@ -77,15 +77,17 @@ namespace
         return BindLoopbackAt(type, 0, port);
     }
 
-    // A UDP ephemeral port can already be occupied in TCP by an unrelated
-    // application. Reserve both protocols together instead of assuming it is free.
+    // TCP and UDP have different excluded port ranges on Windows runners. Probe
+    // widely separated candidates instead of consecutive ephemeral allocations,
+    // which can all land inside the other protocol's reserved range.
     void ReserveProtocolPair(SOCKET* udp, SOCKET* tcp, unsigned short* port, SOCKET* udpAlias = nullptr)
     {
         *udp = *tcp = INVALID_SOCKET;
         if (udpAlias) *udpAlias = INVALID_SOCKET;
-        for (unsigned attempt = 0; attempt < 32; ++attempt) {
+        for (unsigned attempt = 0; attempt < 64; ++attempt) {
             unsigned short selected = 0, udpPort = 0;
-            SOCKET tcpGuard = BindLoopback(SOCK_STREAM, &selected);
+            const auto candidate=static_cast<unsigned short>(12000+(GetCurrentProcessId()+attempt*7919u)%48000);
+            SOCKET tcpGuard = BindLoopbackAt(SOCK_STREAM, candidate, &selected);
             if (tcpGuard == INVALID_SOCKET) continue;
             SOCKET udpGuard = BindLoopbackAt(SOCK_DGRAM, selected, &udpPort);
             SOCKET alias = udpAlias && udpGuard != INVALID_SOCKET
