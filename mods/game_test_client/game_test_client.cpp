@@ -1,5 +1,9 @@
 #include "../game_test_shared/runner.h"
 #include "native_actions.h"
+#include "channel_actions.h"
+#include "battleship_actions.h"
+#include "battleship_deck_actions.h"
+#include "gift_actions.h"
 #include "room_actions.h"
 #include "tutorial_actions.h"
 #include "onboarding_actions.h"
@@ -17,19 +21,34 @@ AppMethod originalUpdate;
 FindWindowFn originalFindWindow;
 DWORD mainThread;
 NativeActions actions;
+ChannelActions channels;
+BattleShipActions battleships;
+BattleShipDeckActions decks;
+GiftActions gifts;
 RoomActions rooms;
 TutorialActions tutorial;
 OnboardingActions onboarding;
 SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
+SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
 unsigned loginAttempts = 0, retryCount = 1;
 uint32_t loginReplySeen = 0;
 bool expectFirstFailure = false;
+bool passwordIsMd5 = false;
+bool importedExistingAccount = false;
+bool bootstrapOnly = false;
+bool verifyDirectNetwork = false;
+bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false;
+uint64_t deckUnitUids[4]{};
+char giftRecipient[17]{};
+uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
+uint32_t giftPages[4]{}, giftPositions[4]{};
 uint64_t rejectedAt = 0;
 bool nicknameRequested = false, nicknameAccepted = false;
 uint32_t nicknameReplySeen = 0;
 bool roomRequested = false, startRequested = false, leaveRequested = false;
 uint32_t startSequence = 0;
+uint32_t activeBattleStartSequence = 0;
 uint32_t endSequence = 0, leaveSequence = 0;
 uint32_t authenticatedPilot = 0;
 uint32_t roomCreationSequence = 0;
@@ -48,6 +67,14 @@ std::vector<MotionSample> motionSamples;
 
 bool LoadPlan() {
     const std::wstring job = sdgo_test::directory + L"\\run.ini";
+    wchar_t networkPolicy[24]{};
+    GetPrivateProfileStringW(L"run",L"network_policy",L"legacy",networkPolicy,24,job.c_str());
+    verifyDirectNetwork = !wcscmp(networkPolicy,L"direct");
+    bootstrapOnly = GetPrivateProfileIntW(L"run", L"bootstrap_only", 0, job.c_str()) != 0;
+    battleshipOnly = GetPrivateProfileIntW(L"run", L"battleship_only", 0, job.c_str()) != 0;
+    giftRequestsOnly = GetPrivateProfileIntW(L"run", L"gift_requests_only", 0, job.c_str()) != 0;
+    deckOnly = GetPrivateProfileIntW(L"run", L"deck_only", 0, job.c_str()) != 0;
+    if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly > 1) return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -55,10 +82,51 @@ bool LoadPlan() {
         accountPath = sdgo_test::directory + L"\\" + accountPath;
     GetPrivateProfileStringW(L"account", L"username", L"", user, 32, accountPath.c_str());
     GetPrivateProfileStringW(L"account", L"password", L"", password, 128, accountPath.c_str());
+    wchar_t passwordFormat[16] = {};
+    GetPrivateProfileStringW(L"account", L"password_format", L"plain", passwordFormat, 16, accountPath.c_str());
+    wchar_t registrationState[32] = {};
+    GetPrivateProfileStringW(L"registration", L"state", L"", registrationState, 32, accountPath.c_str());
+    importedExistingAccount = !wcscmp(registrationState, L"existing_account");
+    passwordIsMd5 = !wcscmp(passwordFormat, L"md5");
+    if (!passwordIsMd5 && wcscmp(passwordFormat, L"plain")) return false;
+    if (passwordIsMd5) {
+        if (!importedExistingAccount) return false;
+    }
     if (!user[0] || !password[0] || wcslen(user) > 14 || wcslen(password) > 64) return false;
     if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, user, -1, accountName, sizeof(accountName), nullptr, nullptr) ||
         !WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, password, -1, accountPassword, sizeof(accountPassword), nullptr, nullptr)) return false;
     SecureZeroMemory(password, sizeof(password));
+    if (deckOnly) {
+        for (unsigned i=0; i<4; ++i) {
+            wchar_t key[32]{}, value[32]{};
+            swprintf_s(key,L"unit_uid%u",i);
+            GetPrivateProfileStringW(L"deck",key,L"",value,32,accountPath.c_str());
+            if (!value[0] || wcsspn(value,L"0123456789") != wcslen(value)) return false;
+            wchar_t* end=nullptr;
+            deckUnitUids[i]=_wcstoui64(value,&end,10);
+            if (!deckUnitUids[i] || !end || *end) return false;
+            for (unsigned j=0; j<i; ++j) if (deckUnitUids[j]==deckUnitUids[i]) return false;
+        }
+    }
+    if (giftRequestsOnly) {
+        if (!importedExistingAccount) return false;
+        wchar_t recipient[32]{};
+        GetPrivateProfileStringW(L"gift", L"recipient_nickname", L"", recipient, 32, accountPath.c_str());
+        if (!recipient[0] || !WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, recipient, -1,
+                giftRecipient, sizeof(giftRecipient), nullptr, nullptr)) return false;
+        giftSenderPilot = GetPrivateProfileIntW(L"gift", L"sender_pilot_id", 0, accountPath.c_str());
+        giftRecipientPilot = GetPrivateProfileIntW(L"gift", L"recipient_pilot_id", 0, accountPath.c_str());
+        giftCount = GetPrivateProfileIntW(L"gift", L"count", 0, accountPath.c_str());
+        if (!giftSenderPilot || !giftRecipientPilot || giftCount < 1 || giftCount > 4) return false;
+        for (uint32_t i = 0; i < giftCount; ++i) {
+            wchar_t key[32]{};
+            swprintf_s(key, L"page%u", i);
+            giftPages[i] = GetPrivateProfileIntW(L"gift", key, 0, accountPath.c_str());
+            swprintf_s(key, L"position%u", i);
+            giftPositions[i] = GetPrivateProfileIntW(L"gift", key, 0, accountPath.c_str());
+            if (!giftPages[i] || giftPositions[i] < 1 || giftPositions[i] > 6) return false;
+        }
+    }
     GetPrivateProfileStringW(L"run", L"title_nonce", L"gt", nonce, 16, job.c_str());
     char narrowNonce[16] = {};
     if (!WideCharToMultiByte(CP_UTF8, 0, nonce, -1, narrowNonce, sizeof(narrowNonce), nullptr, nullptr)) return false;
@@ -69,6 +137,7 @@ bool LoadPlan() {
     retryCount = static_cast<unsigned>(GetPrivateProfileIntW(L"run", L"retry_count", 1, job.c_str()));
     if (retryCount < 1 || retryCount > 2) return false;
     expectFirstFailure = GetPrivateProfileIntW(L"run", L"expect_first_fail", 0, job.c_str()) != 0;
+    if (importedExistingAccount && (retryCount != 1 || expectFirstFailure)) return false;
     if (expectFirstFailure && retryCount != 2) return false;
     wchar_t modes[128] = {};
     GetPrivateProfileStringW(L"run", L"mode_sequence", L"1", modes, 128, job.c_str());
@@ -88,6 +157,22 @@ bool LoadPlan() {
 int __cdecl Bootstrap(const SdgoGameTestContextV1* context) {
     const uint32_t state = actions.AppState();
     if (state == UINT32_MAX || state < 4) return SDGO_GAME_TEST_WAIT;
+    if (verifyDirectNetwork) {
+        const auto file=sdgo_test::directory+L"\\network-verified.ini";
+        wchar_t id[64]{};
+        GetPrivateProfileStringW(L"run",L"id",L"",id,64,file.c_str());
+        const std::wstring expected(sdgo_test::runId.begin(),sdgo_test::runId.end());
+        wchar_t expectedEndpoint[160]{}, actualIP[32]{};
+        const auto planFile=sdgo_test::directory+L"\\run.ini";
+        GetPrivateProfileStringW(L"run",L"endpoint",L"",expectedEndpoint,160,planFile.c_str());
+        GetPrivateProfileStringW(L"network",L"ipv4",L"",actualIP,32,file.c_str());
+        const auto actualPort=GetPrivateProfileIntW(L"network",L"port",0,file.c_str());
+        const std::wstring actualEndpoint=std::wstring(actualIP)+L":"+std::to_wstring(actualPort);
+        if (expected!=id || GetPrivateProfileIntW(L"network",L"pid",0,file.c_str())!=GetCurrentProcessId() ||
+            GetPrivateProfileIntW(L"network",L"verified",0,file.c_str())!=1 || actualEndpoint!=expectedEndpoint)
+            return SDGO_GAME_TEST_WAIT;
+        context->Assert(1,"the owned process established its actual TCP login peer at the explicit test endpoint before authentication");
+    }
     context->Assert(GetCurrentThreadId() == mainThread, "test polling runs on the observed original app-update thread");
     context->Observe("the original client update reached the login stage without supplied game data or an application-state write");
     return SDGO_GAME_TEST_PASS;
@@ -135,6 +220,59 @@ int __cdecl Room(const SdgoGameTestContextV1* context) {
     if (!roomRequested) {
         const auto state = actions.OnboardingState();
         if (!state.profile_pilot_id || actions.AppState() == 4 || actions.AppState() == 25) return SDGO_GAME_TEST_WAIT;
+        if (RequestedMode() == 6 || RequestedMode() == 7) {
+            const ChannelActions::Result result = channels.EnsureVsGroup(2);
+            const auto channel = channels.State();
+            static uint32_t lastResult = UINT32_MAX;
+            static uint32_t lastReplySequence = UINT32_MAX;
+            static uint32_t lastTransportSequence = UINT32_MAX;
+            if (channel.result != lastResult ||
+                channel.reply_sequence != lastReplySequence ||
+                channel.request_transport_sequence != lastTransportSequence) {
+                char message[256];
+                sprintf_s(
+                    message,
+                    "native VS channel precondition result=%s selected=%u/%u target=%u/%u page=%u/%u request=%u reply=%04X/%04X/%u consumed=%u",
+                    ChannelActions::ResultName(result),
+                    channel.selected_group,
+                    channel.selected_channel,
+                    channel.target_group,
+                    channel.target_channel,
+                    channel.current_page,
+                    channel.target_page,
+                    channel.request_transport_sequence,
+                    channel.reply_opcode,
+                    channel.reply_error,
+                    channel.reply_channel,
+                    channel.reply_consumed);
+                context->Observe(message);
+                lastResult = channel.result;
+                lastReplySequence = channel.reply_sequence;
+                lastTransportSequence =
+                    channel.request_transport_sequence;
+            }
+            if (result == ChannelActions::kWaitingForLobby ||
+                result == ChannelActions::kSelectorOpened ||
+                result == ChannelActions::kPaging ||
+                result == ChannelActions::kNativeRequestPending ||
+                result == ChannelActions::kRequestSent)
+                return SDGO_GAME_TEST_WAIT;
+            if (result != ChannelActions::kAlreadySelected &&
+                result != ChannelActions::kAccepted) {
+                char failure[128];
+                sprintf_s(
+                    failure,
+                    "native VS channel precondition failed: %s",
+                    ChannelActions::ResultName(result));
+                context->Assert(0, failure);
+                return SDGO_GAME_TEST_FAIL;
+            }
+            context->Assert(
+                channel.selected_group == 2 &&
+                    channel.selected_channel != 0 &&
+                    channel.selected_channel == channel.target_channel,
+                "the original selector reply placed the real profile in its server-owned VS group-2 channel");
+        }
         if (!rooms.SetRoomMode(RequestedMode())) { context->Assert(0, "invalid PvP mode in test plan"); return SDGO_GAME_TEST_FAIL; }
         SdgoPvpAiClientSnapshotV1 before{};
         if (!Snapshot(before)) return SDGO_GAME_TEST_WAIT;
@@ -202,6 +340,7 @@ int __cdecl Start(const SdgoGameTestContextV1* context) {
         startRequested = true; context->Observe("called the original room-host Start business routine");
     }
     if (!Snapshot(snapshot) || snapshot.native_app_state != 22 || snapshot.received_battle_start_count <= startSequence) return SDGO_GAME_TEST_WAIT;
+    activeBattleStartSequence = snapshot.received_battle_start_count;
     context->Assert(snapshot.room_mode == RequestedMode(), "the native game mode matches the requested real room mode");
     context->Assert(snapshot.received_battle_start_count > startSequence, "a genuine server battle-start packet preceded native GAME_MAIN");
     return SDGO_GAME_TEST_PASS;
@@ -288,6 +427,18 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl Return(const SdgoGameTestContextV1* context) {
+    SdgoPvpAiClientLuaStatusV1 lua{sizeof(lua), SDGO_PVP_AI_CLIENT_OBSERVER_VERSION, 0, 0, 0};
+    if (!getLuaStatus || !getLuaStatus(&lua) || !lua.observer_available ||
+        !activeBattleStartSequence || lua.battle_start_sequence != activeBattleStartSequence) {
+        context->Assert(0, "whole-battle Lua observation is unavailable or belongs to another battle");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (lua.error_count != 0) {
+        char message[112];
+        sprintf_s(message, "the real battle raised %u Lua error(s), including after initial AI spawn", lua.error_count);
+        context->Assert(0, message);
+        return SDGO_GAME_TEST_FAIL;
+    }
     const auto ended = rooms.BattleEndState();
     if (!endObserved && ended.sequence > endSequence && ended.original_handler_completed) {
         endObserved = true;
@@ -295,6 +446,7 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         sprintf_s(message, "real battle end opcode=%04X result=%u app=%u sequence=%u", ended.reply_opcode, ended.result_type, ended.native_app_state, ended.sequence);
         context->Observe(message);
         context->Assert(ended.reply_opcode == 0x0871, "the original client consumed the genuine server battle-end reply");
+        context->Assert(1, "Lua observation stayed available with zero errors through the entire real battle");
     }
     if (!endObserved) return SDGO_GAME_TEST_WAIT;
     const auto state = actions.AppState();
@@ -313,6 +465,8 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_WAIT;
     context->Assert(1, "the original client consumed the real leave-room reply and returned to its lobby");
     ++modeIndex;
+    channels.Reset();
+    activeBattleStartSequence = 0;
     roomRequested = startRequested = leaveRequested = endObserved = false;
     return SDGO_GAME_TEST_PASS;
 }
@@ -357,6 +511,10 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         }
     }
     if (!nicknameRequested && actions.LoginState().native_login_state == 4) {
+        if (importedExistingAccount) {
+            context->Assert(0, "an imported existing account unexpectedly requires a nickname; its identity was preserved");
+            return SDGO_GAME_TEST_FAIL;
+        }
         nicknameRequested = true;
         if (!actions.CreateNickname()) {
             context->Assert(0, "original nickname request could not be sent");
@@ -451,6 +609,119 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     // provided real profile and inventory data. Nickname success alone is insufficient.
     return SDGO_GAME_TEST_WAIT;
 }
+int __cdecl AcquireBattleship(const SdgoGameTestContextV1* context) {
+    auto state = battleships.State();
+    BattleShipActions::Result result;
+    if (state.reply_sequence) {
+        if (state.reply_error || !state.reply_consumed) {
+            context->Assert(0, "the real initial-battleship reply was rejected or not consumed");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        result = battleships.ConfirmAcquisitionPopup();
+    } else {
+        result = battleships.OpenTutorial();
+        if (result == BattleShipActions::kTutorialOpened)
+            result = battleships.DriveTutorial();
+    }
+    state = battleships.State();
+    static uint32_t lastResult = UINT32_MAX, lastReply = UINT32_MAX;
+    static uint8_t lastPage = UINT8_MAX;
+    if (state.result != lastResult || state.reply_sequence != lastReply || state.page != lastPage) {
+        char text[224];
+        sprintf_s(text, "native battleship acquisition result=%s tutorial=%u page=%u/%u request=%u reply=%04X/%04X consumed=%u ship=%u uid=%u:%u popup=%u",
+            BattleShipActions::ResultName(result), state.tutorial_level, state.page, state.page_count,
+            state.request_transport_sequence,state.reply_opcode,state.reply_error,state.reply_consumed,
+            state.ship_id,state.ship_uid_high,state.ship_uid_low,state.result_popup_ready);
+        context->Observe(text); lastResult=state.result;lastReply=state.reply_sequence;lastPage=state.page;
+    }
+    if (result == BattleShipActions::kAlreadyCompleted || result == BattleShipActions::kConfirmed) {
+        context->Assert(state.profile_pilot_id == authenticatedPilot && authenticatedPilot,
+                        "the native battleship belongs to this authenticated test account");
+        context->Assert(state.tutorial_level >= 4 && (state.ship_uid_low || state.ship_uid_high),
+                        "the original game profile contains a real acquired and selected battleship");
+        if (result == BattleShipActions::kConfirmed)
+            context->Assert(state.reply_opcode == 0x08EF && state.reply_consumed && state.confirm_sequence,
+                            "the real acquisition reply and original result confirmation completed");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (result == BattleShipActions::kWaitingForLobby || result == BattleShipActions::kWaitingForTutorial ||
+        result == BattleShipActions::kTutorialOpened || result == BattleShipActions::kPaging ||
+        result == BattleShipActions::kRequestSent || result == BattleShipActions::kNativeRequestPending ||
+        result == BattleShipActions::kResultPopupUnavailable || result == BattleShipActions::kAccepted)
+        return SDGO_GAME_TEST_WAIT;
+    char failure[128];sprintf_s(failure,"native battleship acquisition failed: %s",BattleShipActions::ResultName(result));
+    context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+}
+
+int __cdecl SendGiftRequests(const SdgoGameTestContextV1* context) {
+    if (authenticatedPilot != giftSenderPilot) {
+        context->Assert(0,"the native authenticated sender differs from the existing gift-helper account");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    const auto receipt = sdgo_test::directory + L"\\gift-processor.ini";
+    wchar_t runId[64]{};
+    GetPrivateProfileStringW(L"run",L"id",L"",runId,64,receipt.c_str());
+    const std::wstring expected(sdgo_test::runId.begin(),sdgo_test::runId.end());
+    if (expected != runId) return SDGO_GAME_TEST_WAIT;
+    const auto sender=GetPrivateProfileIntW(L"gift",L"sender",0,receipt.c_str());
+    const auto recipient=GetPrivateProfileIntW(L"gift",L"recipient",0,receipt.c_str());
+    const auto processed=GetPrivateProfileIntW(L"gift",L"processed_count",0,receipt.c_str());
+    const auto succeeded=GetPrivateProfileIntW(L"gift",L"success_count",0,receipt.c_str());
+    if (sender!=giftSenderPilot || recipient!=giftRecipientPilot || processed>giftSent || succeeded!=processed) {
+        context->Assert(0,"the normal mail processor rejected a request or reported another identity");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (processed != giftSent) return SDGO_GAME_TEST_WAIT;
+    if (giftSent == giftCount) {
+        context->Assert(1,"every native mail request was processed by the normal isolated gift service");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (giftSent) {
+        wchar_t tickText[32]{};
+        GetPrivateProfileStringW(L"gift",L"last_processed_tick",L"0",tickText,32,receipt.c_str());
+        const auto processedTick=_wcstoui64(tickText,nullptr,10);
+        if (!processedTick || GetTickCount64() < processedTick || GetTickCount64()-processedTick < 61000)
+            return SDGO_GAME_TEST_WAIT;
+    }
+    const auto result=gifts.SendUnitGift(giftRecipient,giftPages[giftSent],giftPositions[giftSent]);
+    if (result==GiftActions::kWaitingForLobby) return SDGO_GAME_TEST_WAIT;
+    if (result!=GiftActions::kRequestSent) {
+        context->Assert(0,"the original native mail request could not be constructed and transported");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    ++giftSent;
+    context->Assert(1,"the original mail constructor and transport sent one real gift command");
+    char text[96];sprintf_s(text,"native gift mail sent %u/%u; awaiting independent normal server processing",giftSent,giftCount);
+    context->Observe(text);return SDGO_GAME_TEST_WAIT;
+}
+
+int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
+    const auto result=decks.EnsureDeck(deckUnitUids);
+    const auto state=decks.State();
+    static BattleShipDeckActions::Observation previous{};
+    if (memcmp(&previous,&state,sizeof(state))) {
+        char message[480];
+        sprintf_s(message,"native deck result=%s app=%u stage=%u ship=%llu leader=%llu selected=%u cost=%u units=%llu,%llu,%llu,%llu save=%u/%04X goout=%u/%04X editor/manager/profile=%u/%u/%u",
+            BattleShipDeckActions::ResultName(result),state.native_app_state,state.stage,state.ship_uid,state.leader_uid,
+            state.selected_count,state.total_cost,state.unit_uids[0],state.unit_uids[1],state.unit_uids[2],state.unit_uids[3],
+            state.save_reply_sequence,state.save_reply_opcode,state.goout_reply_sequence,state.goout_reply_opcode,
+            state.editor_matches,state.manager_matches,state.profile_matches);
+        context->Observe(message);previous=state;
+    }
+    if (result==BattleShipDeckActions::kAccepted) {
+        context->Assert(state.editor_matches && state.manager_matches && state.profile_matches,
+            "the original save and GoOut consumers agree with the genuine four-unit deck in the editor, manager and profile");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (result>=BattleShipDeckActions::kInvalidTarget || result==BattleShipDeckActions::kUnbound) {
+        context->Assert(0,"native battleship deck configuration rejected the real account or native state");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    return SDGO_GAME_TEST_WAIT;
+}
+const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
+const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
+const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
 const SdgoGameTestCaseV1 realCases[] = {
     {"framework.bootstrap", 60000, &Bootstrap},
     {"flow.login", 60000, &Login},
@@ -464,13 +735,20 @@ SdgoGameTestProviderV1 provider{sizeof(provider), SDGO_GAME_TEST_VERSION, "pvp-a
 std::vector<std::string> caseNames;
 std::vector<SdgoGameTestCaseV1> plannedCases;
 void RegisterPlannedCases() {
-    if (requestedModes.size() == 1) return;
-    const size_t count = 3 + requestedModes.size() * 4;
+    if (bootstrapOnly) { provider.count = 3; return; }
+    const bool needsShip = battleshipOnly || deckOnly || std::find(requestedModes.begin(),requestedModes.end(),6)!=requestedModes.end() ||
+        std::find(requestedModes.begin(),requestedModes.end(),7)!=requestedModes.end();
+    if (requestedModes.size() == 1 && !needsShip && !giftRequestsOnly) return;
+    const size_t count = 4 + requestedModes.size() * 4;
     caseNames.reserve(count); plannedCases.reserve(count);
     for (unsigned i = 0; i < 3; ++i) plannedCases.push_back(realCases[i]);
+    if (giftRequestsOnly) plannedCases.push_back(giftCase);
+    else if (needsShip) plannedCases.push_back(battleshipCase);
+    if (deckOnly) plannedCases.push_back(deckCase);
     const char* suffixes[] = {"room", "start", "ai_spawn", "return"};
-    for (const auto mode : requestedModes) {
+    if (!giftRequestsOnly && !battleshipOnly && !deckOnly) for (const auto mode : requestedModes) {
         for (unsigned i = 0; i < 4; ++i) {
+            if (requestedModes.size()==1) { plannedCases.push_back(realCases[3+i]);continue; }
             caseNames.push_back("pvp.mode" + std::to_string(mode) + "." + suffixes[i]);
             auto test = realCases[3 + i];
             test.id = caseNames.back().c_str();
@@ -524,12 +802,24 @@ SDGO_MOD_ENTRY {
     // actual map and participants remain provided by the server.
     if (!loaded) sdgo_test::Fail("invalid private account or native scenario configuration");
     RegisterPlannedCases();
-    const NativeActions::Config config{accountName, accountPassword, roomTitle, RequestedMode(), 0};
-    if (!loaded || !actions.Bind(api, mod, config) || !rooms.Bind(api, mod, &actions, config) ||
+    const NativeActions::Config config{
+        accountName,
+        accountPassword,
+        roomTitle,
+        static_cast<uint16_t>(loaded ? RequestedMode() : 1),
+        0,
+        passwordIsMd5};
+    if (!loaded || !actions.Bind(api, mod, config) ||
+        !channels.Bind(api, mod, &actions) ||
+        !battleships.Bind(api,mod,&actions) || !gifts.Bind(api,mod,&actions) ||
+        (deckOnly && !decks.Bind(api,mod,&actions)) ||
+        !rooms.Bind(api, mod, &actions, config) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
     if (!getSnapshot) sdgo_test::Fail("production PvP AI observation export is unavailable");
+    getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
+    if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");
     if (!AddVectoredExceptionHandler(1, &NativeFault)) return 0;
     if (!api->HookImport(mod, "user32.dll", "FindWindowW", reinterpret_cast<void*>(&FindOwnInstance), reinterpret_cast<void**>(&originalFindWindow)) ||
         !api->HookCode(mod, "test.client_update", reinterpret_cast<void*>(&Update), reinterpret_cast<void**>(&originalUpdate)))

@@ -236,3 +236,29 @@ extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetSnapshotV1(
         return 0;
     }
 }
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetLuaStatusV1(
+    SdgoPvpAiClientLuaStatusV1* status)
+{
+    __try {
+        if (!status || status->size < sizeof(*status) ||
+            status->version != SDGO_PVP_AI_CLIENT_OBSERVER_VERSION)
+            return 0;
+        for (unsigned attempt = 0; attempt < 3; ++attempt) {
+            SdgoPvpAiClientLuaStatusV1 snapshot{};
+            snapshot.size = sizeof(snapshot);
+            snapshot.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+            const LONG before = InterlockedCompareExchange(&g_receivedBattleStartCount, 0, 0);
+            snapshot.battle_start_sequence = static_cast<uint32_t>(before);
+            snapshot.error_count = static_cast<uint32_t>(InterlockedCompareExchange(&g_luaErrors, 0, 0));
+            snapshot.observer_available = InterlockedCompareExchange(&g_luaErrorObserverAvailable, 0, 0) != 0;
+            if (before != InterlockedCompareExchange(&g_receivedBattleStartCount, 0, 0))
+                continue;
+            *status = snapshot;
+            return 1;
+        }
+        return 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
