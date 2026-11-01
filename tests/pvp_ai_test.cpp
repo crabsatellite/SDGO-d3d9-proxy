@@ -2,6 +2,8 @@
 #include "../mods/pvp_ai/pvp_ai.cpp"
 #include <algorithm>
 #include <limits>
+#include <set>
+#include <thread>
 
 namespace fixture {
 using ai_test::Put;
@@ -149,13 +151,31 @@ int main() {
     Reset(7); CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
     Put<uint16_t>(Pilot(6), kPilotPower, 321); Put<uint16_t>(Pilot(6), kPilotLifeCost, 654);
     BuildDeck(room.data(), 6, 100, npcIds, points);
-    CHECK(Pilot(6)[kPilotTagCost] == 9 && Pilot(6)[kPilotTagUnits] == 2);
-    CHECK(Get<uint32_t>(Unit(6, 1), 0) == 103);
+    CHECK(Pilot(6)[kPilotTagCost] == 9 && Pilot(6)[kPilotTagUnits] >= 2 && Pilot(6)[kPilotTagUnits] <= 3);
+    CHECK(Get<uint32_t>(Unit(6, 1), 0) != 100);
     CHECK(Get<uint16_t>(Pilot(6), kPilotPower) == 321 && Get<uint16_t>(Pilot(6), kPilotLifeCost) == 654);
     Reset(6); CHECK(AddAiPilot(room.data(), 6, 100, 2, 2)); failSetup = 103;
     BuildDeck(room.data(), 6, 100, {100, 101, 102, 103, 101, 104}, {4, 3, 2, 5, 3, 0});
     CHECK(Pilot(6)[kPilotTagCost] == 9 && Pilot(6)[kPilotTagUnits] == 3 && Pilot(6)[kPilotForm] == 0);
-    CHECK(Get<uint32_t>(Unit(6, 1), 0) == 101 && Get<uint32_t>(Unit(6, 2), 0) == 102);
+    CHECK((std::set<uint32_t>{Get<uint32_t>(Unit(6, 1), 0), Get<uint32_t>(Unit(6, 2), 0)}) == (std::set<uint32_t>{101, 102}));
+
+    SCENARIO("all eligible deck variants remain reachable across battles");
+    std::set<uint32_t> laterUnits;
+    for (unsigned seed = 1; seed <= 64; ++seed) {
+        Reset(7); g_random = seed;
+        CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+        BuildDeck(room.data(), 6, 100, npcIds, points);
+        std::set<uint32_t> unique;
+        int total = 0;
+        for (int i = 0; i < Pilot(6)[kPilotTagUnits]; ++i) {
+            auto id = Get<uint32_t>(Unit(6, i), 0);
+            CHECK(unique.insert(id).second);
+            total += Unit(6, i)[kUnitPoints];
+            if (i) laterUnits.insert(id);
+        }
+        CHECK(total <= 10 && unique.size() <= 4);
+    }
+    CHECK(laterUnits.count(101) && laterUnits.count(102) && laterUnits.count(103));
 
     SCENARIO("team capacity and human preservation");
     Reset(); for (int i = 0; i < 5; ++i) Human(i, 1);
@@ -200,5 +220,73 @@ int main() {
     CHECK(std::equal(before.begin(), before.end(), Pilot(0)));
     CHECK(g_dead[0].room == nullptr && g_watch[0].room == nullptr);
     RemoveAiPilots(room.data()); CHECK(SlotPilotId(room.data(), 0) == 10);
+
+    SCENARIO("expanded eligible pools are sampled afresh in both deck modes");
+    auto originalIds = npcIds; auto originalPoints = points;
+    for (int generation = 1; generation <= 2; ++generation)
+        for (int level = 1; level <= 2; ++level)
+            for (int i = 0; i < 60; ++i) {
+                npcIds.push_back(static_cast<uint32_t>(1000 * generation + 100 * (level - 1) + i));
+                points.push_back(static_cast<uint8_t>(level + 1));
+            }
+    std::set<uint32_t> expandedSeen;
+    for (int mode : {6, 7}) {
+        for (int level : {1, 2}) {
+            for (int generation : {1, 2}) {
+                std::vector<uint32_t> pool;
+                for (int i = 0; i < 60; ++i)
+                    pool.push_back(static_cast<uint32_t>(1000 * generation + 100 * (level - 1) + i));
+                for (unsigned seed = 1; seed <= 24; ++seed) {
+                    Reset(mode); g_random = seed;
+                    CHECK(AddTeam(room.data(), 2, 3, pool, PoolPoints(room.data(), pool)) == 3);
+                    for (int slot = 6; slot < 9; ++slot) {
+                        std::set<uint32_t> unique;
+                        int total = 0;
+                        for (int i = 0; i < Pilot(slot)[kPilotTagUnits]; ++i) {
+                            uint32_t id = Get<uint32_t>(Unit(slot, i), 0);
+                            uint32_t first = static_cast<uint32_t>(1000 * generation + 100 * (level - 1));
+                            CHECK(id >= first && id < first + 60);
+                            CHECK(unique.insert(id).second);
+                            total += Unit(slot, i)[kUnitPoints]; expandedSeen.insert(id);
+                        }
+                        CHECK(total <= 10 && unique.size() <= 4 && unique.size() >= 2);
+                    }
+                }
+            }
+        }
+    }
+    CHECK(expandedSeen.size() >= 160);
+    npcIds = originalIds; points = originalPoints;
+
+    SCENARIO("deck selection excludes zero-cost and over-budget first units");
+    npcIds.push_back(105); points.push_back(11);
+    for (int mode : {6, 7}) {
+        for (unsigned seed = 1; seed <= 24; ++seed) {
+            Reset(mode); g_random = seed;
+            std::vector<uint32_t> candidate{104, 105, 100};
+            CHECK(AddTeam(room.data(), 2, 1, candidate, PoolPoints(room.data(), candidate)) == 1);
+            CHECK(Get<uint32_t>(Unit(6), 0) == 100);
+            CHECK(Pilot(6)[kPilotTagCost] == 4);
+        }
+        Reset(mode);
+        CHECK(AddTeam(room.data(), 2, 1, {104, 105}, {0, 11}) == 0);
+    }
+    SCENARIO("actual built points cannot exceed the remaining deck budget");
+    npcIds.push_back(106); points.push_back(8);
+    Reset(7); CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    BuildDeck(room.data(), 6, 100, {100, 106}, {4, 1});
+    CHECK(Pilot(6)[kPilotTagCost] == 4 && Pilot(6)[kPilotTagUnits] == 1);
+    npcIds = originalIds; points = originalPoints;
+    SCENARIO("concurrent rooms do not lose random-state updates");
+    g_random = 1234567;
+    std::vector<unsigned> draws(4096);
+    std::vector<std::thread> threads;
+    for (size_t worker = 0; worker < 4; ++worker)
+        threads.emplace_back([&, worker] {
+            for (size_t i = worker * 1024; i < (worker + 1) * 1024; ++i) draws[i] = NextRandom();
+        });
+    for (auto& thread : threads) thread.join();
+    CHECK(std::set<unsigned>(draws.begin(), draws.end()).size() == draws.size());
+    CHECK(std::find(draws.begin(), draws.end(), 0u) == draws.end());
     return ai_test::Finish();
 }

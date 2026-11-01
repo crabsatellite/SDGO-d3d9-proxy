@@ -18,7 +18,7 @@ Use a Beta build containing both parts, with matching versions on every particip
 | `pvp_ai` | Battle servers |
 | `match_ai` | Every participating client |
 
-Follow the [installation guide](../README.md#install), then use your usual launcher.
+Follow the [installation guide](setup.md#install), then use your usual launcher.
 
 ## Use
 
@@ -35,6 +35,10 @@ Set the room title, ready up and start normally. AI join at battle start.
 `eN` means the team opposite the host; `aN` means the host's team. Commands are
 case-insensitive, with at most six participants per team and twelve overall.
 The native room title holds 20 bytes; these commands fit. `lv1`–`lv5` select unit pools.
+
+Each battle samples the complete eligible pool again, including deck entries within
+the mode's points/count limits. The owner supplies the unit pool; selection covers
+its eligible candidates while enforcing unique deck entries and the mode limits.
 
 The host runs the AI and other clients display synchronized copies. Grid/Tag
 modes can use AI decks. The existing dead view can follow AI players. Respawn,

@@ -16,6 +16,8 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Profiles and distribution
         run: python -m unittest discover -s tests -p "test_frp*.py" -v
+      - name: Categorized mod contracts
+        run: ctest --test-dir build -C Release --output-on-failure -R "(mod_catalog|catalog_gates|package_catalog)_offline"
       - name: Framework regressions
         shell: powershell
         run: |

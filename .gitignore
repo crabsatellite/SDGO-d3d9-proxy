@@ -23,6 +23,9 @@ desktop.ini
 # Release packages (tools/package.ps1)
 dist/
 
-# Local Python tooling caches
+# Python build/test caches
 __pycache__/
+*.py[cod]
+
+# Local Python tooling caches
 *.pyc
