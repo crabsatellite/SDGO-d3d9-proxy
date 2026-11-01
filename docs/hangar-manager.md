@@ -3,6 +3,11 @@
 Client-side sorting and duplicate exchange using the game's authenticated native
 requests. [简体中文](hangar-manager.zh-CN.md)
 
+Version 0.2.1 fixes non-clickable buttons and random colored rectangles on the
+native page. Action buttons now use the adjacent native button's normal, hover
+and pressed skins, font and text color. Import the repair overlay in Manager and
+restart the target client to load it; no server restart is needed.
+
 ## Install and open
 
 This gameplay extension is included in Full framework packages and omitted from
