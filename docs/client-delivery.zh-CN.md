@@ -1,7 +1,8 @@
 # 完整客户端安装与同步
 
-朋友服客户端由 [SDGO-client main](https://github.com/crabsatellite/SDGO-client) 发布。
+朋友服客户端由 [Codeup 的 SDGO-client main](https://codeup.aliyun.com/65bb261da854e4c241ac5426/crabsatellite/SDGO-client) 发布。
 `install.bat` 用于首次安装或完整修复，`update.bat` 用于后续同步；两者先取得当前更新器，再执行同一套完整运行文件恢复。
+玩家从 Codeup 下载 `main` 的 ZIP，解压后直接运行 `install.bat`。脚本、程序和基础资源分段都从 Codeup 获取，连接失败即停止，不回退到 GitHub。
 
 同步范围包括游戏程序、公共配置、Mod、原生基础资源及资源覆盖文件。以固定 Git 提交作为文件集来源，
 恢复缺失或被修改的文件，将过时运行文件移入备份，并在结束前核对全部文件。未通过整体核对不得显示更新完成。
