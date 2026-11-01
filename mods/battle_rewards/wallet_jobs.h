@@ -17,6 +17,9 @@ struct WalletHealth {
 struct WalletJob {
     std::string match_id, plan_hash, policy_revision, scope;
     uint32_t account = 0, mb = 0;
+    uint64_t completed_unix = 0;
+    uint32_t active_seconds = 0;
+    bool contributed = false;
 };
 struct WalletReceipt {
     uint32_t historical_post_mb = 0, current_mb = 0;
@@ -85,16 +88,20 @@ inline bool Read(const std::filesystem::path& path, const char* section,
 }
 inline bool Valid(const WalletJob& job) {
     if (job.match_id.empty() || job.match_id.size() > 128 || !job.account || job.account >= 0x80000000u ||
-        !job.mb || job.mb >= 0x80000000u || !Hex(job.plan_hash, 64) || !Hex(job.policy_revision, 64) || !Scope(job.scope)) return false;
+        (!job.mb && !job.completed_unix) || job.mb >= 0x80000000u || !Hex(job.plan_hash, 64) || !Hex(job.policy_revision, 64) || !Scope(job.scope) ||
+        job.active_seconds > 86400 || job.completed_unix > 253402214400ULL ||
+        (job.completed_unix && job.completed_unix < 946684800ULL)) return false;
     for (char c : job.match_id)
         if (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') &&
             c != '-' && c != '_' && c != '.' && c != ':') return false;
     return true;
 }
 inline std::string Serialize(const WalletJob& job) {
-    return "[reward]\r\nSchemaVersion=1\r\nMatchId=" + job.match_id + "\r\nAccountNumber=" + std::to_string(job.account) +
+    return std::string("[reward]\r\nSchemaVersion=") + (job.completed_unix ? "2" : "1") + "\r\nMatchId=" + job.match_id + "\r\nAccountNumber=" + std::to_string(job.account) +
         "\r\nPlanHash=" + job.plan_hash + "\r\nMb=" + std::to_string(job.mb) + "\r\nPolicyRevision=" + job.policy_revision +
-        "\r\nExpectedScope=" + job.scope + "\r\n";
+        "\r\nExpectedScope=" + job.scope + "\r\n" + (job.completed_unix ?
+        "CompletedUnix=" + std::to_string(job.completed_unix) + "\r\nActiveSeconds=" + std::to_string(job.active_seconds) +
+        "\r\nContributed=" + (job.contributed ? "1" : "0") + "\r\n" : "");
 }
 }
 
@@ -110,7 +117,7 @@ inline WalletHealth ReadWalletHealth(const std::filesystem::path& runtime) {
     const auto now = job_detail::UnixNow();
     if (!job_detail::UInt(values["HeartbeatUnix"], UINT64_MAX, &heartbeat) || heartbeat > now + 5 ||
         now > heartbeat + 15 || values["Healthy"] != "1" || !job_detail::Scope(result.scope) ||
-        result.revision != "sdgo-native-gc-ledger-v1") {
+        result.revision != "sdgo-native-gc-ledger-v2") {
         if (result.error.empty()) result.error = "wallet worker heartbeat is stale or invalid";
         return result;
     }

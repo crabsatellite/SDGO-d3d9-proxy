@@ -11,8 +11,8 @@ from package_frp import file_version, validate_markdown_links
 
 OWNER_FILES = (
     "__init__.py", "model.py", "policy.example.json", "workspace.py", "runtime_control.py",
-    "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "sql/battle_reward_wallet.sql",
-    "examples/pvp-mvp.json", "examples/mission-clear.json",
+    "boss_catalog.py", "sql_repository.py", "worker.py", "deployment.py", "progression.py", "sql/battle_reward_wallet.sql",
+    "sql/battle_reward_progression.sql", "examples/pvp-mvp.json", "examples/mission-clear.json",
 )
 TOOLS = ("install_battle_rewards.py",)
 
@@ -35,7 +35,7 @@ def contents(repo, binaries, include_manager=True):
         add("SDGO Mod Manager.exe", binaries.parent / "manager/SDGO Mod Manager.exe")
     for name in ("install_server.ps1", "install_common.ps1"):
         add(name, repo / "tools" / name)
-    for name in ("battle-rewards.md", "battle-rewards.zh-CN.md", "battle-reward-design.md", "battle-reward-design.zh-CN.md"):
+    for name in ("battle-rewards.md", "battle-rewards.zh-CN.md", "battle-reward-design.md", "battle-reward-design.zh-CN.md", "solo-mb-progression.zh-CN.md"):
         add("docs/" + name, repo / "docs" / name)
     # Reference guides remain usable from a standalone reward kit too.
     for name in ("mod-manager.md","mod-manager.zh-CN.md","contributing.zh-CN.md"):

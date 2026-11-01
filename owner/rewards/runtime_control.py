@@ -191,6 +191,12 @@ class RuntimeControl:
         """Atomically publish one native snapshot and return its revision."""
         data = compile_ini(policy)
         with self.lock:
+            snapshot = self.root / "policies" / (model.revision(policy) + ".json")
+            payload = (json.dumps(policy, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+            if snapshot.exists() and snapshot.read_bytes() != payload:
+                raise ValueError("Immutable reward policy snapshot changed")
+            if not snapshot.exists():
+                _atomic_write(snapshot, payload)
             current = self.policy_path.read_bytes() if self.policy_path.is_file() else None
             if current != data:
                 _atomic_write(self.policy_path, data)

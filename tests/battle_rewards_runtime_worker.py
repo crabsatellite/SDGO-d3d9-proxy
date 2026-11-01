@@ -12,8 +12,8 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from owner.rewards import boss_catalog, model
-from owner.rewards.runtime_control import RuntimeControl
+from owner.rewards import boss_catalog, model, progression
+from owner.rewards.runtime_control import RuntimeControl, compile_ini
 from owner.rewards.sql_repository import MbCreditReceipt
 from owner.rewards.worker import WalletWorker
 
@@ -67,6 +67,7 @@ class FixtureLedger:
 
 class SqlFixtureLedger:
     def __init__(self, mode):
+        self.mode = mode
         tests = ROOT / "tests"
         sys.path.insert(0, str(tests))
         from test_reward_repository import RewardRepositorySqlIntegrationTests
@@ -77,7 +78,7 @@ class SqlFixtureLedger:
         self.connection = self.fixture.connection
         self.scope = self.fixture.scope
         self.applied = set()
-        self.allowed = (
+        self.allowed = {6001} if mode == 'progression' else (
             {4001, 5001}
             if mode == "daily"
             else {1001, 1002, 1101, 1201, 1301, 1401, 1501, 1601,
@@ -108,6 +109,10 @@ class SqlFixtureLedger:
         self.applied.add((result.match_id, result.account_number))
         return result
 
+    def apply_progression(self, job, policy):
+        self._ensure_account(job['account_number'])
+        return self.repository.apply_progression(job, policy)
+
     @property
     def credit_count(self):
         return len(self.applied)
@@ -123,8 +128,9 @@ class SqlFixtureLedger:
             *sorted(self.allowed),
         ).fetchone()[0]
         self.connection.rollback()
+        expected_logs = expected + (2 if self.mode == 'progression' else 0)
         if self.credit_count != expected or receipt_count != expected or \
-                log_count != expected:
+                log_count != expected_logs:
             raise RuntimeError(
                 f"expected {expected} SQL credits, got applied="
                 f"{self.credit_count} receipts={receipt_count} logs={log_count}"
@@ -134,15 +140,22 @@ class SqlFixtureLedger:
         self.fixture.tearDownClass()
 
 
-def prepare_runtime(runtime):
+def prepare_runtime(runtime, mode='basic'):
     runtime.mkdir(parents=True, exist_ok=True)
-    RuntimeControl(ROOT, runtime_dir=runtime).publish(model.defaults())
+    control = RuntimeControl(ROOT, runtime_dir=runtime)
+    alternate = model.with_multiplier(model.defaults(), '5')
+    control.publish(alternate)
+    (runtime / 'reward-policy-base-five.ini').write_bytes(compile_ini(alternate))
+    policy = model.defaults()
+    if mode == 'progression':
+        policy['progression'] = {**progression.defaults(), 'enabled': True}
+    control.publish(policy)
     boss_catalog.publish(runtime / "reward-bosses.txt", [(10, 20), (10, 21)])
 
 
 def run(args):
     runtime = args.runtime.resolve()
-    prepare_runtime(runtime)
+    prepare_runtime(runtime, args.mode)
     use_sql = os.environ.get("SDGO_REWARD_SQL_INTEGRATION") == "1"
     if use_sql and not os.environ.get("SDGO_REWARD_SERVER_INI"):
         raise RuntimeError(
@@ -193,7 +206,7 @@ def run(args):
         if not worker.poll():
             raise RuntimeError("fixture wallet worker ended unhealthy")
 
-        expected = 2 if args.mode == "daily" else 13
+        expected = 4 if args.mode == 'progression' else 2 if args.mode == "daily" else 13
         completed = list((runtime / "jobs-completed").glob("*.ini"))
         receipts = list((runtime / "receipts").glob("*.ini"))
         outbox = list((runtime / "outbox").glob("*.ini"))
@@ -219,7 +232,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--exe", type=Path, required=True)
-    parser.add_argument("--mode", choices=("basic", "daily"), required=True)
+    parser.add_argument("--mode", choices=("basic", "daily", "progression"), required=True)
     parser.add_argument("--timeout", type=float, default=35.0)
     run(parser.parse_args())
 

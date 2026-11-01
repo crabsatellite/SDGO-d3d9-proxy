@@ -98,6 +98,8 @@ class Rewards(Provider):
             if path == '/api/rewards/preview': return engine.preview(body)
             if path == '/api/rewards/multiplier': return engine.multiplier(body['base_multiplier'], expected)
             if path == '/api/rewards/policy': return engine.save(body['policy'], expected)
+            if path == '/api/rewards/solo-preset': return engine.solo_preset(expected)
+            if path == '/api/rewards/progression': return engine.save_progression(body['progression'], expected)
         raise ValueError('奖励操作未登记')
 
 

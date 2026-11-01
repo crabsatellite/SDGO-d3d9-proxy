@@ -8,6 +8,9 @@
 
 [English](battle-rewards.md) · [完整规则与初始数值](battle-reward-design.zh-CN.md)
 
+可选的[单人 MB 轻度养成](solo-mb-progression.zh-CN.md)提供任务通关保底、每日首局/三局和每周十二局固定奖励。
+按本机物价，常见高价机体以每天三局、两三天积累为目标；在 Manager 预览确认后启用，旧配置默认关闭。
+
 ## 规则与已有双倍功能
 
 ```text
